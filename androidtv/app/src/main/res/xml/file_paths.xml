@@ -1,0 +1,4 @@
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="seanime_updates" path="seanime/updates/" />
+    <cache-path name="seanime_cache" path="seanime/" />
+</paths>

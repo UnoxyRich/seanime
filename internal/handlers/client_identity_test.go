@@ -127,6 +127,13 @@ func TestClientAppPlatform(t *testing.T) {
 		assert.Equal(t, ClientPlatformMobile, getClientPlatformFromRequest(req))
 	})
 
+	t.Run("accepts Android TV header platform", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+		req.Header.Set(clientPlatformHeader, " AndroidTV ")
+
+		assert.Equal(t, ClientPlatformAndroidTV, getClientPlatformFromRequest(req))
+	})
+
 	t.Run("ignores invalid platform values", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 		req.Header.Set(clientPlatformHeader, "windows")

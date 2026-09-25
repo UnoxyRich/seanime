@@ -189,6 +189,7 @@ func (a *App) initModulesOnce() {
 	})
 
 	a.MangaDownloader.Start()
+	a.AddCleanupFunction(a.MangaDownloader.StopChapterDownloadQueue)
 
 	// +---------------------+
 	// |      VideoCore      |
@@ -364,6 +365,7 @@ func (a *App) initModulesOnce() {
 
 	// This is run in a goroutine
 	a.AutoDownloader.Start()
+	a.AddCleanupFunction(a.AutoDownloader.Stop)
 
 	// +---------------------+
 	// |    Auto Scanner     |
@@ -387,6 +389,7 @@ func (a *App) initModulesOnce() {
 
 	// This is run in a goroutine
 	a.AutoScanner.Start()
+	a.AddCleanupFunction(a.AutoScanner.Stop)
 
 	// +---------------------+
 	// |       Nakama        |

@@ -2,7 +2,7 @@ import { useIsSimulatedUser } from "@/app/(main)/_hooks/use-server-status"
 import { ClientProviders, queryClient, store } from "@/app/client-providers"
 import "./app/globals.css"
 import { __navigationPreloadModeAtom, getActualNavigationPreloadMode, NavigationPreloadMode } from "@/lib/navigation-preload-settings"
-import { __isElectronDesktop__ } from "@/types/constants"
+import { __isAndroidTV__, __isElectronDesktop__ } from "@/types/constants"
 import { createRouter, RouterProvider } from "@tanstack/react-router"
 import { useAtomValue } from "jotai/react"
 import React from "react"
@@ -105,6 +105,78 @@ function DesktopStartupReady() {
     return null
 }
 
+function AndroidTVInputSupport() {
+    React.useEffect(() => {
+        if (!__isAndroidTV__) return
+
+        document.documentElement.classList.add("android-tv")
+
+        const focusables = () => Array.from(document.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="button"], [tabindex]:not([tabindex="-1"])',
+        )).filter((element) => {
+            const style = window.getComputedStyle(element)
+            const rect = element.getBoundingClientRect()
+            return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0
+        })
+
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return
+            const active = document.activeElement
+            if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return
+            if (active instanceof HTMLVideoElement || active?.closest("[data-vc-element='video']")) return
+
+            const items = focusables()
+            if (items.length === 0) return
+            const current = active instanceof HTMLElement ? active : null
+            const from = current?.getBoundingClientRect()
+            if (!from || from.width === 0 || from.height === 0) {
+                event.preventDefault()
+                items[0].focus({ preventScroll: true })
+                items[0].scrollIntoView({ block: "nearest", inline: "nearest" })
+                return
+            }
+
+            const fromX = from.left + from.width / 2
+            const fromY = from.top + from.height / 2
+            let best: HTMLElement | undefined
+            let bestScore = Number.POSITIVE_INFINITY
+
+            for (const item of items) {
+                if (item === current || current?.contains(item)) continue
+                const rect = item.getBoundingClientRect()
+                const x = rect.left + rect.width / 2
+                const y = rect.top + rect.height / 2
+                const dx = x - fromX
+                const dy = y - fromY
+                const primary = event.key === "ArrowRight" ? dx
+                    : event.key === "ArrowLeft" ? -dx
+                        : event.key === "ArrowDown" ? dy : -dy
+                if (primary <= 6) continue
+                const cross = event.key === "ArrowLeft" || event.key === "ArrowRight" ? Math.abs(dy) : Math.abs(dx)
+                const score = primary + cross * 1.8 + Math.hypot(rect.width - from.width, rect.height - from.height) * 0.05
+                if (score < bestScore) {
+                    best = item
+                    bestScore = score
+                }
+            }
+
+            if (best) {
+                event.preventDefault()
+                best.focus({ preventScroll: true })
+                best.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" })
+            }
+        }
+
+        document.addEventListener("keydown", onKeyDown, true)
+        return () => {
+            document.documentElement.classList.remove("android-tv")
+            document.removeEventListener("keydown", onKeyDown, true)
+        }
+    }, [])
+
+    return null
+}
+
 function RootErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
     return (
         <div className="min-h-screen bg-[#0c0c0c] text-white flex items-center justify-center p-6">
@@ -161,6 +233,7 @@ ReactDOM.createRoot(document.getElementById("root")!, {
     <ErrorBoundary FallbackComponent={RootErrorFallback}>
         <ClientProviders>
             <DesktopStartupReady />
+            <AndroidTVInputSupport />
             <AppRouterProvider />
         </ClientProviders>
     </ErrorBoundary>,

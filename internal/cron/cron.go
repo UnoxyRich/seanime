@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"context"
 	"seanime/internal/core"
 	"time"
 )
@@ -9,10 +10,12 @@ type JobCtx struct {
 	App *core.App
 }
 
-func RunJobs(app *core.App) {
+// RunJobs starts the server's periodic jobs and stops their ticker goroutines
+// when ctx is cancelled. Work already in progress is allowed to finish.
+func RunJobs(ctx context.Context, app *core.App) {
 
 	// Run the jobs only if the server is online
-	ctx := &JobCtx{
+	jobCtx := &JobCtx{
 		App: app,
 	}
 
@@ -23,45 +26,57 @@ func RunJobs(app *core.App) {
 	refetchAnnouncementsTicker := time.NewTicker(10 * time.Minute)
 
 	go func() {
+		defer refreshAnilistTicker.Stop()
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-refreshAnilistTicker.C:
 				if app.IsOffline() || app.GetUser().IsSimulated {
 					continue
 				}
-				RefreshAnilistDataJob(ctx)
+				RefreshAnilistDataJob(jobCtx)
 				app.SyncAnilistToSimulatedCollection()
 			}
 		}
 	}()
 
 	go func() {
+		defer refreshAnilistSimulatedTicker.Stop()
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-refreshAnilistSimulatedTicker.C:
 				if app.IsOffline() || !app.GetUser().IsSimulated {
 					continue
 				}
-				RefreshAnilistDataJob(ctx)
+				RefreshAnilistDataJob(jobCtx)
 			}
 		}
 	}()
 
 	go func() {
+		defer refreshLocalDataTicker.Stop()
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-refreshLocalDataTicker.C:
 				if app.IsOffline() {
 					continue
 				}
-				SyncLocalDataJob(ctx)
+				SyncLocalDataJob(jobCtx)
 			}
 		}
 	}()
 
 	go func() {
+		defer refetchReleaseTicker.Stop()
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-refetchReleaseTicker.C:
 				if app.IsOffline() {
 					continue
@@ -72,8 +87,11 @@ func RunJobs(app *core.App) {
 	}()
 
 	go func() {
+		defer refetchAnnouncementsTicker.Stop()
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-refetchAnnouncementsTicker.C:
 				if app.IsOffline() {
 					continue

@@ -28,6 +28,8 @@ web/
 !mobile/web/
 mobile/web/*
 !mobile/web/.gitkeep
+seanime-web/out-androidtv/
+androidtv/local.properties
 web-desktop/
 web-denshi/
 out/

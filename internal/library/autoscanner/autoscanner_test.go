@@ -40,6 +40,24 @@ func TestNewAutoScannerAppliesDefaultsAndSetters(t *testing.T) {
 	require.True(t, custom.autoScanner.enabled)
 }
 
+func TestAutoScannerStopUnblocksWatcher(t *testing.T) {
+	h := newAutoScannerTestWrapper(t, false, 0)
+	h.autoScanner.Start()
+
+	done := make(chan struct{})
+	go func() {
+		h.autoScanner.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("AutoScanner.Stop did not release the watcher")
+	}
+	h.autoScanner.Stop()
+}
+
 func TestAutoScannerNotifyQueuesSignalsAndMissedActions(t *testing.T) {
 	// Notify should send a signal on the channel when enabled, but if we're currently waiting it should mark that we missed an action instead.
 	var nilScanner *AutoScanner

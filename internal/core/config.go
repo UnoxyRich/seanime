@@ -167,6 +167,12 @@ func NewConfig(options *ConfigOptions, logger *zerolog.Logger) (*Config, error) 
 	viper.SetDefault("offline.assetDir", "$SEANIME_DATA_DIR/offline/assets")
 	viper.SetDefault("extensions.dir", "$SEANIME_DATA_DIR/extensions")
 	viper.SetDefault("torrent.dir", "$SEANIME_DATA_DIR/torrent")
+	if cacheDir := os.Getenv("SEANIME_CACHE_DIR"); cacheDir != "" {
+		// Mobile hosts choose the cache location because Android may place app
+		// data and cache on different storage volumes.
+		viper.Set("cache.dir", cacheDir)
+		viper.Set("cache.transcodeDir", filepath.Join(cacheDir, "transcode"))
+	}
 
 	// Create and populate the config file if it doesn't exist
 	if err = createConfigFile(configPath); err != nil {

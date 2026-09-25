@@ -16,9 +16,10 @@ const (
 	clientPlatformQuery     = "platform"
 	clientIdTokenPrefix     = "client-id:"
 
-	ClientPlatformWeb    = "web"
-	ClientPlatformDenshi = "denshi"
-	ClientPlatformMobile = "mobile"
+	ClientPlatformWeb       = "web"
+	ClientPlatformDenshi    = "denshi"
+	ClientPlatformMobile    = "mobile"
+	ClientPlatformAndroidTV = "androidtv"
 )
 
 func normalizeClientPlatform(value string) string {
@@ -29,6 +30,8 @@ func normalizeClientPlatform(value string) string {
 		return ClientPlatformDenshi
 	case ClientPlatformMobile:
 		return ClientPlatformMobile
+	case ClientPlatformAndroidTV:
+		return ClientPlatformAndroidTV
 	default:
 		return ""
 	}

@@ -10,7 +10,8 @@ import path from "path"
 const { publicVars } = loadEnv({ prefixes: ["SEA_"] })
 
 const isElectronDesktop = process.env.SEA_PUBLIC_DESKTOP === "electron"
-const distPath = isElectronDesktop ? "out-denshi" : "out"
+const isAndroidTV = process.env.SEA_PUBLIC_PLATFORM === "androidtv"
+const distPath = isElectronDesktop ? "out-denshi" : isAndroidTV ? "out-androidtv" : "out"
 
 export default defineConfig({
     plugins: [

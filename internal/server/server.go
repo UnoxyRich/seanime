@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"embed"
 	"seanime/internal/core"
 	"seanime/internal/cron"
@@ -65,10 +66,12 @@ appLoop:
 			core.RunEchoServer(app, echoApp)
 
 			// Run the jobs in the background
-			cron.RunJobs(app)
+			jobsCtx, stopJobs := context.WithCancel(context.Background())
+			cron.RunJobs(jobsCtx, app)
 
 			select {
 			case <-selfupdater.Started():
+				stopJobs()
 				app.Cleanup()
 				updateMode = true
 				break

@@ -23,6 +23,19 @@ import (
 
 const frierenMediaId = 154587
 
+func TestAutoDownloaderStopCancelsWorker(t *testing.T) {
+	ad := New(&NewAutoDownloaderOptions{})
+	ad.Start()
+	ad.Stop()
+
+	select {
+	case <-ad.workerDone:
+	case <-time.After(time.Second):
+		t.Fatal("AutoDownloader.Stop did not release the worker")
+	}
+	assert.True(t, ad.suspended.Load())
+}
+
 func useTestHookManager(t *testing.T) hook.Manager {
 	t.Helper()
 

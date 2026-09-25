@@ -128,7 +128,7 @@ import { cn } from "@/components/ui/core/styling"
 import { Modal } from "@/components/ui/modal"
 import { useDisclosure } from "@/hooks/use-disclosure"
 import { logger } from "@/lib/helpers/debug"
-import { __isDesktop__, __isElectronDesktop__ } from "@/types/constants"
+import { __isAndroidTV__, __isDesktop__, __isElectronDesktop__ } from "@/types/constants"
 import { useQueryClient } from "@tanstack/react-query"
 import { ErrorData } from "hls.js"
 import { atom } from "jotai"
@@ -362,6 +362,31 @@ const PlayerContent = React.memo<PlayerContentProps>(({
     // Relay subtitles to Chromecast when casting
     useCastSubtitleRelay()
 
+    const nativePlaybackId = React.useRef<string | null>(state.playbackInfo?.id ?? null)
+    React.useEffect(() => {
+        if (!__isAndroidTV__ || !streamUrl || !window.AndroidTV?.nativePlayerActive()) return
+        const playbackId = state.playbackInfo?.id ?? null
+        const currentSeconds = nativePlaybackId.current === playbackId
+            ? videoRef.current?.currentTime ?? 0
+            : state.playbackInfo?.initialState?.currentTime ?? 0
+        const subtitleTracks = (state.playbackInfo?.subtitleTracks ?? []).map(track => ({
+            src: track.src?.replace("{{SERVER_URL}}", getServerBaseUrl()),
+            content: track.content,
+            label: track.label,
+            language: track.language,
+            type: track.type,
+            default: track.default,
+        }))
+        nativePlaybackId.current = playbackId
+        videoRef.current?.pause()
+        window.AndroidTV.updateNativePlayer(
+            streamUrl,
+            state.playbackInfo?.media?.title?.userPreferred || "Seanime TV",
+            JSON.stringify(subtitleTracks),
+            Math.max(0, Math.round(currentSeconds * 1000)),
+        )
+    }, [streamUrl, state.playbackInfo?.id])
+
     return (
         <>
 
@@ -536,6 +561,30 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                             <VideoCorePlaylistControl />
                             <VideoCoreVolumeButton />
                             <VideoCoreTimestamp />
+                            {__isAndroidTV__ && !!streamUrl && <Button
+                                intent="gray-outline"
+                                size="sm"
+                                onClick={() => {
+                                    videoRef.current?.pause()
+                                    const subtitleTracks = (state.playbackInfo?.subtitleTracks ?? []).map(track => ({
+                                        src: track.src?.replace("{{SERVER_URL}}", getServerBaseUrl()),
+                                        content: track.content,
+                                        label: track.label,
+                                        language: track.language,
+                                        type: track.type,
+                                        default: track.default,
+                                    }))
+                                    nativePlaybackId.current = state.playbackInfo?.id ?? null
+                                    window.AndroidTV?.playNative(
+                                        streamUrl,
+                                        state.playbackInfo?.media?.title?.userPreferred || "Seanime TV",
+                                        JSON.stringify(subtitleTracks),
+                                        Math.max(0, Math.round((videoRef.current?.currentTime ?? state.playbackInfo?.initialState?.currentTime ?? 0) * 1000)),
+                                    )
+                                }}
+                            >
+                                TV player
+                            </Button>}
                             <div className="flex flex-1" data-vc-element="control-bar-separator" />
                             {!inline && <PlaybackPlayPill isNativePlayerComponent="control-bar" show={!isMiniPlayer} />}
                             <VideoCoreWatchPartyChat />
@@ -677,6 +726,21 @@ export function VideoCore(props: VideoCoreProps) {
     const resolvedSkipData = useMemo(() => pluginSkipDataOverride ?? aniSkipData, [pluginSkipDataOverride, aniSkipData])
     const currentSkipDataRef = useRef<NormalizedSkipData | undefined>(resolvedSkipData)
     currentSkipDataRef.current = resolvedSkipData
+
+    React.useEffect(() => {
+        if (!__isAndroidTV__) return
+        const onNativeProgress = (event: Event) => {
+            const detail = (event as CustomEvent<{ positionMs: number, completed: boolean }>).detail
+            const video = videoRef.current
+            if (!video || !Number.isFinite(detail?.positionMs)) return
+            const nextTime = Math.max(0, detail.positionMs / 1000)
+            if (Math.abs(video.currentTime - nextTime) > 0.75) video.currentTime = nextTime
+            video.dispatchEvent(new Event("timeupdate"))
+            if (detail.completed) video.dispatchEvent(new Event("ended"))
+        }
+        window.addEventListener("seanime-androidtv-player-progress", onNativeProgress)
+        return () => window.removeEventListener("seanime-androidtv-player-progress", onNativeProgress)
+    }, [])
 
     const {
         dispatchTerminatedEvent,
@@ -1293,6 +1357,7 @@ export function VideoCore(props: VideoCoreProps) {
     const { playEpisode, isGlobalPlaylistActive } = useVideoCorePlaylist()
     const handleEnded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         log.info("Video ended")
+        if (__isAndroidTV__) window.AndroidTV?.setPlaybackActive(false)
         subtitleManager?.pgsRenderer?.stop()
         onEnded?.()
         if (autoNext && !isWatchPartyParticipant) {
@@ -1376,11 +1441,13 @@ export function VideoCore(props: VideoCoreProps) {
 
     const handlePlay = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         // log.info("Video resumed")
+        if (__isAndroidTV__) window.AndroidTV?.setPlaybackActive(true)
         onPlay?.()
     }
 
     const handlePause = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         // log.info("Video paused")
+        if (__isAndroidTV__) window.AndroidTV?.setPlaybackActive(false)
         subtitleManager?.pgsRenderer?.stop()
         onPause?.()
     }

@@ -40,6 +40,13 @@ type (
 		metadataProviderRef *util.Ref[metadata_provider.Provider]
 		logsDir             string
 		scanning            atomic.Bool
+		suspended           atomic.Bool
+		started             atomic.Bool
+		stopCh              chan struct{}
+		stopOnce            sync.Once
+		watchDone           chan struct{}
+		ctx                 context.Context
+		cancel              context.CancelFunc
 		onRefreshCollection func()
 		animeCollection     *anilist.AnimeCollection
 	}
@@ -58,6 +65,7 @@ type (
 )
 
 func New(opts *NewAutoScannerOptions) *AutoScanner {
+	ctx, cancel := context.WithCancel(context.Background())
 	wt := time.Second * 15 // Default wait time is 15 seconds.
 	if opts.WaitTime > 0 {
 		wt = opts.WaitTime
@@ -78,6 +86,10 @@ func New(opts *NewAutoScannerOptions) *AutoScanner {
 		autoDownloader:      opts.AutoDownloader,
 		metadataProviderRef: opts.MetadataProviderRef,
 		logsDir:             opts.LogsDir,
+		stopCh:              make(chan struct{}),
+		watchDone:           make(chan struct{}),
+		ctx:                 ctx,
+		cancel:              cancel,
 		onRefreshCollection: opts.OnRefreshCollection,
 	}
 }
@@ -88,7 +100,7 @@ func (as *AutoScanner) SetAnimeCollection(ac *anilist.AnimeCollection) {
 
 // Notify is used to notify the AutoScanner that a file action has occurred.
 func (as *AutoScanner) Notify() {
-	if as == nil {
+	if as == nil || as.suspended.Load() {
 		return
 	}
 
@@ -115,13 +127,32 @@ func (as *AutoScanner) Notify() {
 
 // Start starts the AutoScanner in a goroutine.
 func (as *AutoScanner) Start() {
+	if as == nil || !as.started.CompareAndSwap(false, true) {
+		return
+	}
 	go func() {
+		defer close(as.watchDone)
 		if as.enabled {
 			as.logger.Info().Msg("autoscanner: Module started")
 		}
 
 		as.watch()
 	}()
+}
+
+// Stop releases the watcher goroutine and cancels any scan in progress.
+func (as *AutoScanner) Stop() {
+	if as == nil {
+		return
+	}
+	as.suspended.Store(true)
+	if as.cancel != nil {
+		as.cancel()
+	}
+	as.stopOnce.Do(func() { close(as.stopCh) })
+	if as.started.Load() {
+		<-as.watchDone
+	}
 }
 
 // SetSettings should be called after the settings are fetched and updated from the database.
@@ -183,8 +214,12 @@ func (as *AutoScanner) watch() {
 
 	for {
 		// Block until the file action channel is ready to receive a signal.
-		<-as.fileActionCh
-		as.waitAndScan()
+		select {
+		case <-as.stopCh:
+			return
+		case <-as.fileActionCh:
+			as.waitAndScan()
+		}
 	}
 
 }
@@ -199,7 +234,13 @@ func (as *AutoScanner) waitAndScan() {
 
 	// Wait 30 seconds before triggering a scan.
 	// During this time, if another file action occurs, it will reset the timer after it has expired.
-	<-time.After(as.waitTime)
+	timer := time.NewTimer(as.waitTime)
+	defer timer.Stop()
+	select {
+	case <-as.stopCh:
+		return
+	case <-timer.C:
+	}
 
 	as.mu.Lock()
 	// If a file action occurred while we were waiting, wait again.
@@ -214,7 +255,16 @@ func (as *AutoScanner) waitAndScan() {
 	as.mu.Unlock()
 
 	// Trigger a scan.
-	as.scan()
+	if !as.suspended.Load() {
+		as.scan()
+	}
+}
+
+// SetSuspended pauses watcher-triggered scans while keeping the watcher alive.
+func (as *AutoScanner) SetSuspended(suspended bool) {
+	if as != nil {
+		as.suspended.Store(suspended)
+	}
 }
 
 // RunNow bypasses checks and triggers a scan immediately, even if the autoscanner is disabled.
@@ -303,7 +353,7 @@ func (as *AutoScanner) scan() {
 		AnimeCollection:      as.animeCollection,
 	}
 
-	allLfs, err := sc.Scan(context.Background())
+	allLfs, err := sc.Scan(as.ctx)
 	if err != nil {
 		if errors.Is(err, scanner.ErrNoLocalFiles) {
 			return

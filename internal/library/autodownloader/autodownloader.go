@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/5rahim/habari"
@@ -54,6 +55,11 @@ type (
 		startCh                 chan bool
 		debugTrace              bool
 		mu                      sync.Mutex
+		suspended               atomic.Bool
+		ctx                     context.Context
+		cancel                  context.CancelFunc
+		started                 atomic.Bool
+		workerDone              chan struct{}
 		isOfflineRef            *util.Ref[bool]
 		simulationResults       []*SimulationResult // Stores results when running in simulation mode
 	}
@@ -84,6 +90,7 @@ type (
 )
 
 func New(opts *NewAutoDownloaderOptions) *AutoDownloader {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &AutoDownloader{
 		logger:                  opts.Logger,
 		torrentClientRepository: opts.TorrentClientRepository,
@@ -105,6 +112,9 @@ func New(opts *NewAutoDownloaderOptions) *AutoDownloader {
 		startCh:           make(chan bool, 1),
 		debugTrace:        true,
 		mu:                sync.Mutex{},
+		ctx:               ctx,
+		cancel:            cancel,
+		workerDone:        make(chan struct{}),
 		isOfflineRef:      opts.IsOfflineRef,
 		simulationResults: make([]*SimulationResult, 0),
 	}
@@ -192,6 +202,26 @@ func (ad *AutoDownloader) IsEnabled() bool {
 	return ad.settings != nil && ad.settings.Enabled
 }
 
+// SetSuspended pauses scheduled and queued automatic runs while preserving the
+// user's configured Auto Downloader settings.
+func (ad *AutoDownloader) SetSuspended(suspended bool) {
+	if ad != nil {
+		ad.suspended.Store(suspended)
+	}
+}
+
+// Stop cancels scheduled checks and releases the Auto Downloader worker.
+func (ad *AutoDownloader) Stop() {
+	if ad == nil || ad.cancel == nil {
+		return
+	}
+	ad.suspended.Store(true)
+	ad.cancel()
+	if ad.started.Load() {
+		<-ad.workerDone
+	}
+}
+
 // RunCheck runs the auto downloader synchronously for testing purposes
 // This directly calls checkForNewEpisodes without using goroutines
 func (ad *AutoDownloader) RunCheck(ctx context.Context, isSimulation bool, ruleIDs ...uint) {
@@ -210,7 +240,11 @@ func (ad *AutoDownloader) Start() {
 	if ad == nil {
 		return
 	}
+	if !ad.started.CompareAndSwap(false, true) {
+		return
+	}
 	go func() {
+		defer close(ad.workerDone)
 		ad.mu.Lock()
 		if ad.settings.Enabled {
 			started := ad.torrentClientRepository.Start() // Start torrent client if it's not running
@@ -272,18 +306,20 @@ func (ad *AutoDownloader) start() {
 		}
 		ticker := time.NewTicker(time.Duration(interval) * time.Minute)
 		select {
+		case <-ad.ctx.Done():
+			return
 		case <-ad.settingsUpdatedCh:
 			break // Restart the loop
 		case <-ad.stopCh:
 
 		case isSumulation := <-ad.startCh:
-			if ad.settings.Enabled {
+			if ad.settings.Enabled && !ad.suspended.Load() {
 				ad.logger.Debug().Msg("autodownloader: Auto Downloader started")
-				ad.checkForNewEpisodes(context.Background(), isSumulation)
+				ad.checkForNewEpisodes(ad.ctx, isSumulation)
 			}
 		case <-ticker.C:
-			if ad.settings.Enabled {
-				ad.checkForNewEpisodes(context.Background(), false)
+			if ad.settings.Enabled && !ad.suspended.Load() {
+				ad.checkForNewEpisodes(ad.ctx, false)
 			}
 		}
 		ticker.Stop()
@@ -295,7 +331,7 @@ func (ad *AutoDownloader) start() {
 func (ad *AutoDownloader) checkForNewEpisodes(ctx context.Context, isSimulation bool, ruleIDs ...uint) {
 	defer util.HandlePanicInModuleThen("autodownloader/checkForNewEpisodes", func() {})
 
-	if ad.isOfflineRef.Get() {
+	if ad.isOfflineRef.Get() || ad.suspended.Load() {
 		ad.logger.Debug().Msg("autodownloader: Skipping check for new episodes. AutoDownloader is in offline mode.")
 		return
 	}

@@ -1229,3 +1229,45 @@ media-preview-chapter-display {
 [data-mpv-prism-video-canvas] {
     background: #000000 !important;
 }
+
+/* Android TV is navigated by a remote, so focus must stay visible and inside
+   the overscan-safe viewport while the shared web screens remain unchanged. */
+html.android-tv :focus-visible {
+    outline: 3px solid rgb(var(--color-brand-300));
+    outline-offset: 3px;
+    scroll-margin: 5vh 5vw;
+}
+
+html.android-tv {
+    font-size: clamp(17px, 0.95vw, 24px);
+    --android-tv-safe-inset: clamp(28px, 3.5vw, 80px);
+}
+
+html.android-tv .UI-AppLayoutContent__root {
+    padding-inline: var(--android-tv-safe-inset);
+}
+
+html.android-tv button:focus-visible,
+html.android-tv a:focus-visible,
+html.android-tv [role="button"]:focus-visible,
+html.android-tv [tabindex]:focus-visible {
+    box-shadow: 0 0 0 2px rgba(7, 7, 7, 0.95), 0 0 0 5px rgba(159, 146, 255, 0.9);
+}
+
+html.android-tv :is(button, a[href], [role="button"], input, select, textarea) {
+    scroll-margin-block: 6vh;
+}
+
+html.android-tv :is(button, [role="button"]) {
+    min-height: 44px;
+}
+
+html.android-tv input,
+html.android-tv textarea,
+html.android-tv select {
+    font-size: max(1rem, 16px);
+}
+
+html.android-tv body {
+    overscroll-behavior: contain;
+}

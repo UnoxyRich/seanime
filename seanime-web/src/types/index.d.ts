@@ -25,6 +25,19 @@ declare global {
     }
 
     interface Window {
+        AndroidTV?: {
+            serverStatus: () => string;
+            serverError: () => string;
+            requestMediaFolder: () => void;
+            getStorageRoots: () => string;
+            removeStorageFolder: (uri: string) => void;
+            openExternalUrl: (url: string) => void;
+            playNative: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number) => void;
+            updateNativePlayer: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number) => void;
+            nativePlayerActive: () => boolean;
+            installUpdate: (filePath: string) => void;
+            setPlaybackActive: (active: boolean) => void;
+        };
         electron?: {
             window: {
                 minimize: () => void;
