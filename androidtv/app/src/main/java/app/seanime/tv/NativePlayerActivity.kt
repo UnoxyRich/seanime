@@ -26,6 +26,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -51,6 +53,14 @@ class NativePlayerActivity : Activity() {
     private var playerControlsView: View? = null
     private var lastPositionMs = 0L
     private var completed = false
+    private var mediaUri: Uri? = null
+    private var mediaTitle = "Seanime TV"
+    private var subtitleTracksJson = ""
+    private var subtitleStyleJson = ""
+    private var resumePlayWhenReady = true
+    private var savedPlaybackParameters = PlaybackParameters.DEFAULT
+    private var savedTrackSelectionParameters: TrackSelectionParameters? = null
+    private var savedVolume = 1f
     private val subtitleCacheFiles = mutableListOf<File>()
     private val progressHandler = Handler(Looper.getMainLooper())
     private val screenshotExecutor = Executors.newSingleThreadExecutor { task ->
@@ -76,14 +86,63 @@ class NativePlayerActivity : Activity() {
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             )
 
-        val mediaUri = intent.data ?: run {
+        mediaUri = savedInstanceState?.getString(STATE_MEDIA_URI)?.let(Uri::parse) ?: intent.data
+        if (mediaUri == null) {
             nativePlayerVisible = false
             finish()
             return
         }
-        val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Seanime TV" }
-        val subtitleTracksJson = intent.getStringExtra(EXTRA_SUBTITLES).orEmpty()
-        val subtitleStyleJson = intent.getStringExtra(EXTRA_SUBTITLE_STYLE).orEmpty()
+        mediaTitle = (savedInstanceState?.getString(EXTRA_TITLE) ?: intent.getStringExtra(EXTRA_TITLE)).orEmpty().ifBlank { "Seanime TV" }
+        subtitleTracksJson = (savedInstanceState?.getString(EXTRA_SUBTITLES) ?: intent.getStringExtra(EXTRA_SUBTITLES)).orEmpty()
+        subtitleStyleJson = (savedInstanceState?.getString(EXTRA_SUBTITLE_STYLE) ?: intent.getStringExtra(EXTRA_SUBTITLE_STYLE)).orEmpty()
+        lastPositionMs = savedInstanceState?.getLong(EXTRA_START_POSITION) ?: intent.getLongExtra(EXTRA_START_POSITION, 0L)
+        resumePlayWhenReady = savedInstanceState?.getBoolean(STATE_PLAY_WHEN_READY, true) ?: true
+        completed = savedInstanceState?.getBoolean(STATE_COMPLETED, false) ?: false
+        savedPlaybackParameters = PlaybackParameters(
+            savedInstanceState?.getFloat(STATE_SPEED, 1f) ?: 1f,
+            savedInstanceState?.getFloat(STATE_PITCH, 1f) ?: 1f,
+        )
+        savedVolume = savedInstanceState?.getFloat(STATE_VOLUME, 1f) ?: 1f
+        savedTrackSelectionParameters = savedInstanceState?.getBundle(STATE_TRACK_SELECTION)?.let(TrackSelectionParameters::fromBundle)
+
+        val frame = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
+        val playerView = PlayerView(this).apply {
+            useController = true
+            controllerAutoShow = true
+            requestFocus()
+        }
+        activePlayerView = playerView
+        frame.addView(playerView, FrameLayout.LayoutParams(-1, -1))
+
+        val trackButtons = FrameLayout(this)
+        playerControlsView = trackButtons
+        val audio = trackButton("Audio") { showTrackDialog(C.TRACK_TYPE_AUDIO) }
+        val subtitles = trackButton("Subtitles") { showTrackDialog(C.TRACK_TYPE_TEXT) }
+        val screenshot = trackButton("Screenshot") { captureScreenshot() }
+        trackButtons.addView(audio, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP))
+        val subtitleParams = FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP)
+        subtitleParams.topMargin = 72
+        trackButtons.addView(subtitles, subtitleParams)
+        val screenshotParams = FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP)
+        screenshotParams.topMargin = 144
+        trackButtons.addView(screenshot, screenshotParams)
+        frame.addView(trackButtons)
+        setContentView(frame)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) initializePlayer()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) initializePlayer()
+    }
+
+    private fun initializePlayer() {
+        if (player != null || isFinishing) return
+        val uri = mediaUri ?: return
         val httpFactory = DefaultHttpDataSource.Factory().setUserAgent("Seanime TV/0.1.0")
         val upstreamFactory = DefaultDataSource.Factory(this, httpFactory)
         val resolvingFactory = ResolvingDataSource.Factory(upstreamFactory) { dataSpec ->
@@ -108,55 +167,71 @@ class NativePlayerActivity : Activity() {
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 lastPositionMs = exoPlayer.currentPosition
-                if (playbackState == Player.STATE_ENDED) {
+                if (playbackState == Player.STATE_ENDED && !completed) {
                     completed = true
                     MainActivity.notifyNativePlaybackProgress(lastPositionMs, true)
                 }
             }
         })
 
-        val frame = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
-        val playerView = PlayerView(this).apply {
-            player = exoPlayer
-            useController = true
-            controllerAutoShow = true
-            requestFocus()
+        activePlayerView?.let {
+            it.player = exoPlayer
+            applySubtitleStyle(it, subtitleStyleJson)
         }
-        activePlayerView = playerView
-        frame.addView(playerView, FrameLayout.LayoutParams(-1, -1))
-
-        val trackButtons = FrameLayout(this)
-        playerControlsView = trackButtons
-        val audio = trackButton("Audio") { showTrackDialog(C.TRACK_TYPE_AUDIO) }
-        val subtitles = trackButton("Subtitles") { showTrackDialog(C.TRACK_TYPE_TEXT) }
-        val screenshot = trackButton("Screenshot") { captureScreenshot() }
-        trackButtons.addView(audio, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP))
-        val subtitleParams = FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP)
-        subtitleParams.topMargin = 72
-        trackButtons.addView(subtitles, subtitleParams)
-        val screenshotParams = FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP)
-        screenshotParams.topMargin = 144
-        trackButtons.addView(screenshot, screenshotParams)
-        frame.addView(trackButtons)
-        setContentView(frame)
-
-        loadMedia(mediaUri, title, subtitleTracksJson, intent.getLongExtra(EXTRA_START_POSITION, 0L), subtitleStyleJson)
+        exoPlayer.playbackParameters = savedPlaybackParameters
+        savedTrackSelectionParameters?.let { exoPlayer.trackSelectionParameters = it }
+        exoPlayer.volume = savedVolume
+        exoPlayer.setMediaItem(buildMediaItem(uri, mediaTitle, subtitleTracksJson), lastPositionMs.coerceAtLeast(0))
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = resumePlayWhenReady && !completed
         nativePlayerVisible = true
+        MainActivity.notifyNativePlayerStarted()
         progressHandler.postDelayed(publishProgress, 2_000)
     }
 
     private fun loadMedia(uri: Uri, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
+        mediaUri = uri
+        mediaTitle = title
+        this.subtitleTracksJson = subtitleTracksJson
+        this.subtitleStyleJson = subtitleStyleJson
+        completed = false
+        lastPositionMs = startPositionMs.coerceAtLeast(0)
+        resumePlayWhenReady = true
         val current = player ?: return
         current.stop()
         subtitleCacheFiles.forEach { it.delete() }
         subtitleCacheFiles.clear()
-        completed = false
-        lastPositionMs = 0
         activePlayerView?.let { applySubtitleStyle(it, subtitleStyleJson) }
         current.setMediaItem(buildMediaItem(uri, title, subtitleTracksJson), startPositionMs.coerceAtLeast(0))
         current.prepare()
         current.playWhenReady = true
         MainActivity.notifyNativePlaybackProgress(startPositionMs.coerceAtLeast(0))
+    }
+
+    private fun rememberPlaybackState() {
+        player?.let {
+            lastPositionMs = it.currentPosition
+            resumePlayWhenReady = it.playWhenReady
+            savedPlaybackParameters = it.playbackParameters
+            savedTrackSelectionParameters = it.trackSelectionParameters
+            savedVolume = it.volume
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        rememberPlaybackState()
+        outState.putString(STATE_MEDIA_URI, mediaUri?.toString())
+        outState.putString(EXTRA_TITLE, mediaTitle)
+        outState.putString(EXTRA_SUBTITLES, subtitleTracksJson)
+        outState.putString(EXTRA_SUBTITLE_STYLE, subtitleStyleJson)
+        outState.putLong(EXTRA_START_POSITION, lastPositionMs)
+        outState.putBoolean(STATE_PLAY_WHEN_READY, resumePlayWhenReady)
+        outState.putBoolean(STATE_COMPLETED, completed)
+        outState.putFloat(STATE_SPEED, savedPlaybackParameters.speed)
+        outState.putFloat(STATE_PITCH, savedPlaybackParameters.pitch)
+        outState.putFloat(STATE_VOLUME, savedVolume)
+        savedTrackSelectionParameters?.let { outState.putBundle(STATE_TRACK_SELECTION, it.toBundle()) }
+        super.onSaveInstanceState(outState)
     }
 
     private fun applySubtitleStyle(playerView: PlayerView, json: String) {
@@ -370,26 +445,38 @@ class NativePlayerActivity : Activity() {
         }
     }
 
+    override fun onPause() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) releasePlayer()
+        super.onPause()
+    }
+
     override fun onStop() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) releasePlayer()
+        super.onStop()
+    }
+
+    private fun releasePlayer() {
+        val current = player ?: return
         progressHandler.removeCallbacksAndMessages(null)
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        player?.let {
-            lastPositionMs = it.currentPosition
-            it.release()
-        }
+        rememberPlaybackState()
+        activePlayerView?.player = null
+        current.release()
         player = null
-        activePlayerView = null
-        playerControlsView = null
         subtitleCacheFiles.forEach { it.delete() }
         subtitleCacheFiles.clear()
         nativePlayerVisible = false
         if (activeInstance?.get() === this) activeInstance = null
-        MainActivity.notifyNativePlaybackEnded(lastPositionMs, completed)
+        // Completion is delivered once by STATE_ENDED. Releasing a finished
+        // player must not advance the web playlist a second time.
+        MainActivity.notifyNativePlaybackProgress(lastPositionMs)
         MainActivity.notifyNativePlayerStopped()
-        super.onStop()
     }
 
     override fun onDestroy() {
+        releasePlayer()
+        activePlayerView = null
+        playerControlsView = null
         screenshotExecutor.shutdown()
         super.onDestroy()
     }
@@ -407,6 +494,13 @@ class NativePlayerActivity : Activity() {
         private const val EXTRA_SUBTITLES = "subtitles"
         private const val EXTRA_SUBTITLE_STYLE = "subtitleStyle"
         private const val EXTRA_START_POSITION = "startPositionMs"
+        private const val STATE_MEDIA_URI = "mediaUri"
+        private const val STATE_PLAY_WHEN_READY = "playWhenReady"
+        private const val STATE_COMPLETED = "completed"
+        private const val STATE_SPEED = "speed"
+        private const val STATE_PITCH = "pitch"
+        private const val STATE_VOLUME = "volume"
+        private const val STATE_TRACK_SELECTION = "trackSelection"
         private const val SERVER_PORT = 43211
         @Volatile private var nativePlayerVisible = false
         @Volatile private var activeInstance: WeakReference<NativePlayerActivity>? = null
@@ -429,7 +523,10 @@ class NativePlayerActivity : Activity() {
         fun updateSubtitleStyle(subtitleStyleJson: String) {
             val activity = activeInstance?.get() ?: return
             activity.runOnUiThread {
-                if (!activity.isFinishing) activity.activePlayerView?.let { activity.applySubtitleStyle(it, subtitleStyleJson) }
+                if (!activity.isFinishing) {
+                    activity.subtitleStyleJson = subtitleStyleJson
+                    activity.activePlayerView?.let { activity.applySubtitleStyle(it, subtitleStyleJson) }
+                }
             }
         }
 

@@ -781,8 +781,14 @@ class MainActivity : Activity() {
             }
         }
 
-        fun notifyNativePlaybackEnded(positionMs: Long, completed: Boolean) {
-            notifyNativePlaybackProgress(positionMs, completed)
+        fun notifyNativePlayerStarted() {
+            val activity = activeActivity?.get() ?: return
+            activity.runOnUiThread {
+                if (!activity.isDestroyed) {
+                    activity.webView.onResume()
+                    scheduleServerForeground(true)
+                }
+            }
         }
 
         fun deliverOAuthReturn(url: String): Boolean {

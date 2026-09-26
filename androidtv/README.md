@@ -43,6 +43,9 @@ selected SAF tree grants, directory creation, ranged reads, chunked writes and
 replacement, listing, and deletion through a debug-only in-memory document
 provider. The `Android TV
 checks` workflow runs the suite on an API 36 x86_64 TV emulator.
+The native-player lifecycle test uses local WAV fixtures to check stop/resume
+and activity recreation, including playlist handoffs, pause state, position,
+speed, volume, and track preferences.
 
 ## Android host behavior
 
@@ -72,6 +75,9 @@ checks` workflow runs the suite on an API 36 x86_64 TV emulator.
   sliders handle their arrow keys. Left and right on the playback timeline use
   the configured fine-seek interval. Inline and mini-player playback leave
   focus with the page.
+- Native playback releases its decoder while the activity is stopped and
+  recreates it on return with the latest episode and playback settings. The
+  retained WebView resumes receiving progress and playlist events on return.
 - The native host exposes a Storage Access Framework picker, persists grants,
   and implements listing, metadata, ranged reads, chunked writes, directory
   creation, and deletion through a gomobile adapter. Library settings can use
