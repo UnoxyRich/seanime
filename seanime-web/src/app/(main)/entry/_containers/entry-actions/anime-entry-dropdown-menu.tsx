@@ -29,6 +29,7 @@ import { FiArrowUpRight, FiDownload, FiTrash } from "react-icons/fi"
 import { LuCopy, LuFolderTree, LuGlobe, LuImage } from "react-icons/lu"
 import { MdOutlineRemoveDone } from "react-icons/md"
 import { SiMyanimelist } from "react-icons/si"
+import { __isAndroidTV__ } from "@/types/constants"
 
 export function AnimeEntryDropdownMenu({ entry, details }: { entry: Anime_Entry, details?: AL_AnimeDetailsById_Media }) {
 
@@ -64,11 +65,17 @@ export function AnimeEntryDropdownMenu({ entry, details }: { entry: Anime_Entry,
 
                 {(isLibraryView && inLibrary && !entry._isNakamaEntry) && <>
                     <DropdownMenuItem
-                        onClick={() => openEntryInExplorer({ mediaId: entry.mediaId })}
+                        onClick={() => {
+                            if (__isAndroidTV__) {
+                                openDirInLibraryExplorer(entry.libraryData?.sharedPath || "")
+                            } else {
+                                openEntryInExplorer({ mediaId: entry.mediaId })
+                            }
+                        }}
                     >
                         <BiFolder /> Open directory
                     </DropdownMenuItem>
-                    {!!entry.libraryData?.sharedPath && <DropdownMenuItem
+                    {!__isAndroidTV__ && !!entry.libraryData?.sharedPath && <DropdownMenuItem
                         onClick={() => openDirInLibraryExplorer(entry.libraryData?.sharedPath || "")}
                     >
                         <LuFolderTree /> Open in Library Explorer

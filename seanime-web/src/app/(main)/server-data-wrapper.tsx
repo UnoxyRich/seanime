@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { defineSchema, Field, Form } from "@/components/ui/form"
 import { logger } from "@/lib/helpers/debug"
+import { openTab } from "@/lib/helpers/browser"
 import { usePathname, useRouter } from "@/lib/navigation"
 import { ANILIST_OAUTH_URL, ANILIST_PIN_URL } from "@/lib/server/config"
 import { WSEvents } from "@/lib/server/ws-events"
@@ -149,7 +150,7 @@ export function ServerDataWrapper(props: ServerDataWrapperProps) {
                                 const url = currentServerStatus.anilistClientId
                                     ? `https://anilist.co/api/v2/oauth/authorize?client_id=${currentServerStatus.anilistClientId}&response_type=token`
                                     : ANILIST_OAUTH_URL
-                                window.open(url, "_self")
+                                openTab(url, "_self")
                             }}
                             leftIcon={<svg
                                 xmlns="http://www.w3.org/2000/svg" fill="currentColor" width="24" height="24"

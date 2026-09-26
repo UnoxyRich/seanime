@@ -7,6 +7,7 @@ import { useUpdateEffect } from "@/components/ui/core/hooks"
 import { cn } from "@/components/ui/core/styling"
 import { Modal } from "@/components/ui/modal"
 import { logger } from "@/lib/helpers/debug"
+import { openTab } from "@/lib/helpers/browser"
 import { WSEvents } from "@/lib/server/ws-events"
 import { __isElectronDesktop__ } from "@/types/constants"
 import { useAtom } from "jotai"
@@ -147,7 +148,7 @@ export function Announcements() {
 
     const handleActionClick = (action: Updater_AnnouncementAction) => {
         if (action.type === "link" && action.url) {
-            window.open(action.url, "_blank")
+            openTab(action.url)
         }
     }
 

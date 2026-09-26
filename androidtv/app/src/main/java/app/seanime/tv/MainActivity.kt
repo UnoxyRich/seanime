@@ -231,13 +231,57 @@ class MainActivity : Activity() {
 
     internal fun openExternalUrl(url: String) {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
-        if (uri.scheme !in setOf("http", "https", "mailto")) return
-        if (uri.scheme == "http" || uri.scheme == "https") {
-            startActivity(AuthWebViewActivity.intent(this, uri))
+        when (uri.scheme?.lowercase()) {
+            "http", "https" -> {
+                startActivity(AuthWebViewActivity.intent(this, uri))
+                return
+            }
+            "intent" -> {
+                openIntentUrl(url)
+                return
+            }
+            "mailto" -> {
+                startExternalView(Intent(Intent.ACTION_VIEW, uri))
+                return
+            }
+            null, "file", "content", "javascript", "data", "about", "android-app" -> {
+                Toast.makeText(this, "This link cannot be opened by another app", Toast.LENGTH_LONG).show()
+                return
+            }
+        }
+
+        startExternalView(Intent(Intent.ACTION_VIEW, uri))
+    }
+
+    private fun openIntentUrl(url: String) {
+        val intent = runCatching { Intent.parseUri(url, Intent.URI_INTENT_SCHEME) }.getOrNull()
+        val scheme = intent?.data?.scheme?.lowercase()
+        if (intent == null || intent.action != Intent.ACTION_VIEW || intent.component != null || intent.selector != null ||
+            scheme.isNullOrBlank() || scheme in setOf("intent", "file", "content", "javascript", "data", "about", "android-app") ||
+            intent.`package` == packageName
+        ) {
+            Toast.makeText(this, "This external player link is invalid", Toast.LENGTH_LONG).show()
             return
         }
+
+        val fallbackUrl = intent.getStringExtra("browser_fallback_url")
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, uri))
+            startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            val fallbackUri = fallbackUrl?.let { runCatching { Uri.parse(it) }.getOrNull() }
+            if (fallbackUri != null && fallbackUri.scheme in setOf("http", "https")) {
+                startActivity(AuthWebViewActivity.intent(this, fallbackUri))
+            } else {
+                Toast.makeText(this, "Install the app configured for this external player link", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun startExternalView(intent: Intent) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(intent)
         } catch (_: ActivityNotFoundException) {
             Toast.makeText(this, "No app can open this link", Toast.LENGTH_LONG).show()
         }

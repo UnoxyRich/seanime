@@ -20,6 +20,7 @@ import { LoadingOverlay } from "@/components/ui/loading-spinner"
 import { Modal } from "@/components/ui/modal"
 import { Popover } from "@/components/ui/popover"
 import { Tooltip } from "@/components/ui/tooltip"
+import { openTab } from "@/lib/helpers/browser"
 import { useRouter } from "@/lib/navigation"
 import React from "react"
 import { GrUpdate } from "react-icons/gr"
@@ -117,7 +118,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
                 <div className="flex flex-row gap-1 z-[2] flex-wrap justify-end">
 
                     {!!extension.readme && (
-                        <div onClick={() => window.open(extension.readme, "_blank")}>
+                        <div onClick={() => openTab(extension.readme)}>
                             <Tooltip
                                 side="left"
                                 trigger={<IconButton
