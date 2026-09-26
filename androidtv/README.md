@@ -72,11 +72,14 @@ Android accepts each APK as an in-place upgrade.
   Media3-rendered subtitles are included while player controls are hidden.
   Web-rendered libass/Anime4K overlays are not part of native playback
   screenshots.
+- Media3 receives the saved subtitle and caption appearance settings for text
+  size, color, background, outline or shadow, and font family where available.
+  Style-only updates do not reload the current stream. Advanced libass
+  rendering and Anime4K processing still remain browser-player features.
 - Android TV checks the fork's GitHub releases, chooses the APK matching the
   device ABI, downloads it with Android Download Manager, and opens the Android
   package installer. The release flow remains unavailable until a signed APK
-  release is published with the same persistent keystore. Advanced web subtitle
-  styling and Anime4K rendering still need integration with native playback.
+  release is published with the same persistent keystore.
 
 The Android native player, SAF adapter, background lifecycle, transcode staging,
 and update installer still need end-to-end validation on physical Android TV

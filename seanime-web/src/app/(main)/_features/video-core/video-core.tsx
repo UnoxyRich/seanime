@@ -348,6 +348,10 @@ const PlayerContent = React.memo<PlayerContentProps>(({
     const paused = useAtomValue(vc_paused)
     const buffering = useAtomValue(vc_buffering)
     const settings = useAtomValue(vc_settings)
+    const nativeSubtitleStyleJson = JSON.stringify({
+        subtitleCustomization: settings.subtitleCustomization,
+        captionCustomization: settings.captionCustomization,
+    })
     const beautifyImage = useAtomValue(vc_beautifyImageAtom)
     const isPip = useAtomValue(vc_pip)
     const fullscreen = useAtomValue(vc_isFullscreen)
@@ -384,8 +388,14 @@ const PlayerContent = React.memo<PlayerContentProps>(({
             state.playbackInfo?.media?.title?.userPreferred || "Seanime TV",
             JSON.stringify(subtitleTracks),
             Math.max(0, Math.round(currentSeconds * 1000)),
+            nativeSubtitleStyleJson,
         )
     }, [streamUrl, state.playbackInfo?.id])
+
+    React.useEffect(() => {
+        if (!__isAndroidTV__ || !window.AndroidTV?.nativePlayerActive()) return
+        window.AndroidTV.updateNativeSubtitleStyle(nativeSubtitleStyleJson)
+    }, [nativeSubtitleStyleJson])
 
     return (
         <>
@@ -580,6 +590,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                                         state.playbackInfo?.media?.title?.userPreferred || "Seanime TV",
                                         JSON.stringify(subtitleTracks),
                                         Math.max(0, Math.round((videoRef.current?.currentTime ?? state.playbackInfo?.initialState?.currentTime ?? 0) * 1000)),
+                                        nativeSubtitleStyleJson,
                                     )
                                 }}
                             >

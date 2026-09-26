@@ -4,7 +4,9 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -30,10 +32,12 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
 import androidx.documentfile.provider.DocumentFile
 import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.lang.ref.WeakReference
@@ -74,6 +78,7 @@ class NativePlayerActivity : Activity() {
         }
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Seanime TV" }
         val subtitleTracksJson = intent.getStringExtra(EXTRA_SUBTITLES).orEmpty()
+        val subtitleStyleJson = intent.getStringExtra(EXTRA_SUBTITLE_STYLE).orEmpty()
         val httpFactory = DefaultHttpDataSource.Factory().setUserAgent("Seanime TV/0.1.0")
         val upstreamFactory = DefaultDataSource.Factory(this, httpFactory)
         val resolvingFactory = ResolvingDataSource.Factory(upstreamFactory) { dataSpec ->
@@ -130,24 +135,78 @@ class NativePlayerActivity : Activity() {
         frame.addView(trackButtons)
         setContentView(frame)
 
-        loadMedia(mediaUri, title, subtitleTracksJson, intent.getLongExtra(EXTRA_START_POSITION, 0L))
+        loadMedia(mediaUri, title, subtitleTracksJson, intent.getLongExtra(EXTRA_START_POSITION, 0L), subtitleStyleJson)
         nativePlayerVisible = true
-        MainActivity.notifyNativePlaybackProgress(0)
         progressHandler.postDelayed(publishProgress, 2_000)
     }
 
-    private fun loadMedia(uri: Uri, title: String, subtitleTracksJson: String, startPositionMs: Long) {
+    private fun loadMedia(uri: Uri, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
         val current = player ?: return
         current.stop()
         subtitleCacheFiles.forEach { it.delete() }
         subtitleCacheFiles.clear()
         completed = false
         lastPositionMs = 0
+        activePlayerView?.let { applySubtitleStyle(it, subtitleStyleJson) }
         current.setMediaItem(buildMediaItem(uri, title, subtitleTracksJson), startPositionMs.coerceAtLeast(0))
         current.prepare()
         current.playWhenReady = true
-        MainActivity.notifyNativePlaybackProgress(0)
+        MainActivity.notifyNativePlaybackProgress(startPositionMs.coerceAtLeast(0))
     }
+
+    private fun applySubtitleStyle(playerView: PlayerView, json: String) {
+        val subtitleView = playerView.subtitleView ?: return
+        val style = runCatching { JSONObject(json) }.getOrNull() ?: JSONObject()
+        val subtitleCustomization = style.optJSONObject("subtitleCustomization") ?: JSONObject()
+        val captionCustomization = style.optJSONObject("captionCustomization") ?: JSONObject()
+        val useAssCustomization = subtitleCustomization.optBoolean("enabled", false)
+        val custom = if (useAssCustomization) subtitleCustomization else captionCustomization
+        val foregroundColor = parseStyleColor(
+            custom.optString(if (useAssCustomization) "primaryColor" else "textColor"),
+            Color.WHITE,
+        )
+        val backgroundColor = parseStyleColor(
+            custom.optString(if (useAssCustomization) "backColor" else "backgroundColor"),
+            Color.BLACK,
+        )
+        val backgroundOpacity = if (useAssCustomization) {
+            (255 - subtitleCustomization.optInt("backColorOpacity", 0)).coerceIn(0, 255) / 255f
+        } else {
+            captionCustomization.optDouble("backgroundOpacity", 0.7).toFloat().coerceIn(0f, 1f)
+        }
+        val outlineWidth = if (useAssCustomization) subtitleCustomization.optDouble("outline", 0.0) else 0.0
+        val shadowDepth = if (useAssCustomization) subtitleCustomization.optDouble("shadow", 0.0)
+        else captionCustomization.optDouble("textShadow", 0.0)
+        val edgeType = when {
+            outlineWidth > 0 -> CaptionStyleCompat.EDGE_TYPE_OUTLINE
+            shadowDepth > 0 -> CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW
+            else -> CaptionStyleCompat.EDGE_TYPE_NONE
+        }
+        val edgeColorKey = if (outlineWidth > 0) "outlineColor" else "textShadowColor"
+        val edgeColor = parseStyleColor(custom.optString(edgeColorKey), Color.BLACK)
+        val fontName = custom.optString("fontName").takeIf { useAssCustomization && it.isNotBlank() }
+        val typeface = fontName?.let { Typeface.create(it, Typeface.NORMAL) }
+        val size = if (useAssCustomization) {
+            (subtitleCustomization.optDouble("fontSize", 62.0) / 1000.0).toFloat()
+        } else {
+            (captionCustomization.optDouble("fontSize", 5.0) / 100.0).toFloat()
+        }.coerceIn(0.025f, 0.12f)
+
+        subtitleView.setStyle(CaptionStyleCompat(
+            foregroundColor,
+            Color.argb((backgroundOpacity * 255).toInt(), Color.red(backgroundColor), Color.green(backgroundColor), Color.blue(backgroundColor)),
+            Color.TRANSPARENT,
+            edgeType,
+            edgeColor,
+            typeface,
+        ))
+        subtitleView.setFractionalTextSize(size)
+        subtitleView.setApplyEmbeddedStyles(!useAssCustomization)
+        subtitleView.setApplyEmbeddedFontSizes(!useAssCustomization)
+    }
+
+    private fun parseStyleColor(value: String, fallback: Int): Int =
+        runCatching { Color.parseColor(value) }.getOrDefault(fallback)
 
     private fun buildMediaItem(uri: Uri, title: String, subtitleTracksJson: String): MediaItem {
         val builder = MediaItem.Builder()
@@ -329,6 +388,7 @@ class NativePlayerActivity : Activity() {
     companion object {
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_SUBTITLES = "subtitles"
+        private const val EXTRA_SUBTITLE_STYLE = "subtitleStyle"
         private const val EXTRA_START_POSITION = "startPositionMs"
         private const val SERVER_PORT = 43211
         @Volatile private var nativePlayerVisible = false
@@ -340,21 +400,29 @@ class NativePlayerActivity : Activity() {
 
         fun isVisible(): Boolean = nativePlayerVisible
 
-        fun updateMedia(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long) {
+        fun updateMedia(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
             val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
             if (uri.scheme !in setOf("http", "https", "content", "file")) return
             val activity = activeInstance?.get() ?: return
             activity.runOnUiThread {
-                if (!activity.isFinishing) activity.loadMedia(uri, title, subtitleTracksJson, startPositionMs)
+                if (!activity.isFinishing) activity.loadMedia(uri, title, subtitleTracksJson, startPositionMs, subtitleStyleJson)
             }
         }
 
-        fun intent(context: Context, uri: Uri, title: String, subtitleTracksJson: String, startPositionMs: Long): Intent =
+        fun updateSubtitleStyle(subtitleStyleJson: String) {
+            val activity = activeInstance?.get() ?: return
+            activity.runOnUiThread {
+                if (!activity.isFinishing) activity.activePlayerView?.let { activity.applySubtitleStyle(it, subtitleStyleJson) }
+            }
+        }
+
+        fun intent(context: Context, uri: Uri, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String): Intent =
             Intent(context, NativePlayerActivity::class.java)
                 .setData(uri)
                 .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_SUBTITLES, subtitleTracksJson)
                 .putExtra(EXTRA_START_POSITION, startPositionMs)
+                .putExtra(EXTRA_SUBTITLE_STYLE, subtitleStyleJson)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 }

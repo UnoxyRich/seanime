@@ -421,15 +421,19 @@ class MainActivity : Activity() {
         installUpdate(pendingPath)
     }
 
-    internal fun launchNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long) {
+    internal fun launchNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
         if (uri.scheme !in setOf("http", "https", "content", "file")) return
         NativePlayerActivity.markLaunchPending()
-        startActivity(NativePlayerActivity.intent(this, uri, title, subtitleTracksJson, startPositionMs))
+        startActivity(NativePlayerActivity.intent(this, uri, title, subtitleTracksJson, startPositionMs, subtitleStyleJson))
     }
 
-    internal fun updateNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long) {
-        NativePlayerActivity.updateMedia(url, title, subtitleTracksJson, startPositionMs)
+    internal fun updateNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
+        NativePlayerActivity.updateMedia(url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson)
+    }
+
+    internal fun updateNativeSubtitleStyle(subtitleStyleJson: String) {
+        NativePlayerActivity.updateSubtitleStyle(subtitleStyleJson)
     }
 
     internal fun setWebPlaybackActive(active: Boolean) {
@@ -714,13 +718,18 @@ private class AndroidTVBridge(private val activity: MainActivity, private val we
     }
 
     @JavascriptInterface
-    fun playNative(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long) {
-        activity.runOnUiThread { activity.launchNativePlayer(url, title, subtitleTracksJson, startPositionMs) }
+    fun playNative(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
+        activity.runOnUiThread { activity.launchNativePlayer(url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson) }
     }
 
     @JavascriptInterface
-    fun updateNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long) {
-        activity.updateNativePlayer(url, title, subtitleTracksJson, startPositionMs)
+    fun updateNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
+        activity.updateNativePlayer(url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson)
+    }
+
+    @JavascriptInterface
+    fun updateNativeSubtitleStyle(subtitleStyleJson: String) {
+        activity.updateNativeSubtitleStyle(subtitleStyleJson)
     }
 
     @JavascriptInterface

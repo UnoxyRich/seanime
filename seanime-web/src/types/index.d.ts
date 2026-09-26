@@ -34,8 +34,9 @@ declare global {
             openExternalUrl: (url: string) => void;
             supportedAbi: () => string;
             downloadAndInstallUpdate: (url: string, filename: string) => void;
-            playNative: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number) => void;
-            updateNativePlayer: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number) => void;
+            playNative: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number, subtitleStyleJson: string) => void;
+            updateNativePlayer: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number, subtitleStyleJson: string) => void;
+            updateNativeSubtitleStyle: (subtitleStyleJson: string) => void;
             nativePlayerActive: () => boolean;
             installUpdate: (filePath: string) => void;
             setPlaybackActive: (active: boolean) => void;
