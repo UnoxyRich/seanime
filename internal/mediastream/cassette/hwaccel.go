@@ -129,18 +129,23 @@ func testEncoder(ffmpegPath, encoder string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Generate 1 frame of black video and encode it with the candidate
-	// encoder. If this succeeds, the encoder is functional.
+	return encoderProbeCommand(ctx, ffmpegPath, encoder).Run() == nil
+}
+
+func encoderProbeCommand(ctx context.Context, ffmpegPath, encoder string) *exec.Cmd {
+	// Supply one black YUV420 frame directly. Android's packaged FFmpeg omits
+	// libavdevice, so a lavfi input would reject every encoder before probing it.
 	cmd := exec.CommandContext(ctx, ffmpegPath,
-		"-f", "lavfi",
-		"-i", "color=black:s=64x64:d=0.04",
+		"-f", "rawvideo", "-pixel_format", "yuv420p", "-video_size", "64x64", "-framerate", "25",
+		"-i", "pipe:0",
 		"-c:v", encoder,
 		"-frames:v", "1",
 		"-f", "null", "-",
 	)
+	cmd.Stdin = strings.NewReader(strings.Repeat("\x10", 64*64) + strings.Repeat("\x80", 64*64/2))
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	return cmd.Run() == nil
+	return cmd
 }
 
 // profile constructors

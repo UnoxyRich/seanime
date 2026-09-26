@@ -20,7 +20,7 @@ if [[ ! -d "$NDK_ROOT/toolchains/llvm/prebuilt" ]]; then
     exit 1
 fi
 
-for required in curl gpg git make nasm pkg-config tar; do
+for required in curl gpg git make nasm patch pkg-config tar; do
     command -v "$required" >/dev/null || {
         echo "Missing build tool: $required" >&2
         exit 1
@@ -114,6 +114,22 @@ for ABI in "${ABIS[@]}"; do
     git -C "$X264_REPOSITORY" archive "$X264_COMMIT" | tar -xf - -C "$X264_SOURCE"
     (
         cd "$X264_SOURCE"
+        # Some Android emulator kernels advertise SVE2 without usable SVE.
+        # SVE2 instructions require the base SVE registers and kernel support;
+        # retain all acceleration on hosts that expose both capability flags.
+        patch --batch --fuzz=0 -p1 <<'PATCH'
+--- a/common/cpu.c
++++ b/common/cpu.c
+@@ -486,7 +486,7 @@
+         flags |= X264_CPU_I8MM;
+     if ( hwcap & HWCAP_AARCH64_SVE )
+         flags |= X264_CPU_SVE;
+-    if ( hwcap2 & HWCAP2_AARCH64_SVE2 )
++    if ( (hwcap & HWCAP_AARCH64_SVE) && (hwcap2 & HWCAP2_AARCH64_SVE2) )
+         flags |= X264_CPU_SVE2;
+ 
+     return flags;
+PATCH
         CC="$CC" AR="$AR" RANLIB="$RANLIB" STRIP="$STRIP" \
             CFLAGS="--sysroot=$SYSROOT -fPIC" \
             ./configure \
@@ -130,6 +146,19 @@ for ABI in "${ABIS[@]}"; do
     tar -xJf "$FFMPEG_ARCHIVE" --strip-components=1 -C "$FFMPEG_SOURCE"
     (
         cd "$FFMPEG_SOURCE"
+        patch --batch --fuzz=0 -p1 <<'PATCH'
+--- a/libavutil/aarch64/cpu.c
++++ b/libavutil/aarch64/cpu.c
+@@ -47,7 +47,7 @@
+         flags |= AV_CPU_FLAG_DOTPROD;
+     if (hwcap & HWCAP_AARCH64_SVE)
+         flags |= AV_CPU_FLAG_SVE;
+-    if (hwcap2 & HWCAP2_AARCH64_SVE2)
++    if ((hwcap & HWCAP_AARCH64_SVE) && (hwcap2 & HWCAP2_AARCH64_SVE2))
+         flags |= AV_CPU_FLAG_SVE2;
+     if (hwcap2 & HWCAP2_AARCH64_I8MM)
+         flags |= AV_CPU_FLAG_I8MM;
+PATCH
         export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
         export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
         if ! ./configure \
@@ -186,4 +215,7 @@ release with GPL support and x264 commit $X264_COMMIT. FFmpeg source and release
 signatures are available from https://ffmpeg.org/download.html. x264 source is
 available from https://code.videolan.org/videolan/x264. The app and these tools
 are distributed under their applicable GPL-compatible terms.
+
+Both sources include the SVE prerequisite check for SVE2 detection shown in
+scripts/build-android-ffmpeg.sh in the Seanime TV source distribution.
 EOF

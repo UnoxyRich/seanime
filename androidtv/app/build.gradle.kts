@@ -151,6 +151,7 @@ val embedAndroidWeb by tasks.registering(Sync::class) {
     dependsOn(buildAndroidWeb)
     from(webOutput)
     into(embeddedWeb)
+    preserve { include(".gitkeep") }
 }
 
 val buildAndroidFfmpeg by tasks.registering(Exec::class) {

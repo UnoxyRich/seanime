@@ -75,6 +75,12 @@ class NativePlayerLifecycleTest {
             }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             instrumentation.waitForIdleSync()
+            // Finishing crosses the system activity manager; an idle app looper
+            // does not mean its stop/destroy callbacks have arrived yet.
+            val deadline = SystemClock.elapsedRealtime() + 10_000
+            while (scenario.state != Lifecycle.State.DESTROYED && SystemClock.elapsedRealtime() < deadline) {
+                SystemClock.sleep(50)
+            }
             assertEquals(Lifecycle.State.DESTROYED, scenario.state)
             assertFalse(NativePlayerActivity.isVisible())
         } finally {

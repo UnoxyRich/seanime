@@ -1,11 +1,31 @@
 package cassette
 
 import (
+	"context"
+	"io"
 	"reflect"
+	"strings"
 	"testing"
 
 	"seanime/internal/mediastream/videofile"
 )
+
+func TestEncoderProbeDoesNotRequireLibavdevice(t *testing.T) {
+	cmd := encoderProbeCommand(context.Background(), "/app/bin/ffmpeg", "h264_mediacodec")
+	want := []string{"/app/bin/ffmpeg", "-f", "rawvideo", "-pixel_format", "yuv420p", "-video_size", "64x64", "-framerate", "25",
+		"-i", "pipe:0", "-c:v", "h264_mediacodec", "-frames:v", "1", "-f", "null", "-"}
+	if !reflect.DeepEqual(cmd.Args, want) {
+		t.Fatalf("encoder probe arguments = %v, want %v", cmd.Args, want)
+	}
+	frame, err := io.ReadAll(cmd.Stdin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFrame := strings.Repeat("\x10", 64*64) + strings.Repeat("\x80", 64*64/2)
+	if string(frame) != wantFrame {
+		t.Fatal("encoder probe must supply exactly one black YUV420 frame")
+	}
+}
 
 func TestHardwareEncoderCandidates(t *testing.T) {
 	tests := []struct {

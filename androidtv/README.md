@@ -63,7 +63,8 @@ speed, volume, and mute settings passed by the web client.
 Missing-source tests exercise D-pad retry and return controls, including a
 source becoming available after an error while playback is paused.
 The media-tools test launches both packaged executables through the same
-command paths used by the Go server.
+command paths used by the Go server. It encodes raw video with libx264, probes
+the output, decodes it with FFmpeg, and checks Media3 frame rendering and seeking.
 
 ## Android host behavior
 
@@ -82,6 +83,11 @@ command paths used by the Go server.
   symlinks under `files/seanime/bin`, ahead of the inherited process path, so
   Go's existing transcoder uses the installed binaries without executing code
   copied into writable app data. Links are refreshed after app updates.
+- Hardware encoder detection supplies a raw YUV420 frame through stdin, so it
+  works with the packaged FFmpeg build that omits libavdevice. The bundled
+  FFmpeg and x264 CPU detectors require base SVE support before selecting SVE2
+  instructions; this handles Android kernels that report inconsistent flags
+  while retaining SVE2 acceleration when both capabilities are available.
 - OAuth and external web destinations stay inside an Android WebView. OAuth
   redirects to Seanime's local callback are returned to the app's main WebView.
 - The JavaScript interface uses a token delivered only to the local main frame.
