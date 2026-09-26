@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.system.Os
 import android.util.Log
 import app.seanime.tv.gomobile.mobile.Mobile
 import java.io.File
@@ -38,11 +39,15 @@ class SeanimeTvApplication : Application(), Application.ActivityLifecycleCallbac
             val marker = File(binaryDir, "ffmpeg-version")
             val ffmpeg = File(binaryDir, "ffmpeg")
             val ffprobe = File(binaryDir, "ffprobe")
-            if (marker.isFile && marker.readText() == version && ffmpeg.canExecute() && ffprobe.canExecute()) return
-
             val nativeDir = File(applicationInfo.nativeLibraryDir)
-            copyExecutable(File(nativeDir, "libffmpeg.so"), ffmpeg)
-            copyExecutable(File(nativeDir, "libffprobe.so"), ffprobe)
+            val packagedFfmpeg = File(nativeDir, "libffmpeg.so")
+            val packagedFfprobe = File(nativeDir, "libffprobe.so")
+            if (marker.isFile && marker.readText() == version &&
+                ffmpeg.canExecute() && ffmpeg.canonicalFile == packagedFfmpeg.canonicalFile &&
+                ffprobe.canExecute() && ffprobe.canonicalFile == packagedFfprobe.canonicalFile) return
+
+            linkExecutable(packagedFfmpeg, ffmpeg)
+            linkExecutable(packagedFfprobe, ffprobe)
             marker.writeText(version)
             Log.i("SeanimeTV", "Installed Android media tools: $version")
         }.onFailure { error ->
@@ -50,15 +55,15 @@ class SeanimeTvApplication : Application(), Application.ActivityLifecycleCallbac
         }
     }
 
-    private fun copyExecutable(source: File, target: File) {
-        check(source.isFile) { "Packaged media tool is missing: ${source.absolutePath}" }
+    private fun linkExecutable(source: File, target: File) {
+        check(source.isFile && source.canExecute()) { "Packaged media tool is missing or not executable: ${source.absolutePath}" }
+        // Android 10+ prohibits executing binaries copied to writable app data.
+        // Keep the executable inode in the APK's extracted native-library
+        // directory and expose only its familiar command name on Go's PATH.
         val temporary = File(target.parentFile, "${target.name}.new")
-        source.copyTo(temporary, overwrite = true)
-        check(temporary.setExecutable(true, false) || temporary.canExecute()) {
-            "Could not make media tool executable: ${temporary.absolutePath}"
-        }
-        if (target.exists()) check(target.delete()) { "Could not replace media tool: ${target.absolutePath}" }
-        check(temporary.renameTo(target)) { "Could not install media tool: ${target.absolutePath}" }
+        temporary.delete()
+        Os.symlink(source.absolutePath, temporary.absolutePath)
+        Os.rename(temporary.absolutePath, target.absolutePath)
     }
 
     override fun onActivityStarted(activity: Activity) {

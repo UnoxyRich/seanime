@@ -46,6 +46,8 @@ checks` workflow runs the suite on an API 36 x86_64 TV emulator.
 The native-player lifecycle test uses local WAV fixtures to check stop/resume
 and activity recreation, including playlist handoffs, pause state, position,
 speed, volume, and track preferences.
+The media-tools test launches both packaged executables through the same
+command paths used by the Go server.
 
 ## Android host behavior
 
@@ -53,9 +55,11 @@ speed, volume, and track preferences.
 - The local server binds only to `127.0.0.1:43211`; app data and cache are kept
   in separate Android-managed directories.
 - The signed FFmpeg 8.1.3 source release is built with the pinned GPL x264
-  revision for ARM64 and x86_64. Android extracts the matching executable tools
-  into app-managed `files/seanime/bin`, ahead of the inherited process path, so
-  Go's existing transcoder can use them without changing its API.
+  revision for ARM64 and x86_64. Android extracts the matching executables into
+  its installed native-library directory. The app creates `ffmpeg`/`ffprobe`
+  symlinks under `files/seanime/bin`, ahead of the inherited process path, so
+  Go's existing transcoder uses the installed binaries without executing code
+  copied into writable app data. Links are refreshed after app updates.
 - OAuth and external web destinations stay inside an Android WebView. OAuth
   redirects to Seanime's local callback are returned to the app's main WebView.
 - The JavaScript interface uses an origin-scoped document-start token, so
