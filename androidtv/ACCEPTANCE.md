@@ -21,6 +21,11 @@ and device model with each result.
   decodes it with FFmpeg, and renders/seeks it in Media3 while paused.
 - The four transcoding capability tests and seven playback checkpoint tests
   pass. Physical-device scenarios below still need recorded passing runs.
+- The full Android storage and direct-stream Go package suites pass, including
+  six new tests for seekable SAF readers, ranges/HEAD/thumbnail requests,
+  matching sidecar subtitles, size limits, simulated revoked access and
+  restoration, and ordinary filesystem reads. The synthetic adapter tests do
+  not establish physical USB behavior.
 - All four native libraries in each debug APK pass the 16 KiB ELF/ZIP check
   in `scripts/verify_android_native_alignment.py`; its seven regression tests
   pass. Runtime operation on a 16 KiB device still needs a separate test run.

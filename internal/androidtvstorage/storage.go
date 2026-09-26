@@ -59,6 +59,9 @@ func NewReaderAt(path string) (*ReaderAt, int64, error) {
 	if entry.IsDirectory {
 		return nil, 0, fmt.Errorf("Android TV storage path is a directory: %s", path)
 	}
+	if entry.Size < 0 {
+		return nil, 0, fmt.Errorf("Android TV storage file size is unknown: %s", path)
+	}
 	return &ReaderAt{path: path, size: entry.Size}, entry.Size, nil
 }
 

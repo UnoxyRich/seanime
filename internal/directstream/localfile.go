@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/api/anilist"
 	"seanime/internal/library/anime"
 	"seanime/internal/mkvparser"
@@ -34,12 +35,14 @@ type LocalFileStream struct {
 }
 
 func (s *LocalFileStream) newReader() (io.ReadSeekCloser, error) {
-	r, err := os.OpenFile(s.localFile.Path, os.O_RDONLY, 0)
-	if err != nil {
-		return nil, err
-	}
+	return openLocalStreamFile(s.localFile.Path)
+}
 
-	return r, nil
+func openLocalStreamFile(path string) (io.ReadSeekCloser, error) {
+	if androidtvstorage.IsPath(path) {
+		return androidtvstorage.Open(path)
+	}
+	return os.Open(path)
 }
 
 func (s *LocalFileStream) Type() player.PlaybackType {
@@ -169,17 +172,7 @@ func (s *LocalFileStream) loadLocalSubtitleTracks() []*player.SubtitleTrack {
 
 	tracks := make([]*player.SubtitleTrack, 0, len(files))
 	for _, file := range files {
-		info, err := os.Stat(file.Path)
-		if err != nil {
-			s.logger.Warn().Err(err).Str("path", file.Path).Msg("directstream(file): Failed to stat local subtitle file")
-			continue
-		}
-		if info.Size() > maxLocalSubtitleFileSize {
-			s.logger.Warn().Str("path", file.Path).Int64("size", info.Size()).Msg("directstream(file): Skipping large local subtitle file")
-			continue
-		}
-
-		data, err := os.ReadFile(file.Path)
+		data, err := readLocalSubtitleFile(file.Path)
 		if err != nil {
 			s.logger.Warn().Err(err).Str("path", file.Path).Msg("directstream(file): Failed to read local subtitle file")
 			continue
@@ -203,6 +196,30 @@ func (s *LocalFileStream) loadLocalSubtitleTracks() []*player.SubtitleTrack {
 	return tracks
 }
 
+func readLocalSubtitleFile(path string) ([]byte, error) {
+	reader, err := openLocalStreamFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	size, err := reader.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, err
+	}
+	if size > maxLocalSubtitleFileSize {
+		return nil, fmt.Errorf("subtitle file exceeds %d bytes", maxLocalSubtitleFileSize)
+	}
+	if _, err := reader.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	// Bound the read as well as the initial size check if a local file grows.
+	data, err := io.ReadAll(io.LimitReader(reader, maxLocalSubtitleFileSize+1))
+	if int64(len(data)) > maxLocalSubtitleFileSize {
+		return nil, fmt.Errorf("subtitle file exceeds %d bytes", maxLocalSubtitleFileSize)
+	}
+	return data, err
+}
+
 func (s *LocalFileStream) GetAttachmentByName(filename string) (*mkvparser.AttachmentInfo, bool) {
 	return getAttachmentByName(s.manager.playbackCtx, s, filename)
 }
@@ -217,15 +234,21 @@ func (s *LocalFileStream) GetStreamHandler() http.Handler {
 
 		if r.Method == http.MethodHead {
 			// Get the file size
-			fileInfo, err := os.Stat(s.localFile.Path)
+			reader, err := s.newReader()
 			if err != nil {
 				s.logger.Error().Msg("directstream: Failed to get file info")
 				http.Error(w, "Failed to get file info", http.StatusInternalServerError)
 				return
 			}
+			defer reader.Close()
+			size, err := reader.Seek(0, io.SeekEnd)
+			if err != nil {
+				http.Error(w, "Failed to get file size", http.StatusInternalServerError)
+				return
+			}
 
 			// Set the content length
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 			w.Header().Set("Content-Type", s.LoadContentType())
 			w.Header().Set("Accept-Ranges", "bytes")
 			w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", s.localFile.Path))
@@ -251,6 +274,7 @@ func ServeLocalFile(w http.ResponseWriter, r *http.Request, lfStream *LocalFileS
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		defer reader.Close()
 		ra, ok := handleRange(w, r, reader, lfStream.localFile.Path, size)
 		if !ok {
 			return

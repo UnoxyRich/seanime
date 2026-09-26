@@ -88,8 +88,8 @@ jobs:
       - name: Test transcoding capability detection
         run: go test -ldflags=-checklinkname=0 ./internal/mediastream/cassette -count=1
 
-      - name: Test integrated player platform routing
-        run: go test -ldflags=-checklinkname=0 ./internal/directstream -run '^(TestDefaultPlaybackTarget|TestDirectStreamPlaybackTargetsRemainIndependent)' -count=1
+      - name: Test Android storage and direct streaming
+        run: go test -ldflags=-checklinkname=0 ./internal/androidtvstorage ./internal/directstream -count=1
 
       - name: Build Android TV APKs
         working-directory: androidtv

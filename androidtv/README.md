@@ -141,6 +141,11 @@ the output, decodes it with FFmpeg, and checks Media3 frame rendering and seekin
   existing library rows when a selected SAF tree is unplugged or its grant is
   revoked, then rescan them after access returns. The manga local provider can
   scan SAF roots and stage CBZ/ZIP archives in the app cache when required.
+  The shared direct-stream player also reads SAF documents through seekable
+  ranges, including HEAD/thumbnail requests and matching sidecar subtitles.
+  Subtitle reads are capped at 20 MiB. Storage and direct-stream package tests
+  cover these paths and simulated access loss/recovery; physical USB testing
+  remains necessary.
   Torrent-stream
   active torrent pieces remain in app-local storage for random-access
   streaming; after the selected file completes, Seanime copies it to the
