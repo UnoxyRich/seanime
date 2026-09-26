@@ -104,6 +104,11 @@ command paths used by the Go server.
 - Native playback releases its decoder while the activity is stopped and
   recreates it on return with the latest episode and playback settings. The
   retained WebView resumes receiving progress and playlist events on return.
+- Native direct-stream playback checkpoints the underlying source in private
+  Go app data and saves an opaque checkpoint ID in the activity state. Local,
+  torrent, debrid, URL and Nakama source selections can be reopened through the
+  Go binding for a new WebView client. Automatic coordination after a full
+  process restart is still being implemented; see the acceptance matrix.
 - Native playback errors show focused remote controls to retry the source or
   return to the web player. Retrying retains the position, speed, volume and
   pause state; failures do not advance the playlist.

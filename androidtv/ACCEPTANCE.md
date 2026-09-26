@@ -20,9 +20,10 @@ and device model with each result.
 - All four native libraries in each debug APK pass the 16 KiB ELF/ZIP check
   in `scripts/verify_android_native_alignment.py`; its seven regression tests
   pass. Runtime operation on a 16 KiB device still needs a separate test run.
-- A checksum-verified API 31 ARM64 TV image is installed locally using sparse
-  files. The emulator currently refuses to boot because the host fails its
-  free-disk-space check. This installation provides no runtime test evidence.
+- A checksum-verified API 31 ARM64 TV image was temporarily installed using
+  sparse files. The emulator refused to create its data partition because it
+  required about 7.2 GiB free. The unused test image/AVD were then removed to
+  recover build space. This attempt provides no runtime test evidence.
 
 ## Remaining process-restoration work
 
@@ -30,10 +31,22 @@ Main and OAuth activity recreation now restores their page/history, and native
 player recreation restores its media and decoder settings in the existing
 process. These are distinct from reconstruction after Android kills the entire
 app process. A restored native player can hold a loopback stream URL whose Go
-server and in-memory stream session no longer exist. Restarting the backend and
-recreating the source session, then reconnecting playlist/progress handling,
-still need implementation and a real process-death test. The saved URL alone
-does not establish recovery for torrent, debrid or transcode sessions.
+server and in-memory stream session no longer exist.
+
+Direct-stream source checkpoints now retain the original local file, torrent
+and file selection, debrid torrent/file selection, or URL/Nakama source in
+private app data. The Android activity saves only an opaque checkpoint ID with
+its decoder state. The Go binding can reopen those selections for a new client
+ID using the existing playback modules; debrid recovery resolves a fresh source
+URL. Checkpoint replacement, corruption/size handling, stale playback IDs, and
+metadata isolation have unit coverage.
+
+The Android cold-process flow still needs to restart the backend, reconnect the
+WebView/player events, invoke the reopen operation and hand the fresh stream to
+Media3. Media-stream/transcode and online-provider recovery need their own
+source refresh path. Nakama room reconnection and playlist state also need
+end-to-end verification. The checkpoint API alone does not establish full
+process-death recovery.
 
 ## Feature scenarios
 

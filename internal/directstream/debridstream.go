@@ -22,6 +22,7 @@ var _ Stream = (*DebridStream)(nil)
 type DebridStream struct {
 	httpBaseStream
 	torrent       *hibiketorrent.AnimeTorrent
+	fileID        string
 	streamReadyCh chan struct{} // Closed by the initiator when the stream URL is resolved
 }
 
@@ -72,6 +73,7 @@ func (m *Manager) PlayDebridStream(ctx context.Context, filepath string, opts Pl
 
 	stream := &DebridStream{
 		torrent: opts.Torrent,
+		fileID:  opts.FileId,
 		httpBaseStream: httpBaseStream{
 			streamUrl: opts.StreamUrl,
 			filepath:  filepath,

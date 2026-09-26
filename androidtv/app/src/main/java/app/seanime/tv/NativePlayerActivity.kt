@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.PixelCopy
@@ -41,6 +42,7 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
 import androidx.documentfile.provider.DocumentFile
+import app.seanime.tv.gomobile.mobile.Mobile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -68,6 +70,10 @@ class NativePlayerActivity : Activity() {
     private var savedTrackSelectionParameters: TrackSelectionParameters? = null
     private var savedVolume = 1f
     private var muted = false
+    private var playbackCheckpointId = ""
+    private var playbackCheckpointUrl = ""
+    private var checkpointGeneration = 0
+    private val checkpointExecutor = Executors.newSingleThreadExecutor { task -> Thread(task, "Seanime TV playback checkpoint") }
     private val subtitleCacheFiles = mutableListOf<File>()
     private val progressHandler = Handler(Looper.getMainLooper())
     private val screenshotExecutor = Executors.newSingleThreadExecutor { task ->
@@ -113,6 +119,8 @@ class NativePlayerActivity : Activity() {
         savedVolume = savedInstanceState?.getFloat(STATE_VOLUME, 1f) ?: playbackSettings.optDouble("volume", 1.0).toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 1f
         muted = savedInstanceState?.getBoolean(STATE_MUTED, false) ?: playbackSettings.optBoolean("muted", false)
         savedTrackSelectionParameters = savedInstanceState?.getBundle(STATE_TRACK_SELECTION)?.let(TrackSelectionParameters::fromBundle)
+        playbackCheckpointId = savedInstanceState?.getString(STATE_CHECKPOINT_ID).orEmpty()
+        playbackCheckpointUrl = savedInstanceState?.getString(STATE_CHECKPOINT_URL).orEmpty()
 
         val frame = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
         val playerView = PlayerView(this).apply {
@@ -224,6 +232,7 @@ class NativePlayerActivity : Activity() {
         exoPlayer.prepare()
         exoPlayer.playWhenReady = resumePlayWhenReady && !completed
         nativePlayerVisible = true
+        capturePlaybackSource(uri)
         MainActivity.notifyNativePlayerStarted()
         progressHandler.postDelayed(publishProgress, 2_000)
     }
@@ -238,6 +247,7 @@ class NativePlayerActivity : Activity() {
         mediaTitle = title
         this.subtitleTracksJson = subtitleTracksJson
         this.subtitleStyleJson = subtitleStyleJson
+        capturePlaybackSource(uri)
         showPlaybackError(null)
         if (!preservePosition) completed = false
         lastPositionMs = position
@@ -283,6 +293,26 @@ class NativePlayerActivity : Activity() {
         }
     }
 
+    private fun capturePlaybackSource(uri: Uri) {
+        val url = uri.toString()
+        if (playbackCheckpointUrl == url && playbackCheckpointId.isNotBlank()) return
+        val generation = ++checkpointGeneration
+        playbackCheckpointId = ""
+        playbackCheckpointUrl = url
+        if (MainActivity.localPageUrl(url) == null || uri.path != "/api/v1/directstream/stream") return
+        checkpointExecutor.execute {
+            runCatching { Mobile.capturePlaybackResume(url) }
+                .onSuccess { checkpoint ->
+                    runOnUiThread {
+                        if (!isDestroyed && !isFinishing && checkpointGeneration == generation && mediaUri == uri) {
+                            playbackCheckpointId = checkpoint
+                        }
+                    }
+                }
+                .onFailure { Log.w("SeanimeTV", "Could not save playback source for process recovery", it) }
+        }
+    }
+
     private fun showPlaybackError(error: PlaybackException?) {
         val wasVisible = playbackErrorView?.visibility == View.VISIBLE
         playbackErrorView?.visibility = if (error == null) View.GONE else View.VISIBLE
@@ -317,6 +347,8 @@ class NativePlayerActivity : Activity() {
         outState.putFloat(STATE_PITCH, savedPlaybackParameters.pitch)
         outState.putFloat(STATE_VOLUME, savedVolume)
         outState.putBoolean(STATE_MUTED, muted)
+        outState.putString(STATE_CHECKPOINT_ID, playbackCheckpointId)
+        outState.putString(STATE_CHECKPOINT_URL, playbackCheckpointUrl)
         savedTrackSelectionParameters?.let { outState.putBundle(STATE_TRACK_SELECTION, it.toBundle()) }
         super.onSaveInstanceState(outState)
     }
@@ -564,6 +596,7 @@ class NativePlayerActivity : Activity() {
         activePlayerView = null
         playerControlsView = null
         screenshotExecutor.shutdown()
+        checkpointExecutor.shutdown()
         super.onDestroy()
     }
 
@@ -589,6 +622,8 @@ class NativePlayerActivity : Activity() {
         private const val STATE_VOLUME = "volume"
         private const val STATE_MUTED = "muted"
         private const val STATE_TRACK_SELECTION = "trackSelection"
+        private const val STATE_CHECKPOINT_ID = "playbackCheckpointId"
+        private const val STATE_CHECKPOINT_URL = "playbackCheckpointUrl"
         private const val SERVER_PORT = 43211
         @Volatile private var nativePlayerVisible = false
         @Volatile private var activeInstance: WeakReference<NativePlayerActivity>? = null
