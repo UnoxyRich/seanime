@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/api/anilist"
 	"seanime/internal/api/metadata_provider"
 	"seanime/internal/database/db"
@@ -22,8 +23,10 @@ import (
 	"seanime/internal/torrents/torrent"
 	"seanime/internal/util"
 	"seanime/internal/util/result"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	itorrent "github.com/anacrolix/torrent"
 	"github.com/rs/zerolog"
@@ -68,6 +71,12 @@ type (
 		shouldPreloadStream   atomic.Bool // Flag on whether the client should prepare a stream
 
 		acceleratedStartup bool
+
+		safMirrorMu          sync.Mutex
+		safDownloadDir       string
+		safMirrorInFlight    map[string]struct{}
+		safMirrorCompleted   map[string]struct{}
+		safMirrorLastAttempt map[string]time.Time
 	}
 
 	Settings struct {
@@ -121,6 +130,9 @@ func NewRepository(opts *NewRepositoryOptions) *Repository {
 		previousStreamOptions:           mo.None[*StartStreamOptions](),
 		preloadedStream:                 mo.None[*preloadedStream](),
 		acceleratedStartup:              true,
+		safMirrorInFlight:               make(map[string]struct{}),
+		safMirrorCompleted:              make(map[string]struct{}),
+		safMirrorLastAttempt:            make(map[string]time.Time),
 	}
 
 	ret.autoSelect = autoselect.New(&autoselect.NewAutoSelectOptions{
@@ -172,6 +184,9 @@ func (r *Repository) InitModules(settings *models.TorrentstreamSettings, host st
 	if settings == nil {
 		r.logger.Error().Msg("torrentstream: Cannot initialize module, no settings provided")
 		r.settings = mo.None[Settings]()
+		r.safMirrorMu.Lock()
+		r.safDownloadDir = ""
+		r.safMirrorMu.Unlock()
 		return errors.New("torrentstream: Cannot initialize module, no settings provided")
 	}
 
@@ -181,15 +196,29 @@ func (r *Repository) InitModules(settings *models.TorrentstreamSettings, host st
 		r.logger.Info().Msg("torrentstream: Module is disabled")
 		r.Shutdown()
 		r.settings = mo.None[Settings]()
+		r.safMirrorMu.Lock()
+		r.safDownloadDir = ""
+		r.safMirrorMu.Unlock()
 		return nil
 	}
 
 	r.acceleratedStartup = !s.DisableAcceleratedStartup
 
 	// Set default download directory, which is a temporary directory
-	if s.DownloadDir == "" {
+	if androidtvstorage.IsPath(s.DownloadDir) {
+		r.safMirrorMu.Lock()
+		r.safDownloadDir = s.DownloadDir
+		r.safMirrorMu.Unlock()
+		s.DownloadDir = r.getDefaultDownloadPath()
+	} else if s.DownloadDir == "" {
+		r.safMirrorMu.Lock()
+		r.safDownloadDir = ""
+		r.safMirrorMu.Unlock()
 		s.DownloadDir = r.getDefaultDownloadPath()
 	} else {
+		r.safMirrorMu.Lock()
+		r.safDownloadDir = ""
+		r.safMirrorMu.Unlock()
 		s.DownloadDir = util.ResolvePhysicalPath(s.DownloadDir)
 	}
 	_ = os.MkdirAll(s.DownloadDir, os.ModePerm) // Create the directory if it doesn't exist
@@ -271,6 +300,9 @@ func (r *Repository) GetDownloadDir() string {
 }
 
 func (r *Repository) getDefaultDownloadPath() string {
+	if cacheDir := strings.TrimSpace(os.Getenv("SEANIME_CACHE_DIR")); cacheDir != "" {
+		return filepath.Join(cacheDir, "torrentstream")
+	}
 	tempDir := os.TempDir()
 	downloadDirPath := filepath.Join(tempDir, "seanime", "torrentstream")
 	return downloadDirPath

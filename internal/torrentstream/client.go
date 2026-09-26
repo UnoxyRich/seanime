@@ -175,9 +175,15 @@ func (c *Client) initializeClient() error {
 				}
 			default:
 				c.mu.Lock()
+				var completedTorrent *torrent.Torrent
+				var completedFile *torrent.File
 				if c.torrentClient.IsPresent() && c.currentTorrent.IsPresent() && c.currentFile.IsPresent() {
 					t := c.currentTorrent.MustGet()
 					f := c.currentFile.MustGet()
+					if f.Length() > 0 && f.BytesCompleted() == f.Length() {
+						completedTorrent = t
+						completedFile = f
+					}
 
 					// Get the current time
 					now := time.Now()
@@ -241,6 +247,9 @@ func (c *Client) initializeClient() error {
 					c.timeSinceLoggedSeeding = time.Now()
 				}
 				c.mu.Unlock()
+				if completedTorrent != nil && completedFile != nil {
+					go c.repository.preserveCompletedTorrentFile(completedTorrent, completedFile)
+				}
 				if c.torrentClient.IsPresent() {
 					if time.Since(c.timeSinceLoggedSeeding) > 20*time.Second {
 						c.timeSinceLoggedSeeding = time.Now()

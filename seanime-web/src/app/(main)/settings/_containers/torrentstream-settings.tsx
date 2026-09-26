@@ -6,6 +6,7 @@ import { AutoSelectProfileButton } from "@/app/(main)/settings/_components/autos
 import { SettingsCard } from "@/app/(main)/settings/_components/settings-card"
 import { SettingsIsDirty, SettingsSubmitButton } from "@/app/(main)/settings/_components/settings-submit-button"
 import { ExperimentalBadge } from "@/components/shared/beta-badge"
+import { AndroidTVStoragePicker } from "@/components/shared/android-tv-storage-picker"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -254,6 +255,14 @@ export function TorrentstreamSettings(props: TorrentstreamSettingsProps) {
                                         help="Where the torrents will be downloaded to while streaming. Leave empty to use the default cache directory."
                                         shouldExist
                                     />
+                                    <AndroidTVStoragePicker
+                                        purpose="torrent-stream"
+                                        label="Save completed streams to USB"
+                                        onSelect={(root) => formRef.current?.setValue("downloadDir", root.path, { shouldDirty: true, shouldTouch: true, shouldValidate: true })}
+                                    />
+                                    <p className="text-sm text-[--muted]">
+                                        Active torrent data stays in app storage while streaming, then the completed file is copied to this folder.
+                                    </p>
                                     <Alert
                                         intent="warning"
                                         description="Choose an empty directory to avoid losing data."

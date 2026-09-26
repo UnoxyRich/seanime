@@ -2,12 +2,13 @@ package handlers
 
 import (
 	"errors"
-	"os"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/api/anilist"
 	"seanime/internal/api/metadata"
 	"seanime/internal/database/models"
 	"seanime/internal/events"
 	hibiketorrent "seanime/internal/extension/hibike/torrent"
+	"seanime/internal/library/filesystem"
 	"seanime/internal/torrentstream"
 	"seanime/internal/util"
 
@@ -54,15 +55,30 @@ func (h *Handler) HandleSaveTorrentstreamSettings(c echo.Context) error {
 
 	// Validate the download directory
 	if b.Settings.DownloadDir != "" {
-		dir, err := os.Stat(util.ResolvePhysicalPath(b.Settings.DownloadDir))
-		if err != nil {
-			h.App.Logger.Error().Err(err).Msgf("torrentstream: Download directory %s does not exist", b.Settings.DownloadDir)
-			h.App.WSEventManager.SendEvent(events.ErrorToast, "Download directory does not exist")
-			b.Settings.DownloadDir = ""
-		}
-		if !dir.IsDir() {
-			h.App.Logger.Error().Msgf("torrentstream: Download directory %s is not a directory", b.Settings.DownloadDir)
-			h.App.WSEventManager.SendEvent(events.ErrorToast, "Download directory is not a directory")
+		directory := util.ResolvePhysicalPath(b.Settings.DownloadDir)
+		if androidtvstorage.IsPath(directory) {
+			entry, err := androidtvstorage.Stat(directory)
+			if err != nil {
+				h.App.Logger.Error().Err(err).Msgf("torrentstream: Download directory %s does not exist", b.Settings.DownloadDir)
+				h.App.WSEventManager.SendEvent(events.ErrorToast, "Download directory does not exist or is unavailable")
+				b.Settings.DownloadDir = ""
+			} else if !entry.IsDirectory {
+				h.App.Logger.Error().Msgf("torrentstream: Download directory %s is not a directory", b.Settings.DownloadDir)
+				h.App.WSEventManager.SendEvent(events.ErrorToast, "Download directory is not a directory")
+				b.Settings.DownloadDir = ""
+			} else if err := androidtvstorage.MkdirAll(directory); err != nil {
+				h.App.Logger.Error().Err(err).Msgf("torrentstream: Download directory %s is not writable", b.Settings.DownloadDir)
+				h.App.WSEventManager.SendEvent(events.ErrorToast, "Download directory does not have write access")
+				b.Settings.DownloadDir = ""
+			}
+		} else if isDirectory, err := filesystem.PathIsDirectory(directory); err != nil || !isDirectory {
+			if err != nil {
+				h.App.Logger.Error().Err(err).Msgf("torrentstream: Download directory %s does not exist", b.Settings.DownloadDir)
+				h.App.WSEventManager.SendEvent(events.ErrorToast, "Download directory does not exist")
+			} else {
+				h.App.Logger.Error().Msgf("torrentstream: Download directory %s is not a directory", b.Settings.DownloadDir)
+				h.App.WSEventManager.SendEvent(events.ErrorToast, "Download directory is not a directory")
+			}
 			b.Settings.DownloadDir = ""
 		}
 	}

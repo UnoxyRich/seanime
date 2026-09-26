@@ -46,7 +46,10 @@ before distributing a release build.
   when a selected SAF tree is unplugged or its grant is revoked, then rescan
   them after access returns. The manga local provider can scan SAF roots and
   stages CBZ/ZIP archives in the app cache when required. Torrent-stream
-  downloads are still staged in app-local storage.
+  active torrent pieces remain in app-local storage for random-access
+  streaming; after the selected file completes, Seanime copies it to the
+  configured SAF folder. This completion copy has not yet been verified on a
+  physical Android TV device.
 - Android ffmpeg/ffprobe executables are not bundled yet. Transcoding still
   needs an Android-compatible toolchain and device capability configuration.
 - The APK installation bridge can open an APK staged in Seanime's app cache;

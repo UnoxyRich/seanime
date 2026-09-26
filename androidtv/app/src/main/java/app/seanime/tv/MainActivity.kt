@@ -445,7 +445,7 @@ private class AndroidTVBridge(private val activity: MainActivity, private val we
 
     @JavascriptInterface
     fun requestMediaFolder(purpose: String) {
-        val normalizedPurpose = purpose.takeIf { it in setOf("library-main", "library-additional", "manga-local") } ?: "library-main"
+        val normalizedPurpose = purpose.takeIf { it in setOf("library-main", "library-additional", "manga-local", "torrent-stream") } ?: "library-main"
         activity.runOnUiThread {
             activity.pendingStoragePurpose = normalizedPurpose
             val intent = Intent(DocumentsContract.ACTION_OPEN_DOCUMENT_TREE).apply {

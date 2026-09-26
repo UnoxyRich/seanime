@@ -17,7 +17,7 @@ type AndroidTVStorageEvent = {
 
 type AndroidTVStoragePickerProps = {
     label: string
-    purpose: "library-main" | "library-additional" | "manga-local"
+    purpose: "library-main" | "library-additional" | "manga-local" | "torrent-stream"
     onSelect: (root: AndroidTVStorageRoot) => void
 }
 
