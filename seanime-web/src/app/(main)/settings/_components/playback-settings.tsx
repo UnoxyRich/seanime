@@ -357,10 +357,12 @@ export function PlaybackSettings() {
                         options={[
                             {
                                 value: PlaybackTorrentStreaming.Default,
-                                title: "Desktop media player",
-                                description: "Open the stream in your configured player with automatic tracking.",
-                                icon: LuLaptop,
-                                preview: <TorrentDesktopPreview />,
+                                title: __isAndroidTV__ ? "TV player" : "Desktop media player",
+                                description: __isAndroidTV__
+                                    ? "Play on this TV with automatic progress tracking."
+                                    : "Open the stream in your configured player with automatic tracking.",
+                                icon: __isAndroidTV__ ? MdOutlineBroadcastOnHome : LuLaptop,
+                                preview: __isAndroidTV__ ? <MediastreamPreview disabled={false} /> : <TorrentDesktopPreview />,
                             },
                             {
                                 value: PlaybackTorrentStreaming.ExternalPlayerLink,

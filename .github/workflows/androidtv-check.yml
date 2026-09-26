@@ -88,6 +88,9 @@ jobs:
       - name: Test transcoding capability detection
         run: go test -ldflags=-checklinkname=0 ./internal/mediastream/cassette -count=1
 
+      - name: Test integrated player platform routing
+        run: go test -ldflags=-checklinkname=0 ./internal/directstream -run '^(TestDefaultPlaybackTarget|TestDirectStreamPlaybackTargetsRemainIndependent)' -count=1
+
       - name: Build Android TV APKs
         working-directory: androidtv
         run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon

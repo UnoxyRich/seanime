@@ -574,10 +574,7 @@ func (a *App) InitOrRefreshModules() {
 			AutoUpdateProgress:  a.Settings.GetLibrary().AutoUpdateProgress,
 		})
 
-		playbackTarget := directstream.PlaybackTargetVideoCore
-		if a.Settings.GetMediaPlayer().MpvPrismEnabled {
-			playbackTarget = directstream.PlaybackTargetMpvCore
-		}
+		playbackTarget := directstream.DefaultPlaybackTarget(runtime.GOOS, a.Settings.GetMediaPlayer().MpvPrismEnabled)
 		a.DirectStreamManager.SetPlaybackTarget(playbackTarget)
 
 		a.TorrentstreamRepository.SetMediaPlayerRepository(a.MediaPlayerRepository)

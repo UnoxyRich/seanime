@@ -98,7 +98,7 @@ export function useHandlePlayMedia() {
                 mediaId,
                 anidbEpisode,
                 clientId: clientId ?? "",
-                forcePlaybackMethod: forcePlaybackMethod || undefined,
+                forcePlaybackMethod: forcePlaybackMethod || (__isAndroidTV__ ? "nativeplayer" : undefined),
             })
         }
 

@@ -131,6 +131,15 @@ const (
 	PlaybackTargetMpvCore   PlaybackTarget = "mpvcore"
 )
 
+// DefaultPlaybackTarget keeps imported desktop mpv preferences from routing
+// Android TV streams to a player that only exists in Electron.
+func DefaultPlaybackTarget(goos string, mpvPrismEnabled bool) PlaybackTarget {
+	if mpvPrismEnabled && goos != "android" {
+		return PlaybackTargetMpvCore
+	}
+	return PlaybackTargetVideoCore
+}
+
 func (m *Manager) SetPlaybackTarget(target PlaybackTarget) {
 	if target != PlaybackTargetVideoCore && target != PlaybackTargetMpvCore {
 		return

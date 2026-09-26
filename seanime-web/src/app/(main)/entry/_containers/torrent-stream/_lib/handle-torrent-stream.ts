@@ -1,7 +1,6 @@
 import { HibikeTorrent_AnimeTorrent, HibikeTorrent_BatchEpisodeFiles } from "@/api/generated/types"
 import { useTorrentstreamStartStream } from "@/api/hooks/torrentstream.hooks"
 import {
-    ElectronPlaybackMethod,
     PlaybackTorrentStreaming,
     useCurrentDevicePlaybackSettings,
     useExternalPlayerLink,
@@ -24,7 +23,9 @@ import { ForcePlaybackMethod, useForcePlaybackMethod } from "@/app/(main)/entry/
 import { clientIdAtom } from "@/app/websocket-provider"
 import { logger } from "@/lib/helpers/debug"
 import { WSEvents } from "@/lib/server/ws-events"
-import { __isElectronDesktop__ } from "@/types/constants"
+import { __isAndroidTV__, __isElectronDesktop__ } from "@/types/constants"
+import { streamPlaybackType } from "@/lib/playback-platform"
+import { toast } from "sonner"
 import { useQueryClient } from "@tanstack/react-query"
 import { useAtomValue } from "jotai"
 import { useSetAtom } from "jotai/react"
@@ -61,26 +62,24 @@ export function useHandleStartTorrentStream() {
 
     const { resetForcePlaybackMethod, getForcePlaybackMethod } = useForcePlaybackMethod()
 
-    const getPlaybackType = React.useCallback((forcePlaybackMethod?: ForcePlaybackMethod) => {
-        if (
-            (!forcePlaybackMethod && __isElectronDesktop__ && electronPlaybackMethod === ElectronPlaybackMethod.NativePlayer) ||
-            (forcePlaybackMethod && forcePlaybackMethod === "nativeplayer")
-        ) {
-            return "nativeplayer"
-        }
-        if (!!externalPlayerLink?.length && (
-            (!forcePlaybackMethod && torrentStreamingPlayback === PlaybackTorrentStreaming.ExternalPlayerLink) ||
-            (forcePlaybackMethod && forcePlaybackMethod === "externalPlayerLink")
-        )) {
-            return "externalPlayerLink"
-        }
-        return "default"
-    }, [externalPlayerLink, torrentStreamingPlayback, electronPlaybackMethod])
+    const getPlaybackType = React.useCallback((forcePlaybackMethod?: ForcePlaybackMethod) => streamPlaybackType({
+        androidTV: __isAndroidTV__,
+        electron: __isElectronDesktop__,
+        electronPlaybackMethod,
+        externalPlayerSelected: torrentStreamingPlayback === PlaybackTorrentStreaming.ExternalPlayerLink,
+        externalPlayerLink: externalPlayerLink ?? "",
+        force: forcePlaybackMethod,
+    }), [externalPlayerLink, torrentStreamingPlayback, electronPlaybackMethod])
 
     const handleStreamSelection = (params: ManualTorrentStreamSelectionProps) => {
         const forcePlaybackMethod = getForcePlaybackMethod()
         resetForcePlaybackMethod()
-        logger("TORRENT STREAM SELECTION").info("Starting torrent stream", params, getPlaybackType(forcePlaybackMethod))
+        const playbackType = params.preload ? "nativeplayer" : getPlaybackType(forcePlaybackMethod)
+        if (!playbackType) {
+            toast.error("Configure an external player link in Playback settings before playing in another app.")
+            return
+        }
+        logger("TORRENT STREAM SELECTION").info("Starting torrent stream", params, playbackType)
         mutate({
             mediaId: params.mediaId,
             episodeNumber: params.episodeNumber,
@@ -88,7 +87,7 @@ export function useHandleStartTorrentStream() {
             aniDBEpisode: params.aniDBEpisode,
             autoSelect: false,
             fileIndex: params.chosenFileIndex ?? undefined,
-            playbackType: getPlaybackType(forcePlaybackMethod),
+            playbackType,
             clientId: clientId || "",
             batchEpisodeFiles: params.batchEpisodeFiles,
             preload: params.preload,
@@ -106,14 +105,19 @@ export function useHandleStartTorrentStream() {
     const handleAutoSelectStream = (params: AutoSelectTorrentStreamProps) => {
         const forcePlaybackMethod = getForcePlaybackMethod()
         resetForcePlaybackMethod()
-        logger("TORRENT STREAM SELECTION").info("Starting torrent stream (auto select)", params, getPlaybackType(forcePlaybackMethod))
+        const playbackType = params.preload ? "nativeplayer" : getPlaybackType(forcePlaybackMethod)
+        if (!playbackType) {
+            toast.error("Configure an external player link in Playback settings before playing in another app.")
+            return
+        }
+        logger("TORRENT STREAM SELECTION").info("Starting torrent stream (auto select)", params, playbackType)
         mutate({
             mediaId: params.mediaId,
             episodeNumber: params.episodeNumber,
             aniDBEpisode: params.aniDBEpisode,
             autoSelect: true,
             torrent: undefined,
-            playbackType: getPlaybackType(forcePlaybackMethod),
+            playbackType,
             clientId: clientId || "",
             preload: params.preload,
         }, {
@@ -128,7 +132,7 @@ export function useHandleStartTorrentStream() {
     }
 
     return {
-        isUsingNativePlayer: __isElectronDesktop__ && electronPlaybackMethod === ElectronPlaybackMethod.NativePlayer,
+        isUsingNativePlayer: getPlaybackType() === "nativeplayer",
         handleStreamSelection,
         handleAutoSelectStream,
         isPending,
