@@ -20,6 +20,20 @@ and device model with each result.
 - All four native libraries in each debug APK pass the 16 KiB ELF/ZIP check
   in `scripts/verify_android_native_alignment.py`; its seven regression tests
   pass. Runtime operation on a 16 KiB device still needs a separate test run.
+- A checksum-verified API 31 ARM64 TV image is installed locally using sparse
+  files. The emulator currently refuses to boot because the host fails its
+  free-disk-space check. This installation provides no runtime test evidence.
+
+## Remaining process-restoration work
+
+Main and OAuth activity recreation now restores their page/history, and native
+player recreation restores its media and decoder settings in the existing
+process. These are distinct from reconstruction after Android kills the entire
+app process. A restored native player can hold a loopback stream URL whose Go
+server and in-memory stream session no longer exist. Restarting the backend and
+recreating the source session, then reconnecting playlist/progress handling,
+still need implementation and a real process-death test. The saved URL alone
+does not establish recovery for torrent, debrid or transcode sessions.
 
 ## Feature scenarios
 
