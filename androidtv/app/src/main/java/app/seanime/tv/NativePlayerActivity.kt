@@ -61,6 +61,7 @@ class NativePlayerActivity : Activity() {
     private var savedPlaybackParameters = PlaybackParameters.DEFAULT
     private var savedTrackSelectionParameters: TrackSelectionParameters? = null
     private var savedVolume = 1f
+    private var muted = false
     private val subtitleCacheFiles = mutableListOf<File>()
     private val progressHandler = Handler(Looper.getMainLooper())
     private val screenshotExecutor = Executors.newSingleThreadExecutor { task ->
@@ -71,7 +72,7 @@ class NativePlayerActivity : Activity() {
             val current = player
             if (current != null) {
                 lastPositionMs = current.currentPosition
-                MainActivity.notifyNativePlaybackProgress(lastPositionMs)
+                publishSnapshot()
                 progressHandler.postDelayed(this, 2_000)
             }
         }
@@ -96,13 +97,15 @@ class NativePlayerActivity : Activity() {
         subtitleTracksJson = (savedInstanceState?.getString(EXTRA_SUBTITLES) ?: intent.getStringExtra(EXTRA_SUBTITLES)).orEmpty()
         subtitleStyleJson = (savedInstanceState?.getString(EXTRA_SUBTITLE_STYLE) ?: intent.getStringExtra(EXTRA_SUBTITLE_STYLE)).orEmpty()
         lastPositionMs = savedInstanceState?.getLong(EXTRA_START_POSITION) ?: intent.getLongExtra(EXTRA_START_POSITION, 0L)
-        resumePlayWhenReady = savedInstanceState?.getBoolean(STATE_PLAY_WHEN_READY, true) ?: true
+        val playbackSettings = runCatching { JSONObject(intent.getStringExtra(EXTRA_PLAYBACK_SETTINGS).orEmpty()) }.getOrNull() ?: JSONObject()
+        resumePlayWhenReady = savedInstanceState?.getBoolean(STATE_PLAY_WHEN_READY, true) ?: !playbackSettings.optBoolean("paused", false)
         completed = savedInstanceState?.getBoolean(STATE_COMPLETED, false) ?: false
         savedPlaybackParameters = PlaybackParameters(
-            savedInstanceState?.getFloat(STATE_SPEED, 1f) ?: 1f,
+            savedInstanceState?.getFloat(STATE_SPEED, 1f) ?: playbackSettings.optDouble("speed", 1.0).toFloat().takeIf { it.isFinite() && it > 0 } ?: 1f,
             savedInstanceState?.getFloat(STATE_PITCH, 1f) ?: 1f,
         )
-        savedVolume = savedInstanceState?.getFloat(STATE_VOLUME, 1f) ?: 1f
+        savedVolume = savedInstanceState?.getFloat(STATE_VOLUME, 1f) ?: playbackSettings.optDouble("volume", 1.0).toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 1f
+        muted = savedInstanceState?.getBoolean(STATE_MUTED, false) ?: playbackSettings.optBoolean("muted", false)
         savedTrackSelectionParameters = savedInstanceState?.getBundle(STATE_TRACK_SELECTION)?.let(TrackSelectionParameters::fromBundle)
 
         val frame = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
@@ -169,8 +172,11 @@ class NativePlayerActivity : Activity() {
                 lastPositionMs = exoPlayer.currentPosition
                 if (playbackState == Player.STATE_ENDED && !completed) {
                     completed = true
-                    MainActivity.notifyNativePlaybackProgress(lastPositionMs, true)
                 }
+            }
+
+            override fun onEvents(player: Player, events: Player.Events) {
+                publishSnapshot()
             }
         })
 
@@ -180,7 +186,7 @@ class NativePlayerActivity : Activity() {
         }
         exoPlayer.playbackParameters = savedPlaybackParameters
         savedTrackSelectionParameters?.let { exoPlayer.trackSelectionParameters = it }
-        exoPlayer.volume = savedVolume
+        exoPlayer.volume = if (muted) 0f else savedVolume
         exoPlayer.setMediaItem(buildMediaItem(uri, mediaTitle, subtitleTracksJson), lastPositionMs.coerceAtLeast(0))
         exoPlayer.prepare()
         exoPlayer.playWhenReady = resumePlayWhenReady && !completed
@@ -190,22 +196,47 @@ class NativePlayerActivity : Activity() {
     }
 
     private fun loadMedia(uri: Uri, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
+        // A token/URL refresh of the current episode preserves the decoder's
+        // position and pause state even if the web adapter is being replaced.
+        val preservePosition = startPositionMs < 0
+        val position = if (preservePosition) player?.currentPosition ?: lastPositionMs else startPositionMs.coerceAtLeast(0)
+        val playWhenReady = if (preservePosition) player?.playWhenReady ?: resumePlayWhenReady else true
         mediaUri = uri
         mediaTitle = title
         this.subtitleTracksJson = subtitleTracksJson
         this.subtitleStyleJson = subtitleStyleJson
-        completed = false
-        lastPositionMs = startPositionMs.coerceAtLeast(0)
-        resumePlayWhenReady = true
+        if (!preservePosition) completed = false
+        lastPositionMs = position
+        resumePlayWhenReady = playWhenReady
         val current = player ?: return
         current.stop()
         subtitleCacheFiles.forEach { it.delete() }
         subtitleCacheFiles.clear()
         activePlayerView?.let { applySubtitleStyle(it, subtitleStyleJson) }
-        current.setMediaItem(buildMediaItem(uri, title, subtitleTracksJson), startPositionMs.coerceAtLeast(0))
+        current.setMediaItem(buildMediaItem(uri, title, subtitleTracksJson), position)
         current.prepare()
-        current.playWhenReady = true
-        MainActivity.notifyNativePlaybackProgress(startPositionMs.coerceAtLeast(0))
+        current.playWhenReady = playWhenReady
+        publishSnapshot()
+    }
+
+    private fun publishSnapshot(active: Boolean = true, closed: Boolean = false) {
+        val current = player ?: return
+        val uri = current.currentMediaItem?.localConfiguration?.uri ?: return
+        MainActivity.notifyNativePlaybackProgress(JSONObject()
+            .put("url", uri.toString())
+            .put("positionMs", current.currentPosition.coerceAtLeast(0))
+            .put("durationMs", current.duration.coerceAtLeast(0))
+            .put("bufferedPositionMs", current.bufferedPosition.coerceAtLeast(0))
+            .put("paused", !active || !current.playWhenReady || completed)
+            .put("buffering", current.playbackState == Player.STATE_BUFFERING)
+            .put("completed", completed)
+            .put("speed", current.playbackParameters.speed.toDouble())
+            .put("volume", (if (muted) savedVolume else current.volume).toDouble())
+            .put("muted", muted)
+            .put("videoWidth", current.videoSize.width)
+            .put("videoHeight", current.videoSize.height)
+            .put("active", active)
+            .put("closed", closed))
     }
 
     private fun rememberPlaybackState() {
@@ -214,7 +245,7 @@ class NativePlayerActivity : Activity() {
             resumePlayWhenReady = it.playWhenReady
             savedPlaybackParameters = it.playbackParameters
             savedTrackSelectionParameters = it.trackSelectionParameters
-            savedVolume = it.volume
+            if (!muted) savedVolume = it.volume
         }
     }
 
@@ -230,6 +261,7 @@ class NativePlayerActivity : Activity() {
         outState.putFloat(STATE_SPEED, savedPlaybackParameters.speed)
         outState.putFloat(STATE_PITCH, savedPlaybackParameters.pitch)
         outState.putFloat(STATE_VOLUME, savedVolume)
+        outState.putBoolean(STATE_MUTED, muted)
         savedTrackSelectionParameters?.let { outState.putBundle(STATE_TRACK_SELECTION, it.toBundle()) }
         super.onSaveInstanceState(outState)
     }
@@ -460,6 +492,7 @@ class NativePlayerActivity : Activity() {
         progressHandler.removeCallbacksAndMessages(null)
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         rememberPlaybackState()
+        publishSnapshot(active = false, closed = isFinishing)
         activePlayerView?.player = null
         current.release()
         player = null
@@ -467,9 +500,6 @@ class NativePlayerActivity : Activity() {
         subtitleCacheFiles.clear()
         nativePlayerVisible = false
         if (activeInstance?.get() === this) activeInstance = null
-        // Completion is delivered once by STATE_ENDED. Releasing a finished
-        // player must not advance the web playlist a second time.
-        MainActivity.notifyNativePlaybackProgress(lastPositionMs)
         MainActivity.notifyNativePlayerStopped()
     }
 
@@ -494,12 +524,14 @@ class NativePlayerActivity : Activity() {
         private const val EXTRA_SUBTITLES = "subtitles"
         private const val EXTRA_SUBTITLE_STYLE = "subtitleStyle"
         private const val EXTRA_START_POSITION = "startPositionMs"
+        private const val EXTRA_PLAYBACK_SETTINGS = "playbackSettings"
         private const val STATE_MEDIA_URI = "mediaUri"
         private const val STATE_PLAY_WHEN_READY = "playWhenReady"
         private const val STATE_COMPLETED = "completed"
         private const val STATE_SPEED = "speed"
         private const val STATE_PITCH = "pitch"
         private const val STATE_VOLUME = "volume"
+        private const val STATE_MUTED = "muted"
         private const val STATE_TRACK_SELECTION = "trackSelection"
         private const val SERVER_PORT = 43211
         @Volatile private var nativePlayerVisible = false
@@ -510,6 +542,42 @@ class NativePlayerActivity : Activity() {
         }
 
         fun isVisible(): Boolean = nativePlayerVisible
+
+        fun control(url: String, command: String, value: Double) {
+            if (!value.isFinite()) return
+            val activity = activeInstance?.get() ?: return
+            activity.runOnUiThread {
+                val current = activity.player ?: return@runOnUiThread
+                if (activity.isFinishing || activity.mediaUri?.toString() != url) return@runOnUiThread
+                when (command) {
+                    "play" -> {
+                        if (current.playbackState == Player.STATE_ENDED) {
+                            activity.completed = false
+                            current.seekTo(0)
+                        }
+                        current.play()
+                    }
+                    "pause" -> current.pause()
+                    "seekTo" -> {
+                        activity.completed = false
+                        current.seekTo(value.toLong().coerceIn(0, current.duration.takeIf { it > 0 } ?: Long.MAX_VALUE))
+                    }
+                    "speed" -> if (value.toFloat() > 0 && value.toFloat().isFinite()) current.setPlaybackSpeed(value.toFloat())
+                    "volume" -> {
+                        activity.savedVolume = value.toFloat().coerceIn(0f, 1f)
+                        current.volume = if (activity.muted) 0f else activity.savedVolume
+                    }
+                    "muted" -> {
+                        if (!activity.muted) activity.savedVolume = current.volume
+                        activity.muted = value != 0.0
+                        current.volume = if (activity.muted) 0f else activity.savedVolume
+                    }
+                    "stop" -> activity.finish()
+                    else -> return@runOnUiThread
+                }
+                activity.publishSnapshot()
+            }
+        }
 
         fun updateMedia(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
             val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
@@ -530,13 +598,14 @@ class NativePlayerActivity : Activity() {
             }
         }
 
-        fun intent(context: Context, uri: Uri, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String): Intent =
+        fun intent(context: Context, uri: Uri, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String, playbackSettingsJson: String = "{}"): Intent =
             Intent(context, NativePlayerActivity::class.java)
                 .setData(uri)
                 .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_SUBTITLES, subtitleTracksJson)
                 .putExtra(EXTRA_START_POSITION, startPositionMs)
                 .putExtra(EXTRA_SUBTITLE_STYLE, subtitleStyleJson)
+                .putExtra(EXTRA_PLAYBACK_SETTINGS, playbackSettingsJson)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 }

@@ -34,10 +34,11 @@ function installAndroidTVBridgeFacade() {
         cancelDownload: (requestId) => native.cancelDownload(token, requestId),
         supportedAbi: () => native.supportedAbi(token),
         downloadAndInstallUpdate: (url, filename) => native.downloadAndInstallUpdate(token, url, filename),
-        playNative: (url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson) => native.playNative(token, url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson),
+        playNative: (url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson, playbackSettingsJson) => native.playNative(token, url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson, playbackSettingsJson),
         updateNativePlayer: (url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson) => native.updateNativePlayer(token, url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson),
         updateNativeSubtitleStyle: (subtitleStyleJson) => native.updateNativeSubtitleStyle(token, subtitleStyleJson),
         nativePlayerActive: () => native.nativePlayerActive(token),
+        controlNativePlayer: (url, command, value) => native.controlNativePlayer(token, url, command, value),
         installUpdate: (filePath) => native.installUpdate(token, filePath),
         setPlaybackActive: (active) => native.setPlaybackActive(token, active),
     }

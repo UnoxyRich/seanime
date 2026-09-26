@@ -556,11 +556,11 @@ class MainActivity : Activity() {
         installUpdate(pendingPath)
     }
 
-    internal fun launchNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
+    internal fun launchNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String, playbackSettingsJson: String) {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
         if (uri.scheme !in setOf("http", "https", "content", "file")) return
         NativePlayerActivity.markLaunchPending()
-        startActivity(NativePlayerActivity.intent(this, uri, title, subtitleTracksJson, startPositionMs, subtitleStyleJson))
+        startActivity(NativePlayerActivity.intent(this, uri, title, subtitleTracksJson, startPositionMs, subtitleStyleJson, playbackSettingsJson))
     }
 
     internal fun updateNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
@@ -797,8 +797,7 @@ class MainActivity : Activity() {
             return true
         }
 
-        fun notifyNativePlaybackProgress(positionMs: Long, completed: Boolean = false) {
-            val payload = JSONObject().put("positionMs", positionMs).put("completed", completed)
+        fun notifyNativePlaybackProgress(payload: JSONObject) {
             activeWebView?.get()?.post {
                 activeWebView?.get()?.evaluateJavascript(
                     "window.dispatchEvent(new CustomEvent('seanime-androidtv-player-progress',{detail:$payload}))",
@@ -900,9 +899,9 @@ private class AndroidTVBridge(
     }
 
     @JavascriptInterface
-    fun playNative(token: String, url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
+    fun playNative(token: String, url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String, playbackSettingsJson: String) {
         if (!isAuthorized(token)) return
-        activity.runOnUiThread { activity.launchNativePlayer(url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson) }
+        activity.runOnUiThread { activity.launchNativePlayer(url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson, playbackSettingsJson) }
     }
 
     @JavascriptInterface
@@ -919,6 +918,12 @@ private class AndroidTVBridge(
 
     @JavascriptInterface
     fun nativePlayerActive(token: String): Boolean = isAuthorized(token) && NativePlayerActivity.isVisible()
+
+    @JavascriptInterface
+    fun controlNativePlayer(token: String, url: String, command: String, value: Double) {
+        if (!isAuthorized(token)) return
+        NativePlayerActivity.control(url, command, value)
+    }
 
     @JavascriptInterface
     fun setPlaybackActive(token: String, active: Boolean) {

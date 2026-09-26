@@ -1,6 +1,7 @@
 import { getServerBaseUrl } from "@/api/client/server-url"
 import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import { useHandleCurrentMediaContinuity } from "@/api/hooks/continuity.hooks"
+import { attachAndroidTVPlayer, type AndroidTVPlayerSnapshot } from "@/lib/android-tv-player"
 import { useDirectstreamConvertSubs } from "@/api/hooks/directstream.hooks"
 import { useCancelDiscordActivity } from "@/api/hooks/discord.hooks"
 import { MediaCoreBufferingOverlay, MediaCoreErrorOverlay, MediaCoreLoadingOverlay } from "@/app/(main)/_features/media-core/media-core-overlays"
@@ -450,15 +451,16 @@ const PlayerContent = React.memo<PlayerContentProps>(({
             JSON.stringify(subtitleTracks),
             Math.max(0, Math.round((videoRef.current?.currentTime ?? state.playbackInfo?.initialState?.currentTime ?? 0) * 1000)),
             nativeSubtitleStyleJson,
+            JSON.stringify({ speed: videoRef.current?.playbackRate ?? 1, volume: videoRef.current?.volume ?? 1, muted: videoRef.current?.muted ?? false }),
         )
     }, [streamUrl, state.playbackInfo, nativeSubtitleStyleJson])
 
     React.useEffect(() => {
         if (!__isAndroidTV__ || !streamUrl || !window.AndroidTV?.nativePlayerActive()) return
         const playbackId = state.playbackInfo?.id ?? null
-        const currentSeconds = nativePlaybackId.current === playbackId
-            ? videoRef.current?.currentTime ?? 0
-            : state.playbackInfo?.initialState?.currentTime ?? 0
+        const startPositionMs = nativePlaybackId.current === playbackId
+            ? -1 // Preserve Media3's position and pause state when refreshing the same episode's URL.
+            : Math.max(0, Math.round((state.playbackInfo?.initialState?.currentTime ?? 0) * 1000))
         const subtitleTracks = (state.playbackInfo?.subtitleTracks ?? []).map(track => ({
             src: track.src?.replace("{{SERVER_URL}}", getServerBaseUrl()),
             content: track.content,
@@ -473,7 +475,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
             streamUrl,
             state.playbackInfo?.media?.title?.userPreferred || "Seanime TV",
             JSON.stringify(subtitleTracks),
-            Math.max(0, Math.round(currentSeconds * 1000)),
+            startPositionMs,
             nativeSubtitleStyleJson,
         )
     }, [streamUrl, state.playbackInfo?.id])
@@ -821,21 +823,6 @@ export function VideoCore(props: VideoCoreProps) {
     const currentSkipDataRef = useRef<NormalizedSkipData | undefined>(resolvedSkipData)
     currentSkipDataRef.current = resolvedSkipData
 
-    React.useEffect(() => {
-        if (!__isAndroidTV__) return
-        const onNativeProgress = (event: Event) => {
-            const detail = (event as CustomEvent<{ positionMs: number, completed: boolean }>).detail
-            const video = videoRef.current
-            if (!video || !Number.isFinite(detail?.positionMs)) return
-            const nextTime = Math.max(0, detail.positionMs / 1000)
-            if (Math.abs(video.currentTime - nextTime) > 0.75) video.currentTime = nextTime
-            video.dispatchEvent(new Event("timeupdate"))
-            if (detail.completed) video.dispatchEvent(new Event("ended"))
-        }
-        window.addEventListener("seanime-androidtv-player-progress", onNativeProgress)
-        return () => window.removeEventListener("seanime-androidtv-player-progress", onNativeProgress)
-    }, [])
-
     const {
         dispatchTerminatedEvent,
         dispatchVideoLoadedEvent,
@@ -1001,6 +988,9 @@ export function VideoCore(props: VideoCoreProps) {
 
     function onTerminateStream() {
         closeTerminateConfirm()
+        if (__isAndroidTV__ && state.playbackInfo?.streamUrl) {
+            window.AndroidTV?.controlNativePlayer(state.playbackInfo.streamUrl.replace("{{SERVER_URL}}", getServerBaseUrl()), "stop", 0)
+        }
         _onTerminateStream?.()
         dispatchTerminatedEvent()
     }
@@ -1160,6 +1150,7 @@ export function VideoCore(props: VideoCoreProps) {
 
         // When a new playback info is received
         if (!!state.playbackInfo?.id && (!currentPlaybackRef.current || state.playbackInfo.id !== currentPlaybackRef.current)) {
+            videoCompletedRef.current = false
             hasSoughtRef.current = false
             isFirstError.current = true
             setInSightOpen(false)
@@ -1180,6 +1171,25 @@ export function VideoCore(props: VideoCoreProps) {
 
     const streamUrl = state?.playbackInfo?.streamUrl?.replace?.("{{SERVER_URL}}", getServerBaseUrl())
 
+    React.useEffect(() => {
+        if (!__isAndroidTV__ || !videoElement || !streamUrl) return
+        let adapter: ReturnType<typeof attachAndroidTVPlayer> | undefined
+        const onNativeProgress = (event: Event) => {
+            const detail = (event as CustomEvent<AndroidTVPlayerSnapshot>).detail
+            if (adapter?.isDisposed()) adapter = undefined
+            if (!detail || detail.url !== streamUrl || (!adapter && !detail.active)) return
+            adapter ??= attachAndroidTVPlayer(videoElement, streamUrl, (command, value) => {
+                window.AndroidTV?.controlNativePlayer(streamUrl, command, value)
+            })
+            if (adapter.update(detail)) currentPlaybackRef.current = state.playbackInfo?.id ?? null
+        }
+        window.addEventListener("seanime-androidtv-player-progress", onNativeProgress)
+        return () => {
+            window.removeEventListener("seanime-androidtv-player-progress", onNativeProgress)
+            adapter?.dispose()
+        }
+    }, [videoElement, streamUrl, state.playbackInfo?.id])
+
     // Initialize HLS
     useVideoCoreHls({
         videoElement: videoRef.current,
@@ -1187,7 +1197,10 @@ export function VideoCore(props: VideoCoreProps) {
         streamType: streamType,
         preferredQuality: hlsPreferredQuality,
         onMediaDetached: onHlsMediaDetached,
-        onFatalError: onHlsFatalError,
+        onFatalError: error => {
+            if (__isAndroidTV__ && window.AndroidTV?.nativePlayerActive()) return
+            onHlsFatalError?.(error)
+        },
         onStalled: err => onStalled?.(`HLS stalled: ${err.error?.message || err.details}`),
     })
 
@@ -1220,6 +1233,7 @@ export function VideoCore(props: VideoCoreProps) {
 
     // events
     const handleLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+        if (__isAndroidTV__ && window.AndroidTV?.nativePlayerActive()) return
         onLoadedMetadata?.(e)
         if (!videoRef.current) return
         const v = videoRef.current
@@ -1568,6 +1582,7 @@ export function VideoCore(props: VideoCoreProps) {
     }
 
     const handleError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+        if (__isAndroidTV__ && window.AndroidTV?.nativePlayerActive()) return
         log.error("Video error", e)
         if (isFirstError.current && props.id !== "native-player") {
             // Change stream type to HLS if it failed to load
@@ -1588,6 +1603,12 @@ export function VideoCore(props: VideoCoreProps) {
 
     function restoreSeekTime(time: number, showMessage: boolean, paused?: boolean) {
         if (!videoRef.current) return
+        if (__isAndroidTV__ && window.AndroidTV?.nativePlayerActive()) {
+            videoRef.current.currentTime = time
+            if (paused === true) videoRef.current.pause()
+            else if (paused === false) videoRef.current.play().catch()
+            return
+        }
         if (anime4kOption === "off" || anime4kManager?.canvas !== null) {
             if (showMessage) showOverlayFeedback({ message: "Progress restored", duration: 1500 })
             videoRef.current.currentTime = time

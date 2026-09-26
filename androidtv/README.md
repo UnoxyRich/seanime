@@ -46,6 +46,8 @@ checks` workflow runs the suite on an API 36 x86_64 TV emulator.
 The native-player lifecycle test uses local WAV fixtures to check stop/resume
 and activity recreation, including playlist handoffs, pause state, position,
 speed, volume, and track preferences.
+It also checks source-bound native play/pause/seek commands and the initial
+speed, volume, and mute settings passed by the web client.
 The media-tools test launches both packaged executables through the same
 command paths used by the Go server.
 
@@ -82,6 +84,13 @@ command paths used by the Go server.
 - Native playback releases its decoder while the activity is stopped and
   recreates it on return with the latest episode and playback settings. The
   retained WebView resumes receiving progress and playlist events on return.
+- Media3 reports duration, position, buffering, pause state, speed, volume,
+  and completion to the shared player. Its per-element adapter supplies these
+  values to watch continuity, progress updates, playlists, and player events,
+  including files whose metadata WebView cannot decode. Shared play/pause/seek
+  and audio/speed controls are forwarded to the matching native stream. The
+  browser HLS loader pauses during native playback and resumes without
+  autoplay when returning to the web player.
 - The native host exposes a Storage Access Framework picker, persists grants,
   and implements listing, metadata, ranged reads, chunked writes, directory
   creation, and deletion through a gomobile adapter. Library settings can use

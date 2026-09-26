@@ -2,6 +2,8 @@ import { vc_audioManager } from "@/app/(main)/_features/video-core/video-core"
 import { getPreferredHlsQualityLevel } from "@/app/(main)/_features/video-core/_lib/hls-quality"
 import { vc_autoPlayVideoAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
 import { logger } from "@/lib/helpers/debug"
+import type { AndroidTVPlayerSnapshot } from "@/lib/android-tv-player"
+import { __isAndroidTV__ } from "@/types/constants"
 import Hls, { ErrorData, Events, Level } from "hls.js"
 import { atom, useAtomValue } from "jotai"
 import { useAtom, useSetAtom } from "jotai/react"
@@ -123,8 +125,30 @@ export function useVideoCoreHls({
             let recoveringMediaError = false
             let mediaErrorRecoveryAttempts = 0
             let fatalErrorReported = false
+            let nativeOwnsPlayback = __isAndroidTV__ && !!window.AndroidTV?.nativePlayerActive()
+            let returnedFromNative = false
+            const nativeIsActive = () => nativeOwnsPlayback || (__isAndroidTV__ && !!window.AndroidTV?.nativePlayerActive())
 
             hlsRef.current = hls
+
+            const onNativeProgress = (event: Event) => {
+                const detail = (event as CustomEvent<AndroidTVPlayerSnapshot>).detail
+                if (detail?.url !== streamUrl || hlsRef.current !== hls) return
+                if (!detail.closed) {
+                    if (!nativeOwnsPlayback) hls.stopLoad()
+                    nativeOwnsPlayback = true
+                } else if (nativeOwnsPlayback) {
+                    nativeOwnsPlayback = false
+                    returnedFromNative = true
+                    if (!sourceLoaded && hls.media) {
+                        sourceLoaded = true
+                        hls.loadSource(streamUrl)
+                    } else if (sourceLoaded) {
+                        hls.startLoad(detail.positionMs / 1000)
+                    }
+                }
+            }
+            if (__isAndroidTV__) window.addEventListener("seanime-androidtv-player-progress", onNativeProgress)
 
             const reportFatalError = (data: ErrorData) => {
                 if (fatalErrorReported) return
@@ -187,7 +211,7 @@ export function useVideoCoreHls({
 
             hls.on(Events.MEDIA_ATTACHED, () => {
                 hlsLog.info("HLS media attached")
-                if (!sourceLoaded) {
+                if (!sourceLoaded && !nativeIsActive()) {
                     sourceLoaded = true
                     hls.loadSource(streamUrl)
                 }
@@ -196,7 +220,7 @@ export function useVideoCoreHls({
 
             hls.on(Events.MEDIA_DETACHED, () => {
                 hlsLog.info("HLS media detached")
-                if (!recoveringMediaError) {
+                if (!recoveringMediaError && !nativeIsActive()) {
                     onMediaDetached?.()
                 }
             })
@@ -252,7 +276,8 @@ export function useVideoCoreHls({
                     setCurrentAudioTrack(-1)
                 }
 
-                if (autoPlay) {
+                if (nativeIsActive()) hls.stopLoad()
+                if (autoPlay && !nativeIsActive() && !returnedFromNative) {
                     videoElement.play().catch(err => {
                         hlsLog.error("Failed to autoplay", err)
                     })
@@ -277,6 +302,7 @@ export function useVideoCoreHls({
             })
 
             hls.on(Events.ERROR, (event, data: ErrorData) => {
+                if (nativeIsActive()) return
                 hlsLog.error("HLS error", data)
                 if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR && !data.fatal) {
                     onStalled?.(data)
@@ -292,6 +318,7 @@ export function useVideoCoreHls({
             })
 
             return () => {
+                window.removeEventListener("seanime-androidtv-player-progress", onNativeProgress)
                 if (hlsRef.current) {
                     hlsLog.info("Destroying HLS instance")
                     hlsRef.current.destroy()

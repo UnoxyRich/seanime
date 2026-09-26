@@ -156,7 +156,7 @@ export function useVideoCoreBindings(videoElement: HTMLVideoElement | null,
                 setPaused(v.paused)
             }
         }
-        const events = ["timeupdate", "loadedmetadata", "progress", "play", "pause", "ratechange", "volumechange", "ended", "loadeddata", "resize",
+        const events = ["timeupdate", "loadedmetadata", "durationchange", "progress", "play", "pause", "ratechange", "volumechange", "ended", "loadeddata", "resize",
             "waiting", "canplay", "stalled"]
         events.forEach(e => v.addEventListener(e, handler))
         handler() // initialize state once

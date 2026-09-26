@@ -1,4 +1,5 @@
 import "@total-typescript/ts-reset"
+import type { AndroidTVPlayerCommand } from "@/lib/android-tv-player"
 
 declare global {
     interface AudioTrack {
@@ -39,10 +40,11 @@ declare global {
             cancelDownload: (token: string, requestId: string) => void;
             supportedAbi: (token: string) => string;
             downloadAndInstallUpdate: (token: string, url: string, filename: string) => void;
-            playNative: (token: string, url: string, title: string, subtitleTracksJson: string, startPositionMs: number, subtitleStyleJson: string) => void;
+            playNative: (token: string, url: string, title: string, subtitleTracksJson: string, startPositionMs: number, subtitleStyleJson: string, playbackSettingsJson: string) => void;
             updateNativePlayer: (token: string, url: string, title: string, subtitleTracksJson: string, startPositionMs: number, subtitleStyleJson: string) => void;
             updateNativeSubtitleStyle: (token: string, subtitleStyleJson: string) => void;
             nativePlayerActive: (token: string) => boolean;
+            controlNativePlayer: (token: string, url: string, command: AndroidTVPlayerCommand, value: number) => void;
             installUpdate: (token: string, filePath: string) => void;
             setPlaybackActive: (token: string, active: boolean) => void;
         };
@@ -59,10 +61,11 @@ declare global {
             cancelDownload: (requestId: string) => void;
             supportedAbi: () => string;
             downloadAndInstallUpdate: (url: string, filename: string) => void;
-            playNative: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number, subtitleStyleJson: string) => void;
+            playNative: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number, subtitleStyleJson: string, playbackSettingsJson: string) => void;
             updateNativePlayer: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number, subtitleStyleJson: string) => void;
             updateNativeSubtitleStyle: (subtitleStyleJson: string) => void;
             nativePlayerActive: () => boolean;
+            controlNativePlayer: (url: string, command: AndroidTVPlayerCommand, value: number) => void;
             installUpdate: (filePath: string) => void;
             setPlaybackActive: (active: boolean) => void;
         };

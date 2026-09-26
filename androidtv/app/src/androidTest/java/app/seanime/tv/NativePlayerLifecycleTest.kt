@@ -25,6 +25,56 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class NativePlayerLifecycleTest {
     @Test
+    fun nativeCommandsControlOnlyTheMatchingSource() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val fixture = File(context.cacheDir, "native-controls.wav")
+        writeSilentWav(fixture)
+        val url = Uri.fromFile(fixture).toString()
+        val scenario = ActivityScenario.launch<NativePlayerActivity>(
+            NativePlayerActivity.intent(context, Uri.parse(url), "Controls", "[]", 2_000, "{}",
+                """{"speed":1.25,"volume":0.4,"muted":true,"paused":true}"""),
+        )
+        try {
+            awaitReady(scenario)
+            var pausedPosition = 0L
+            scenario.onActivity { activity ->
+                val player = requireNotNull(findPlayerView(activity.window.decorView)?.player)
+                assertFalse(player.playWhenReady)
+                assertEquals(1.25f, player.playbackParameters.speed, 0.001f)
+                assertEquals(0f, player.volume, 0.001f)
+                NativePlayerActivity.control("file:///previous-episode.wav", "seekTo", 9_000.0)
+                assertEquals(2_000L, player.currentPosition)
+                NativePlayerActivity.control(url, "seekTo", 5_000.0)
+                assertEquals(5_000L, player.currentPosition)
+                NativePlayerActivity.control(url, "speed", 1.5)
+                assertEquals(1.5f, player.playbackParameters.speed, 0.001f)
+                NativePlayerActivity.control(url, "speed", Double.MIN_VALUE)
+                NativePlayerActivity.control(url, "speed", Double.NaN)
+                assertEquals(1.5f, player.playbackParameters.speed, 0.001f)
+                NativePlayerActivity.control(url, "muted", 0.0)
+                assertEquals(0.4f, player.volume, 0.001f)
+                NativePlayerActivity.control(url, "volume", 0.6)
+                assertEquals(0.6f, player.volume, 0.001f)
+                NativePlayerActivity.control(url, "play", 0.0)
+                assertTrue(player.playWhenReady)
+                NativePlayerActivity.control(url, "pause", 0.0)
+                assertFalse(player.playWhenReady)
+                pausedPosition = player.currentPosition
+                NativePlayerActivity.updateMedia(url, "Refreshed URL", "[]", -1, "{}")
+            }
+            awaitReady(scenario)
+            scenario.onActivity { activity ->
+                val player = requireNotNull(findPlayerView(activity.window.decorView)?.player)
+                assertEquals(pausedPosition, player.currentPosition)
+                assertFalse("refreshing an episode resumed paused playback", player.playWhenReady)
+            }
+        } finally {
+            scenario.close()
+            fixture.delete()
+        }
+    }
+
+    @Test
     fun stoppedAndRecreatedPlayerRestoresLatestMediaAndPlaybackSettings() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val first = File(context.cacheDir, "native-lifecycle-first.wav")
