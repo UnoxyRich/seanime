@@ -374,6 +374,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
 
         const controlRegionSelector = [
             '[data-vc-element="control-bar"]',
+            '[data-vc-element="playback-error-container"]',
             ".vc-mobile-control-bar-top-section",
             ".vc-mobile-control-bar-bottom-section",
         ].join(",")
@@ -486,7 +487,15 @@ const PlayerContent = React.memo<PlayerContentProps>(({
         <>
 
 
-            <MediaCoreErrorOverlay playbackError={state.playbackError} isMiniPlayer={isMiniPlayer} onClose={onTerminateStream} />
+            <MediaCoreErrorOverlay
+                playbackError={state.playbackError}
+                isMiniPlayer={isMiniPlayer}
+                onClose={onTerminateStream}
+                fallbackAction={__isAndroidTV__ && !!streamUrl ? {
+                    label: "Open in TV player",
+                    onClick: launchAndroidTVPlayer,
+                } : undefined}
+            />
 
             <div
                 data-vc-element="container"

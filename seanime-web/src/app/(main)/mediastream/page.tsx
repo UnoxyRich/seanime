@@ -32,6 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { logger, useLatestFunction } from "@/lib/helpers/debug"
 import { usePathname, useRouter, useSearchParams } from "@/lib/navigation"
 import { WSEvents } from "@/lib/server/ws-events"
+import { __isAndroidTV__ } from "@/types/constants"
 import { useAtom, useAtomValue } from "jotai"
 import { atomWithStorage } from "jotai/utils"
 import uniq from "lodash/uniq"
@@ -231,13 +232,15 @@ function MediastreamPage() {
     // handle fatal errors
     const onFatalError = React.useCallback((error: any) => {
         log.error("Fatal error", error)
-        if (mediaContainer?.streamType === "transcode") {
+        if (!__isAndroidTV__ && mediaContainer?.streamType === "transcode") {
             shutdownTranscode()
         }
-        setPlaybackError("Playback error triggered. Please try again or switch stream type.")
-        changeUrl(null) // reset url
+        setPlaybackError(__isAndroidTV__
+            ? "Web playback failed. Try the TV player to continue."
+            : "Playback error triggered. Please try again or switch stream type.")
+        if (!__isAndroidTV__) changeUrl(null) // Keep the source URL so the Media3 fallback can open it.
         toast.error("Playback error occurred")
-    }, [mediaContainer?.streamType])
+    }, [mediaContainer?.streamType, shutdownTranscode, changeUrl])
 
 
     // listen for shutdown stream event
@@ -378,6 +381,7 @@ function MediastreamPage() {
                                     onError={onFatalError}
                                     onHlsFatalError={(e) => onFatalError(e)}
                                     onTerminateStream={() => {
+                                        if (mediaContainer?.streamType === "transcode") shutdownTranscode()
                                         changeUrl(null)
                                         router.back() // or just stop?
                                     }}
