@@ -27,6 +27,7 @@ declare global {
 
     interface Window {
         __seanimeAndroidTVBridgeToken?: string;
+        AndroidTVBootstrap?: import("@/lib/android-tv-bootstrap").AndroidTVBootstrap;
         AndroidTVNativeBridge?: {
             serverStatus: (token: string) => string;
             serverError: (token: string) => string;

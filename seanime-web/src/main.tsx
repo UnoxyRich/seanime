@@ -1,4 +1,5 @@
 import { useIsSimulatedUser } from "@/app/(main)/_hooks/use-server-status"
+import { requestAndroidTVBridgeToken } from "@/lib/android-tv-bootstrap"
 import { ClientProviders, queryClient, store } from "@/app/client-providers"
 import "./app/globals.css"
 import { __navigationPreloadModeAtom, getActualNavigationPreloadMode, NavigationPreloadMode } from "@/lib/navigation-preload-settings"
@@ -44,7 +45,16 @@ function installAndroidTVBridgeFacade() {
     }
 }
 
-installAndroidTVBridgeFacade()
+async function prepareAndroidTVBridge() {
+    if (!__isAndroidTV__ || window !== window.top) return
+    if (!window.__seanimeAndroidTVBridgeToken && window.AndroidTVBootstrap) {
+        const token = await requestAndroidTVBridgeToken(window.AndroidTVBootstrap)
+        if (token) Object.defineProperty(window, "__seanimeAndroidTVBridgeToken", { value: token, writable: false, configurable: false })
+    }
+    installAndroidTVBridgeFacade()
+}
+
+const androidTVBridgeReady = prepareAndroidTVBridge()
 
 type RouterPreloadMode = false | "intent" | "viewport"
 
@@ -273,7 +283,7 @@ function RootErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
 //     script.crossOrigin = "anonymous"
 //     document.head.appendChild(script)
 // }
-ReactDOM.createRoot(document.getElementById("root")!, {
+androidTVBridgeReady.then(() => ReactDOM.createRoot(document.getElementById("root")!, {
     onUncaughtError: (error, errorInfo) => {
         console.error("[Root] Uncaught renderer error", error, errorInfo)
     },
@@ -288,4 +298,4 @@ ReactDOM.createRoot(document.getElementById("root")!, {
             <AppRouterProvider />
         </ClientProviders>
     </ErrorBoundary>,
-)
+))

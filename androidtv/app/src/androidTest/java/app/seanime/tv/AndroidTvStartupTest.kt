@@ -1,6 +1,7 @@
 package app.seanime.tv
 
 import android.os.SystemClock
+import android.net.Uri
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -13,6 +14,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,6 +22,18 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AndroidTvStartupTest {
+    @Test
+    fun bridgeBootstrapOnlyAcceptsTheLocalMainFrame() {
+        val local = Uri.parse("http://127.0.0.1:43211")
+        assertTrue(MainActivity.canBootstrapBridge(local, true, "seanime-tv-bootstrap-v1"))
+        assertFalse(MainActivity.canBootstrapBridge(local, false, "seanime-tv-bootstrap-v1"))
+        assertFalse(MainActivity.canBootstrapBridge(local, true, "unrelated-message"))
+        assertFalse(MainActivity.canBootstrapBridge(local, true, null))
+        for (origin in listOf("null", "http://localhost:43211", "https://127.0.0.1:43211", "http://127.0.0.1:43212", "http://user@127.0.0.1:43211", "https://example.com")) {
+            assertFalse(MainActivity.canBootstrapBridge(Uri.parse(origin), true, "seanime-tv-bootstrap-v1"))
+        }
+    }
+
     @Test
     fun callbackDestinationsUseTheLocalBridgeOrigin() {
         assertEquals(
@@ -70,6 +84,8 @@ class AndroidTvStartupTest {
                     "(() => { const status = JSON.parse(window.__seanimeTVFrameBridgeProbe).nativeStatus; return status === '' || status === 'missing'; })()",
                 ),
             )
+            assertEquals("sandboxed iframe received the bridge bootstrap channel", "true",
+                evaluateJavascript(scenario, "JSON.parse(window.__seanimeTVFrameBridgeProbe).bootstrap === 'undefined'"))
 
             assertTrue(
                 "Android TV arrow keys did not move focus spatially",
@@ -135,7 +151,7 @@ class AndroidTvStartupTest {
                 };
                 window.addEventListener('message', onMessage);
                 const lessThan = String.fromCharCode(60);
-                const probe = '(function(){let token="readable";try{void parent.__seanimeAndroidTVBridgeToken}catch(e){token="blocked"}let nativeStatus="missing";try{const bridge=window.AndroidTVNativeBridge;if(bridge)nativeStatus=bridge.serverStatus("untrusted-frame")}catch(e){nativeStatus="blocked"}parent.postMessage({token:token,nativeStatus:nativeStatus},"*")})()';
+                const probe = '(function(){let token="readable";try{void parent.__seanimeAndroidTVBridgeToken}catch(e){token="blocked"}let nativeStatus="missing";try{const bridge=window.AndroidTVNativeBridge;if(bridge)nativeStatus=bridge.serverStatus("untrusted-frame")}catch(e){nativeStatus="blocked"}parent.postMessage({token:token,nativeStatus:nativeStatus,bootstrap:typeof window.AndroidTVBootstrap},"*")})()';
                 frame.srcdoc = lessThan + 'script>' + probe + lessThan + '/script>';
                 document.body.appendChild(frame);
                 return 'started';

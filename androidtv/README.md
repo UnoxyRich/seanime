@@ -84,10 +84,11 @@ command paths used by the Go server.
   copied into writable app data. Links are refreshed after app updates.
 - OAuth and external web destinations stay inside an Android WebView. OAuth
   redirects to Seanime's local callback are returned to the app's main WebView.
-- The JavaScript interface uses an origin-scoped document-start token, so
-  embedded remote pages can load without receiving native storage or playback
-  access. Devices need an Android System WebView with document-start script
-  support for native bridge features.
+- The JavaScript interface uses a token delivered only to the local main frame.
+  WebViews with document-start scripts receive it before the page runs; older
+  WebViews use an origin-scoped message handshake before React mounts. Embedded
+  remote pages cannot obtain native storage or playback access. The WebView must
+  support document-start scripts or `WEB_MESSAGE_LISTENER`.
 - Browser-generated diagnostic profiles and issue-report archives use the
   Android document picker, then stream to the selected destination in bounded
   chunks instead of relying on WebView's unsupported Blob download behavior.

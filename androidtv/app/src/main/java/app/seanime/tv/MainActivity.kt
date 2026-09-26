@@ -145,10 +145,24 @@ class MainActivity : Activity() {
                     "if (window === window.top) Object.defineProperty(window, '__seanimeAndroidTVBridgeToken', {value: $bridgeToken, writable: false, configurable: false});",
                     setOf("http://127.0.0.1:$serverPort"),
                 )
-                addJavascriptInterface(AndroidTVBridge(this@MainActivity, this, androidTvBridgeToken), "AndroidTVNativeBridge")
                 secureBridgeAvailable = true
+            }
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                // Older TV WebViews support origin-scoped messages before
+                // document-start scripts. Only the local top frame may obtain
+                // the token; iframe messages cannot bootstrap privileged calls.
+                WebViewCompat.addWebMessageListener(this, "AndroidTVBootstrap", setOf("http://127.0.0.1:$serverPort")) {
+                    _, message, origin, isMainFrame, reply ->
+                    if (canBootstrapBridge(origin, isMainFrame, message.data)) {
+                        reply.postMessage(JSONObject().put("type", "seanime-tv-bootstrap-v1").put("token", androidTvBridgeToken).toString())
+                    }
+                }
+                secureBridgeAvailable = true
+            }
+            if (secureBridgeAvailable) {
+                addJavascriptInterface(AndroidTVBridge(this@MainActivity, this, androidTvBridgeToken), "AndroidTVNativeBridge")
             } else {
-                Log.e("SeanimeWeb", "Secure WebView document-start scripts are unavailable; native bridge disabled")
+                Log.e("SeanimeWeb", "Secure WebView bridge bootstrap is unavailable; native bridge disabled")
             }
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(message: ConsoleMessage): Boolean {
@@ -272,7 +286,8 @@ class MainActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
+        // Consume callback navigation without replacing this activity's launch
+        // identity. Pending URLs and page/history are saved independently.
         consumeLocalPageIntent(intent)?.let(::navigateToLocalPage)
     }
 
@@ -870,6 +885,10 @@ class MainActivity : Activity() {
                 uri.port != 43211 || uri.userInfo != null) return null
             return uri.buildUpon().encodedAuthority("127.0.0.1:43211").build().toString()
         }
+
+        internal fun canBootstrapBridge(origin: Uri, isMainFrame: Boolean, message: String?): Boolean =
+            isMainFrame && origin.scheme == "http" && origin.host == "127.0.0.1" && origin.port == 43211 &&
+                origin.userInfo == null && message == "seanime-tv-bootstrap-v1"
 
         internal fun localPageIntent(context: Context, url: String): Intent =
             Intent(context, MainActivity::class.java)
