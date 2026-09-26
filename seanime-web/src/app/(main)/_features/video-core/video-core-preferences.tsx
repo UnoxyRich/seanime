@@ -48,6 +48,7 @@ import { toast } from "sonner"
 import { z } from "zod"
 import { useServerStatus } from "../../_hooks/use-server-status"
 import { useVideoCoreScreenshot } from "./video-core-screenshot"
+import { __isAndroidTV__ } from "@/types/constants"
 
 export const videoCorePreferencesModalAtom = atom(false)
 
@@ -71,6 +72,11 @@ function isEditableKeyboardTarget(target: EventTarget | null) {
     if (target instanceof HTMLElement && target.isContentEditable) return true
 
     return !!target.closest("input, textarea, select, [contenteditable='true'], [role='textbox']")
+}
+
+function isInteractiveKeyboardTarget(target: EventTarget | null) {
+    if (!(target instanceof Element)) return false
+    return !!target.closest('button,a[href],[role="button"],[role="menuitem"],[role="option"]')
 }
 
 const translationSettingsSchema = defineSchema(({ z, presets }) => z.object({
@@ -1001,10 +1007,16 @@ export function VideoCoreKeybindingController(props: {
                 e.defaultPrevented ||
                 isKeybindingsModalOpen ||
                 isEditableKeyboardTarget(e.target) ||
-                isEditableKeyboardTarget(document.activeElement)
+                isEditableKeyboardTarget(document.activeElement) ||
+                isInteractiveKeyboardTarget(e.target) ||
+                isInteractiveKeyboardTarget(document.activeElement)
             ) {
                 return
             }
+
+            // TV arrow keys belong to spatial focus navigation; the player toolbar
+            // handles seeking and volume through its remote-accessible controls.
+            if (__isAndroidTV__ && e.code.startsWith("Arrow")) return
 
             // Ignore combinations with modifier keys
             if (e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) {

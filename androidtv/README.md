@@ -66,7 +66,10 @@ checks` workflow runs the suite on an API 36 x86_64 TV emulator.
 - The shared player can hand a stream to an optional Media3 player. It supports
   HLS, remote seek/play/pause controls, embedded and external SRT/VTT/ASS/SSA
   subtitles, audio track selection, playback-position handoff, and web-driven
-  playlist transitions.
+  playlist transitions. In the WebView player, D-pad input reveals and focuses
+  the controls; arrow keys navigate focused controls instead of triggering
+  desktop seek and volume shortcuts. Inline and mini-player playback leave
+  focus with the page.
 - The native host exposes a Storage Access Framework picker, persists grants,
   and implements listing, metadata, ranged reads, chunked writes, directory
   creation, and deletion through a gomobile adapter. Library settings can use

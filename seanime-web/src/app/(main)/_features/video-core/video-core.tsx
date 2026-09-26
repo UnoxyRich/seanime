@@ -367,6 +367,91 @@ const PlayerContent = React.memo<PlayerContentProps>(({
     useCastSubtitleRelay()
 
     const nativePlaybackId = React.useRef<string | null>(state.playbackInfo?.id ?? null)
+    const setHoveringControlBar = useSetAtom(vc_hoveringControlBar)
+
+    React.useEffect(() => {
+        if (!__isAndroidTV__ || !state.active || isMiniPlayer || inline) return
+
+        const controlRegionSelector = [
+            '[data-vc-element="control-bar"]',
+            ".vc-mobile-control-bar-top-section",
+            ".vc-mobile-control-bar-bottom-section",
+        ].join(",")
+        const focusableSelector = 'button:not([disabled]),a[href],[role="button"],[role="menuitem"]'
+        let resetTimer: number | undefined
+
+        const isControlRegion = (target: EventTarget | null) =>
+            target instanceof Element && !!target.closest(controlRegionSelector)
+
+        const scheduleHide = () => {
+            window.clearTimeout(resetTimer)
+            resetTimer = window.setTimeout(() => {
+                if (!isControlRegion(document.activeElement)) setHoveringControlBar(false)
+            }, 6000)
+        }
+
+        const handleRemoteKeyDown = (event: KeyboardEvent) => {
+            if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", " "].includes(event.key)) return
+            const target = event.target instanceof Element ? event.target : null
+            if (target?.closest('input,textarea,select,[contenteditable="true"],[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]')) return
+
+            setHoveringControlBar(true)
+            scheduleHide()
+            if (isControlRegion(target)) return
+
+            window.requestAnimationFrame(() => {
+                const controls = videoRef.current?.closest<HTMLElement>('[data-vc-element="container"]')
+                    ?.querySelector<HTMLElement>(controlRegionSelector)
+                const firstControl = controls?.querySelector<HTMLElement>(focusableSelector)
+                firstControl?.focus()
+            })
+        }
+
+        const handleFocusIn = (event: FocusEvent) => {
+            if (isControlRegion(event.target)) {
+                window.clearTimeout(resetTimer)
+                setHoveringControlBar(true)
+            }
+        }
+
+        const handleFocusOut = (event: FocusEvent) => {
+            if (isControlRegion(event.target) && !isControlRegion(event.relatedTarget)) scheduleHide()
+        }
+
+        window.addEventListener("keydown", handleRemoteKeyDown)
+        document.addEventListener("focusin", handleFocusIn)
+        document.addEventListener("focusout", handleFocusOut)
+        return () => {
+            window.removeEventListener("keydown", handleRemoteKeyDown)
+            document.removeEventListener("focusin", handleFocusIn)
+            document.removeEventListener("focusout", handleFocusOut)
+            window.clearTimeout(resetTimer)
+            setHoveringControlBar(false)
+        }
+    }, [inline, isMiniPlayer, setHoveringControlBar, state.active])
+
+    const launchAndroidTVPlayer = React.useCallback(() => {
+        if (!streamUrl || !window.AndroidTV) return
+
+        videoRef.current?.pause()
+        const subtitleTracks = (state.playbackInfo?.subtitleTracks ?? []).map(track => ({
+            src: track.src?.replace("{{SERVER_URL}}", getServerBaseUrl()),
+            content: track.content,
+            label: track.label,
+            language: track.language,
+            type: track.type,
+            default: track.default,
+        }))
+        nativePlaybackId.current = state.playbackInfo?.id ?? null
+        window.AndroidTV.playNative(
+            streamUrl,
+            state.playbackInfo?.media?.title?.userPreferred || "Seanime TV",
+            JSON.stringify(subtitleTracks),
+            Math.max(0, Math.round((videoRef.current?.currentTime ?? state.playbackInfo?.initialState?.currentTime ?? 0) * 1000)),
+            nativeSubtitleStyleJson,
+        )
+    }, [streamUrl, state.playbackInfo, nativeSubtitleStyleJson])
+
     React.useEffect(() => {
         if (!__isAndroidTV__ || !streamUrl || !window.AndroidTV?.nativePlayerActive()) return
         const playbackId = state.playbackInfo?.id ?? null
@@ -574,25 +659,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                             {__isAndroidTV__ && !!streamUrl && <Button
                                 intent="gray-outline"
                                 size="sm"
-                                onClick={() => {
-                                    videoRef.current?.pause()
-                                    const subtitleTracks = (state.playbackInfo?.subtitleTracks ?? []).map(track => ({
-                                        src: track.src?.replace("{{SERVER_URL}}", getServerBaseUrl()),
-                                        content: track.content,
-                                        label: track.label,
-                                        language: track.language,
-                                        type: track.type,
-                                        default: track.default,
-                                    }))
-                                    nativePlaybackId.current = state.playbackInfo?.id ?? null
-                                    window.AndroidTV?.playNative(
-                                        streamUrl,
-                                        state.playbackInfo?.media?.title?.userPreferred || "Seanime TV",
-                                        JSON.stringify(subtitleTracks),
-                                        Math.max(0, Math.round((videoRef.current?.currentTime ?? state.playbackInfo?.initialState?.currentTime ?? 0) * 1000)),
-                                        nativeSubtitleStyleJson,
-                                    )
-                                }}
+                                onClick={launchAndroidTVPlayer}
                             >
                                 TV player
                             </Button>}
@@ -617,6 +684,13 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                             </>}
                             topRightSection={<>
                                 <VideoCoreSettingsMenu />
+                                {__isAndroidTV__ && !!streamUrl && <Button
+                                    intent="gray-outline"
+                                    size="sm"
+                                    onClick={launchAndroidTVPlayer}
+                                >
+                                    TV player
+                                </Button>}
                                 <VideoCoreResolutionMenu
                                     state={state}
                                     onVideoSourceChange={onVideoSourceChange}
