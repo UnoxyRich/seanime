@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"runtime"
 	"seanime/internal/database/db"
 	"seanime/internal/database/models"
+	"seanime/internal/library/filesystem"
 	"seanime/internal/torrents/torrent"
 	"seanime/internal/util"
 	"strings"
@@ -236,11 +236,11 @@ func (h *Handler) HandleSaveSettings(c echo.Context) error {
 		if s == "" || util.IsSameDir(s, b.Library.LibraryPath) {
 			return false
 		}
-		info, err := os.Stat(util.ResolvePhysicalPath(s))
+		isDirectory, err := filesystem.PathIsDirectory(util.ResolvePhysicalPath(s))
 		if err != nil {
 			return false
 		}
-		return info.IsDir()
+		return isDirectory
 	})
 
 	// Check that any library paths are not subdirectories of each other

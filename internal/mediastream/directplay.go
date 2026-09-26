@@ -3,12 +3,15 @@ package mediastream
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/events"
 	"seanime/internal/util"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
@@ -57,6 +60,9 @@ func (r *Repository) ServeEchoFile(c echo.Context, rawFilePath string, clientId 
 	// Content disposition
 	filename := filepath.Base(filePath)
 	c.Response().Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filename))
+	if androidtvstorage.IsPath(filePath) {
+		return serveAndroidTVStorageFile(c, filePath, filename)
+	}
 
 	return c.File(filePath)
 }
@@ -89,20 +95,51 @@ func (r *Repository) ServeEchoDirectPlay(c echo.Context, clientId string) error 
 		r.logger.Trace().Msg("mediastream: Received HEAD request for direct play")
 
 		// Get the file size
-		fileInfo, err := os.Stat(mediaContainer.Filepath)
-		if err != nil {
-			r.logger.Error().Msg("mediastream: Failed to get file info")
-			return c.NoContent(http.StatusInternalServerError)
+		var fileSize int64
+		if androidtvstorage.IsPath(mediaContainer.Filepath) {
+			fileInfo, err := androidtvstorage.Stat(mediaContainer.Filepath)
+			if err != nil {
+				r.logger.Error().Err(err).Msg("mediastream: Failed to get SAF file info")
+				return c.NoContent(http.StatusInternalServerError)
+			}
+			fileSize = fileInfo.Size
+		} else {
+			fileInfo, err := os.Stat(mediaContainer.Filepath)
+			if err != nil {
+				r.logger.Error().Msg("mediastream: Failed to get file info")
+				return c.NoContent(http.StatusInternalServerError)
+			}
+			fileSize = fileInfo.Size()
 		}
 
 		// Set the content length
-		c.Response().Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+		c.Response().Header().Set("Content-Length", fmt.Sprintf("%d", fileSize))
 		c.Response().Header().Set("Content-Type", "video/mp4")
 		c.Response().Header().Set("Accept-Ranges", "bytes")
 		filename := filepath.Base(mediaContainer.Filepath)
 		c.Response().Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filename))
 		return c.NoContent(http.StatusOK)
 	}
+	if androidtvstorage.IsPath(mediaContainer.Filepath) {
+		return serveAndroidTVStorageFile(c, mediaContainer.Filepath, filepath.Base(mediaContainer.Filepath))
+	}
 
 	return c.File(mediaContainer.Filepath)
+}
+
+func serveAndroidTVStorageFile(c echo.Context, filePath, filename string) error {
+	entry, err := androidtvstorage.Stat(filePath)
+	if err != nil {
+		return c.NoContent(http.StatusNotFound)
+	}
+	reader, size, err := androidtvstorage.NewReaderAt(filePath)
+	if err != nil {
+		return c.NoContent(http.StatusNotFound)
+	}
+	c.Response().Header().Set("Accept-Ranges", "bytes")
+	if c.Response().Header().Get("Content-Disposition") == "" {
+		c.Response().Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filename))
+	}
+	http.ServeContent(c.Response(), c.Request(), filename, time.UnixMilli(entry.ModTime), io.NewSectionReader(reader, 0, size))
+	return nil
 }

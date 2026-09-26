@@ -2,6 +2,7 @@ import { Status } from "@/api/generated/types"
 import { useGettingStarted } from "@/api/hooks/settings.hooks"
 import { useSetServerStatus } from "@/app/(main)/_hooks/use-server-status"
 import { GlowingEffect } from "@/components/shared/glowing-effect"
+import { AndroidTVStoragePicker } from "@/components/shared/android-tv-storage-picker"
 import { LoadingOverlayWithLogo } from "@/components/shared/loading-overlay-with-logo"
 import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -267,6 +268,13 @@ function LibraryStep({ form }: { form: any }) {
                         help="Select the main folder containing your anime collection. You can add more folders later."
                         className="w-full"
                     />
+                    <div className="mt-4">
+                        <AndroidTVStoragePicker
+                            purpose="library-main"
+                            label="Choose library folder on USB"
+                            onSelect={(root) => form.setValue("libraryPath", root.path, { shouldDirty: true, shouldValidate: true })}
+                        />
+                    </div>
                 </motion.div>
             </StepCard>
 

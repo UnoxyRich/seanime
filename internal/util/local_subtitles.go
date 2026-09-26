@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"slices"
 	"strings"
 )
@@ -38,18 +39,34 @@ func FindLocalSubtitleFiles(videoPath string) ([]*LocalSubtitleFile, error) {
 		return nil, nil
 	}
 
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
+	var entries []localSubtitleEntry
+	if androidtvstorage.IsPath(videoPath) {
+		storageEntries, err := androidtvstorage.List(dir)
+		if err != nil {
+			return nil, err
+		}
+		entries = make([]localSubtitleEntry, 0, len(storageEntries))
+		for _, entry := range storageEntries {
+			entries = append(entries, localSubtitleEntry{name: entry.Name, isDir: entry.IsDirectory})
+		}
+	} else {
+		osEntries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, err
+		}
+		entries = make([]localSubtitleEntry, 0, len(osEntries))
+		for _, entry := range osEntries {
+			entries = append(entries, localSubtitleEntry{name: entry.Name(), isDir: entry.IsDir()})
+		}
 	}
 
 	ret := make([]*LocalSubtitleFile, 0)
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.isDir {
 			continue
 		}
 
-		filename := entry.Name()
+		filename := entry.name
 		ext := strings.ToLower(filepath.Ext(filename))
 		subtitleType, ok := localSubtitleExtensions[ext]
 		if !ok {
@@ -76,6 +93,11 @@ func FindLocalSubtitleFiles(videoPath string) ([]*LocalSubtitleFile, error) {
 	})
 
 	return ret, nil
+}
+
+type localSubtitleEntry struct {
+	name  string
+	isDir bool
 }
 
 func getLocalSubtitleSuffix(videoBase string, subtitleBase string) (string, bool) {

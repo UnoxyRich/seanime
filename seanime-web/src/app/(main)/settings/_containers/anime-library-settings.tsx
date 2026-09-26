@@ -3,6 +3,8 @@ import { SettingsSubmitButton } from "@/app/(main)/settings/_components/settings
 import { DataSettings } from "@/app/(main)/settings/_containers/data-settings"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Field } from "@/components/ui/form"
+import { AndroidTVStoragePicker } from "@/components/shared/android-tv-storage-picker"
+import { AndroidTVStorageRoots } from "@/components/shared/android-tv-storage-roots"
 import { Separator } from "@/components/ui/separator"
 import { javascript } from "@codemirror/lang-javascript"
 import { vscodeDark } from "@uiw/codemirror-theme-vscode"
@@ -20,6 +22,17 @@ export function AnimeLibrarySettings(props: LibrarySettingsProps) {
     const { isPending } = props
 
     const useLegacyMatching = useWatch({ name: "scannerUseLegacyMatching" })
+    const { getValues, setValue } = useFormContext()
+
+    const selectPrimaryStorage = React.useCallback((root: { path: string }) => {
+        setValue("libraryPath", root.path, { shouldDirty: true, shouldTouch: true, shouldValidate: true })
+    }, [setValue])
+
+    const addLibraryStorage = React.useCallback((root: { path: string }) => {
+        const currentPaths = (getValues("libraryPaths") as string[] | undefined) ?? []
+        if (currentPaths.includes(root.path) || getValues("libraryPath") === root.path) return
+        setValue("libraryPaths", [...currentPaths, root.path], { shouldDirty: true, shouldTouch: true, shouldValidate: true })
+    }, [getValues, setValue])
 
 
     return (
@@ -41,6 +54,20 @@ export function AnimeLibrarySettings(props: LibrarySettingsProps) {
                     help="Include additional directory paths if your library is spread across multiple locations."
                     shouldExist
                 />
+
+                <div className="flex flex-wrap gap-3">
+                    <AndroidTVStoragePicker
+                        purpose="library-main"
+                        label="Choose primary folder on USB"
+                        onSelect={selectPrimaryStorage}
+                    />
+                    <AndroidTVStoragePicker
+                        purpose="library-additional"
+                        label="Add another USB library folder"
+                        onSelect={addLibraryStorage}
+                    />
+                </div>
+                <AndroidTVStorageRoots />
             </SettingsCard>
 
             <SettingsCard title="Scanning">
@@ -181,4 +208,3 @@ function ScannerConfigEditor() {
         </div>
     )
 }
-

@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
@@ -50,6 +52,9 @@ func (h *Handler) HandleVideoCoreSaveScreenshot(c echo.Context) error {
 	if req.Dir == "" || req.Filename == "" || req.Base64Data == "" {
 		return h.RespondWithError(c, fmt.Errorf("missing required fields"))
 	}
+	if filepath.Base(req.Filename) != req.Filename || req.Filename == "." || req.Filename == ".." {
+		return h.RespondWithError(c, fmt.Errorf("invalid filename"))
+	}
 
 	settings, err := h.App.Database.GetSettings()
 	if err != nil {
@@ -82,14 +87,26 @@ func (h *Handler) HandleVideoCoreSaveScreenshot(c echo.Context) error {
 		return h.RespondWithError(c, fmt.Errorf("failed to decode base64 data: %w", err))
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return h.RespondWithError(c, fmt.Errorf("failed to create directory: %w", err))
+	if androidtvstorage.IsPath(dir) {
+		if err := androidtvstorage.MkdirAll(dir); err != nil {
+			return h.RespondWithError(c, fmt.Errorf("failed to create directory: %w", err))
+		}
+	} else {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return h.RespondWithError(c, fmt.Errorf("failed to create directory: %w", err))
+		}
 	}
 
 	filePath := filepath.Join(dir, req.Filename)
 
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return h.RespondWithError(c, fmt.Errorf("failed to write file: %w", err))
+	if androidtvstorage.IsPath(filePath) {
+		if _, err := androidtvstorage.WriteFrom(filePath, bytes.NewReader(data), true); err != nil {
+			return h.RespondWithError(c, fmt.Errorf("failed to write file: %w", err))
+		}
+	} else {
+		if err := os.WriteFile(filePath, data, 0644); err != nil {
+			return h.RespondWithError(c, fmt.Errorf("failed to write file: %w", err))
+		}
 	}
 
 	return h.RespondWithData(c, true)

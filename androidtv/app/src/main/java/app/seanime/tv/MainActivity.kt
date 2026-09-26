@@ -49,6 +49,7 @@ class MainActivity : Activity() {
     private var displayedError: String? = null
     private var activityResumed = false
     private var webPlaybackActive = false
+    internal var pendingStoragePurpose = "library-main"
     private var retryButton: Button? = null
 
     private val readinessPoll = object : Runnable {
@@ -274,9 +275,9 @@ class MainActivity : Activity() {
         }
     }
 
-    internal fun onStorageTreeSelected(uri: Uri?, grantedFlags: Int) {
+    internal fun onStorageTreeSelected(uri: Uri?, grantedFlags: Int, purpose: String) {
         if (uri == null) {
-            dispatchStorageEvent(null)
+            dispatchStorageEvent(null, purpose)
             return
         }
         val persistableFlags = grantedFlags and
@@ -285,10 +286,14 @@ class MainActivity : Activity() {
             runCatching { contentResolver.takePersistableUriPermission(uri, persistableFlags) }
         }
         val directory = DocumentFile.fromTreeUri(this, uri)
+        val hasReadGrant = contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
         val rootItem = JSONObject()
             .put("uri", uri.toString())
+            .put("id", AndroidSafStorageAdapter.storageId(uri))
+            .put("path", AndroidSafStorageAdapter.virtualRoot(uri))
             .put("name", directory?.name ?: "Removable storage")
-            .put("available", directory?.canRead() == true)
+            .put("granted", hasReadGrant)
+            .put("available", hasReadGrant && directory?.canRead() == true)
         val prefs = getSharedPreferences("android-tv-storage", MODE_PRIVATE)
         val roots = try {
             JSONArray(prefs.getString("roots", "[]") ?: "[]")
@@ -302,7 +307,7 @@ class MainActivity : Activity() {
         }
         updated.put(rootItem)
         prefs.edit().putString("roots", updated.toString()).apply()
-        dispatchStorageEvent(rootItem)
+        dispatchStorageEvent(rootItem, purpose)
     }
 
     internal fun removeStorageTree(uriString: String) {
@@ -325,19 +330,24 @@ class MainActivity : Activity() {
             if (item.optString("uri") != uriString) updated.put(item)
         }
         prefs.edit().putString("roots", updated.toString()).apply()
-        dispatchStorageEvent(null)
+        dispatchStorageEvent(null, "library-main")
     }
 
-    private fun dispatchStorageEvent(root: JSONObject?) {
-        val detail = root?.toString() ?: "null"
+    private fun dispatchStorageEvent(root: JSONObject?, purpose: String) {
+        val detail = JSONObject()
+            .put("purpose", purpose)
+            .put("root", root?.let { JSONObject(it.toString()) } ?: JSONObject.NULL)
+            .toString()
         webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('seanime-androidtv-storage', {detail: $detail}))", null)
     }
 
     @Deprecated("Activity Result APIs are not required for this single legacy picker callback")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == STORAGE_PICK_REQUEST && resultCode == RESULT_OK) {
-            onStorageTreeSelected(data?.data, data?.flags ?: 0)
+        if (requestCode == STORAGE_PICK_REQUEST) {
+            val purpose = pendingStoragePurpose
+            pendingStoragePurpose = "library-main"
+            onStorageTreeSelected(if (resultCode == RESULT_OK) data?.data else null, data?.flags ?: 0, purpose)
         }
     }
 
@@ -434,8 +444,10 @@ private class AndroidTVBridge(private val activity: MainActivity, private val we
     fun serverError(): String = Mobile.serverError()
 
     @JavascriptInterface
-    fun requestMediaFolder() {
+    fun requestMediaFolder(purpose: String) {
+        val normalizedPurpose = purpose.takeIf { it in setOf("library-main", "library-additional") } ?: "library-main"
         activity.runOnUiThread {
+            activity.pendingStoragePurpose = normalizedPurpose
             val intent = Intent(DocumentsContract.ACTION_OPEN_DOCUMENT_TREE).apply {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             }
@@ -457,7 +469,12 @@ private class AndroidTVBridge(private val activity: MainActivity, private val we
             val uriString = item.optString("uri")
             val uri = runCatching { Uri.parse(uriString) }.getOrNull()
             val available = uriString in grantedUris && uri?.let { DocumentFile.fromTreeUri(activity, it)?.canRead() } == true
-            current.put(JSONObject(item.toString()).put("available", available).put("granted", uriString in grantedUris))
+            val root = JSONObject(item.toString())
+            if (uri != null) {
+                root.put("id", AndroidSafStorageAdapter.storageId(uri))
+                    .put("path", AndroidSafStorageAdapter.virtualRoot(uri))
+            }
+            current.put(root.put("available", available).put("granted", uriString in grantedUris))
         }
         return current.toString()
     }

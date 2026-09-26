@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"seanime/internal/androidtvstorage"
 )
 
 // GetHashFromPath returns a deterministic hash derived from the file path and
@@ -14,6 +15,15 @@ import (
 // Uses SHA-256 with a stable time format (UnixNano) to avoid locale-dependent
 // string representations of ModTime.
 func GetHashFromPath(path string) (string, error) {
+	if androidtvstorage.IsPath(path) {
+		info, err := androidtvstorage.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		h := sha256.New()
+		_, _ = fmt.Fprintf(h, "%s:%d:%d", path, info.ModTime, info.Size)
+		return hex.EncodeToString(h.Sum(nil))[:40], nil
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", err

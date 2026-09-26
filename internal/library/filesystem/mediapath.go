@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/util"
 	"sort"
 	"strings"
@@ -86,6 +87,9 @@ func SeparateFilePathS(path string, potentialPrefixes []string) *SeparatedFilePa
 // GetMediaFilePathsFromDir returns a slice of strings containing the paths of all the media files in a directory.
 // DEPRECATED: Use GetMediaFilePathsFromDirS instead.
 func GetMediaFilePathsFromDir(dirPath string) ([]string, error) {
+	if androidtvstorage.IsPath(dirPath) {
+		return getAndroidTVMediaFilePaths(dirPath)
+	}
 	filePaths := make([]string, 0)
 
 	err := filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
@@ -111,6 +115,9 @@ func GetMediaFilePathsFromDir(dirPath string) ([]string, error) {
 // GetMediaFilePathsFromDirS returns a slice of strings containing the paths of all the video files in a directory.
 // Unlike GetMediaFilePathsFromDir, it follows symlinks.
 func GetMediaFilePathsFromDirS(oDirPath string) ([]string, error) {
+	if androidtvstorage.IsPath(oDirPath) {
+		return getAndroidTVMediaFilePaths(oDirPath)
+	}
 	filePaths := make([]string, 0)
 	visited := make(map[string]bool)
 
@@ -188,6 +195,44 @@ func GetMediaFilePathsFromDirS(oDirPath string) ([]string, error) {
 //----------------------------------------------------------------------------------------------------------------------
 
 func FileExists(filePath string) bool {
+	if androidtvstorage.IsPath(filePath) {
+		_, err := androidtvstorage.Stat(filePath)
+		return err == nil
+	}
 	_, err := os.Stat(filePath)
 	return !errors.Is(err, os.ErrNotExist)
+}
+
+func PathExists(filePath string) (bool, error) {
+	if androidtvstorage.IsPath(filePath) {
+		_, err := androidtvstorage.Stat(filePath)
+		return err == nil, err
+	}
+	_, err := os.Stat(filePath)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func PathIsDirectory(filePath string) (bool, error) {
+	if androidtvstorage.IsPath(filePath) {
+		entry, err := androidtvstorage.Stat(filePath)
+		if err != nil {
+			return false, err
+		}
+		return entry.IsDirectory, nil
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return false, err
+	}
+	return info.IsDir(), nil
+}
+
+func getAndroidTVMediaFilePaths(dirPath string) ([]string, error) {
+	return androidtvstorage.WalkMediaFiles(dirPath, func(name string) bool {
+		ext := strings.ToLower(filepath.Ext(name))
+		return util.IsValidMediaFile(name) && util.IsValidVideoExtension(ext)
+	})
 }

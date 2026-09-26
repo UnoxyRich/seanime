@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/core"
 	"seanime/internal/cron"
 	"seanime/internal/handlers"
@@ -33,11 +34,38 @@ type serverInstance struct {
 	backgroundMu   sync.Mutex
 }
 
+// AndroidStorageAdapter is implemented by the Android host and exposes
+// persisted Storage Access Framework trees to the Go server. Paths passed to
+// this interface use the /androidtv/<root-id>/... virtual namespace.
+type AndroidStorageAdapter interface {
+	List(path string) (string, error)
+	Stat(path string) (string, error)
+	ReadAt(path string, offset int64, length int64) (string, error)
+	BeginWrite(path string, truncate bool) (string, error)
+	WriteChunk(handle string, data string) error
+	FinishWrite(handle string) error
+	CancelWrite(handle string) error
+	MkdirAll(path string) error
+	Remove(path string) error
+	URI(path string) (string, error)
+}
+
 var serverLifecycle struct {
 	sync.Mutex
 	status   string
 	lastErr  string
 	instance *serverInstance
+}
+
+// SetAndroidStorageAdapter registers the Android host's SAF implementation.
+// The adapter is held for the process lifetime and can be replaced after a
+// host activity recreation without restarting the Go server.
+func SetAndroidStorageAdapter(adapter AndroidStorageAdapter) {
+	if adapter == nil {
+		androidtvstorage.SetAdapter(nil)
+		return
+	}
+	androidtvstorage.SetAdapter(adapter)
 }
 
 // StartServer starts Seanime in the background. The app-managed data and cache

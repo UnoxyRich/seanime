@@ -21,6 +21,7 @@ class SeanimeTvApplication : Application(), Application.ActivityLifecycleCallbac
 
     override fun onCreate() {
         super.onCreate()
+        Mobile.setAndroidStorageAdapter(AndroidSafStorageAdapter(this))
         registerActivityLifecycleCallbacks(this)
     }
 

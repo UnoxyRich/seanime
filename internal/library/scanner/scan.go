@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/api/anilist"
 	"seanime/internal/api/metadata_provider"
 	"seanime/internal/events"
@@ -144,6 +145,7 @@ func (scn *Scanner) Scan(ctx context.Context) (lfs []*anime.LocalFile, err error
 	retrievedPathMap := make(map[string]struct{})
 
 	paths := make([]string, 0)
+	unavailableLibraryPaths := make([]string, 0)
 	mu := sync.Mutex{}
 	logMu := sync.Mutex{}
 	wg := sync.WaitGroup{}
@@ -156,6 +158,11 @@ func (scn *Scanner) Scan(ctx context.Context) (lfs []*anime.LocalFile, err error
 			defer wg.Done()
 			retrievedPaths, err := filesystem.GetMediaFilePathsFromDirS(dirPath)
 			if err != nil {
+				if androidtvstorage.IsPath(dirPath) {
+					mu.Lock()
+					unavailableLibraryPaths = append(unavailableLibraryPaths, dirPath)
+					mu.Unlock()
+				}
 				scn.Logger.Error().Msgf("scanner: An error occurred while retrieving local files from directory: %s", err)
 				return
 			}
@@ -207,15 +214,22 @@ func (scn *Scanner) Scan(ctx context.Context) (lfs []*anime.LocalFile, err error
 
 	// Get skipped files depending on options
 	skippedLfs := make(map[string]*anime.LocalFile)
-	if (scn.SkipLockedFiles || scn.SkipIgnoredFiles) && scn.ExistingLocalFiles != nil {
+	if scn.ExistingLocalFiles != nil {
 		// Retrieve skipped files from existing local files
 		for _, lf := range scn.ExistingLocalFiles {
-			if scn.SkipLockedFiles && lf.IsLocked() {
+			if isFilePathUnderAnyRoot(lf.Path, unavailableLibraryPaths) {
+				// Keep entries from unavailable SAF trees until the user reconnects
+				// the storage or restores its persisted permission.
+				skippedLfs[lf.GetNormalizedPath()] = lf
+			} else if scn.SkipLockedFiles && lf.IsLocked() {
 				skippedLfs[lf.GetNormalizedPath()] = lf
 			} else if scn.SkipIgnoredFiles && lf.IsIgnored() {
 				skippedLfs[lf.GetNormalizedPath()] = lf
 			}
 		}
+	}
+	fileExists := func(path string) bool {
+		return filesystem.FileExists(path) || isFilePathUnderAnyRoot(path, unavailableLibraryPaths)
 	}
 
 	scn.WSEventManager.SendEvent(events.EventScanProgress, 20)
@@ -304,7 +318,7 @@ func (scn *Scanner) Scan(ctx context.Context) (lfs []*anime.LocalFile, err error
 		// Add skipped files
 		if len(skippedLfs) > 0 {
 			for _, sf := range skippedLfs {
-				if filesystem.FileExists(sf.Path) { // Verify that the file still exists
+				if fileExists(sf.Path) { // Verify that the file still exists
 					localFiles = append(localFiles, sf)
 				} else if scn.WithShelving && sf.IsLocked() { // If the file is locked and shelving is enabled, shelve it
 					scn.shelvedLocalFiles = append(scn.shelvedLocalFiles, sf)
@@ -313,7 +327,7 @@ func (scn *Scanner) Scan(ctx context.Context) (lfs []*anime.LocalFile, err error
 		}
 
 		// Add remaining shelved files
-		scn.addRemainingShelvedFiles(skippedLfs, sortedLibraryPaths)
+		scn.addRemainingShelvedFiles(skippedLfs, sortedLibraryPaths, unavailableLibraryPaths)
 
 		scn.Logger.Debug().Msg("scanner: Scan completed")
 		scn.WSEventManager.SendEvent(events.EventScanProgress, 100)
@@ -459,11 +473,11 @@ func (scn *Scanner) Scan(ctx context.Context) (lfs []*anime.LocalFile, err error
 	// Merge skipped files with scanned files
 	// Only files that exist (this removes deleted/moved files)
 	if len(skippedLfs) > 0 {
-		localFiles = scn.mergeSkippedLfsF(localFiles, skippedLfs, filesystem.FileExists)
+		localFiles = scn.mergeSkippedLfsF(localFiles, skippedLfs, fileExists)
 	}
 
 	// Add remaining shelved files
-	scn.addRemainingShelvedFiles(skippedLfs, sortedLibraryPaths)
+	scn.addRemainingShelvedFiles(skippedLfs, sortedLibraryPaths, unavailableLibraryPaths)
 
 	scn.Logger.Info().Msg("scanner: Scan completed")
 	scn.WSEventManager.SendEvent(events.EventScanProgress, 100)
@@ -545,7 +559,7 @@ func (scn *Scanner) mergeSkippedLfsF(
 	return append(localFiles, mergedFiles...)
 }
 
-func (scn *Scanner) addRemainingShelvedFiles(skippedLfs map[string]*anime.LocalFile, sortedLibraryPaths []string) {
+func (scn *Scanner) addRemainingShelvedFiles(skippedLfs map[string]*anime.LocalFile, sortedLibraryPaths, unavailableLibraryPaths []string) {
 	// If a shelved file was not unshelved, it should either:
 	// be kept shelved or
 	// removed (if its library path exists)
@@ -568,11 +582,17 @@ func (scn *Scanner) addRemainingShelvedFiles(skippedLfs map[string]*anime.LocalF
 				}
 			}
 
-			if matchedLibPath != "" {
+			if isFilePathUnderAnyRoot(shelvedLf.Path, unavailableLibraryPaths) {
+				keepShelved = true
+			} else if matchedLibPath != "" {
 				exists, checked := libraryPathExistsCache[matchedLibPath]
 				if !checked {
-					_, err := os.Stat(matchedLibPath)
-					exists = err == nil || !os.IsNotExist(err)
+					if androidtvstorage.IsPath(matchedLibPath) {
+						exists, _ = filesystem.PathExists(matchedLibPath)
+					} else {
+						_, err := os.Stat(matchedLibPath)
+						exists = err == nil || !os.IsNotExist(err)
+					}
 					libraryPathExistsCache[matchedLibPath] = exists
 				}
 
@@ -595,6 +615,15 @@ func (scn *Scanner) addRemainingShelvedFiles(skippedLfs map[string]*anime.LocalF
 			}
 		}
 	}
+}
+
+func isFilePathUnderAnyRoot(filePath string, roots []string) bool {
+	for _, root := range roots {
+		if util.IsSameDir(filePath, root) || util.IsFileUnderDir(filePath, root) {
+			return true
+		}
+	}
+	return false
 }
 
 func ToConfig(c string) (*Config, error) {

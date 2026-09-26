@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/database/db_bridge"
 	"seanime/internal/library/anime"
 	"seanime/internal/library/filesystem"
@@ -348,6 +349,9 @@ func (h *Handler) HandleDeleteLocalFiles(c echo.Context) error {
 	for _, lf := range selectedFiles {
 		path := lf.Path
 		p.Go(func() error {
+			if androidtvstorage.IsPath(path) {
+				return androidtvstorage.Remove(path)
+			}
 			err := os.Remove(path)
 			if err != nil {
 				return err

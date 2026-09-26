@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/database/models"
 	"seanime/internal/mediastream"
 	"seanime/internal/util"
@@ -91,6 +92,12 @@ func (h *Handler) HandleRequestMediastreamMediaContainer(c echo.Context) error {
 	b.ClientId = getRequestClientId(c, b.ClientId)
 
 	b.Path = util.ResolvePhysicalPath(b.Path)
+	if androidtvstorage.IsPath(b.Path) {
+		// SAF documents can be read directly by Media3 through the local range
+		// endpoint. Until Android transcoding is bundled, keep those sources on
+		// the direct path regardless of the desktop transcoding preference.
+		b.StreamType = mediastream.StreamTypeDirect
+	}
 
 	if err := h.guardStrictFilesystemPath(c, b.Path); err != nil {
 		return err
@@ -144,6 +151,9 @@ func (h *Handler) HandlePreloadMediastreamMediaContainer(c echo.Context) error {
 	}
 
 	b.Path = util.ResolvePhysicalPath(b.Path)
+	if androidtvstorage.IsPath(b.Path) {
+		b.StreamType = mediastream.StreamTypeDirect
+	}
 
 	if err := h.guardStrictFilesystemPath(c, b.Path); err != nil {
 		return err

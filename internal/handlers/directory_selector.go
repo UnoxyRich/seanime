@@ -3,6 +3,7 @@ package handlers
 import (
 	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/util"
 	"strings"
 
@@ -109,6 +110,13 @@ func (h *Handler) HandleDirectorySelector(c echo.Context) error {
 }
 
 func checkDirectoryExists(path string) (bool, error) {
+	if androidtvstorage.IsPath(path) {
+		_, err := androidtvstorage.Stat(path)
+		if err != nil {
+			return false, nil
+		}
+		return true, nil
+	}
 	_, err := os.Stat(path)
 	if err == nil {
 		return true, nil
@@ -123,6 +131,21 @@ func getAutocompletionSuggestions(input string) ([]DirectoryInfo, error) {
 	var suggestions []DirectoryInfo
 	baseDir := filepath.Dir(input)
 	prefix := filepath.Base(input)
+	if androidtvstorage.IsPath(baseDir) {
+		entries, err := androidtvstorage.List(baseDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if entry.IsDirectory && strings.HasPrefix(strings.ToLower(entry.Name), strings.ToLower(prefix)) {
+				suggestions = append(suggestions, DirectoryInfo{
+					FullPath:   filepath.Join(baseDir, entry.Name),
+					FolderName: entry.Name,
+				})
+			}
+		}
+		return suggestions, nil
+	}
 
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
@@ -146,6 +169,21 @@ func getAutocompletionSuggestions(input string) ([]DirectoryInfo, error) {
 
 func getDirectoryContent(path string) ([]DirectoryInfo, error) {
 	var content []DirectoryInfo
+	if androidtvstorage.IsPath(path) {
+		entries, err := androidtvstorage.List(path)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if entry.IsDirectory {
+				content = append(content, DirectoryInfo{
+					FullPath:   filepath.Join(path, entry.Name),
+					FolderName: entry.Name,
+				})
+			}
+		}
+		return content, nil
+	}
 
 	entries, err := os.ReadDir(path)
 	if err != nil {

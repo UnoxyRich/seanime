@@ -36,10 +36,16 @@ before distributing a release build.
   HLS, remote seek/play/pause controls, embedded and external SRT/VTT/ASS/SSA
   subtitles, audio track selection, playback-position handoff, and web-driven
   playlist transitions.
-- The native host exposes a Storage Access Framework picker and persisted
-  grant inspection/removal methods. The React settings do not yet expose those
-  methods, and the Go scanner, local-file APIs, torrent storage, and manga
-  local-source APIs still expect filesystem paths rather than SAF documents.
+- The native host exposes a Storage Access Framework picker, persists grants,
+  and implements listing, metadata, ranged reads, chunked writes, directory
+  creation, and deletion through a gomobile adapter. Library settings can use
+  selected SAF roots, and the Go scanner and directory selector traverse them.
+  SAF media uses direct range streaming to the Media3 player. The server skips
+  FFprobe and attachment extraction for those paths, and selects direct play
+  until Android transcoding is available. Scans retain existing library rows
+  when a selected SAF tree is unplugged or its grant is revoked, then rescan
+  them after access returns. Torrent storage and manga local sources still
+  need SAF integration.
 - Android ffmpeg/ffprobe executables are not bundled yet. Transcoding still
   needs an Android-compatible toolchain and device capability configuration.
 - The APK installation bridge can open an APK staged in Seanime's app cache;

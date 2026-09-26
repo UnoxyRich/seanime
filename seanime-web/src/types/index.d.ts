@@ -28,7 +28,7 @@ declare global {
         AndroidTV?: {
             serverStatus: () => string;
             serverError: () => string;
-            requestMediaFolder: () => void;
+            requestMediaFolder: (purpose: "library-main" | "library-additional") => void;
             getStorageRoots: () => string;
             removeStorageFolder: (uri: string) => void;
             openExternalUrl: (url: string) => void;

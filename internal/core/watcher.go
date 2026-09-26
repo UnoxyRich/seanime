@@ -1,6 +1,7 @@
 package core
 
 import (
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/events"
 	"seanime/internal/library/scanner"
 	"seanime/internal/util"
@@ -26,7 +27,12 @@ func (a *App) UpdateLibrarySize(refreshAC bool) {
 		wg.Add(1)
 		go func(path string) {
 			defer wg.Done()
-			ds, _ := util.DirSize(path)
+			var ds uint64
+			if androidtvstorage.IsPath(path) {
+				ds, _ = androidtvstorage.DirSize(path)
+			} else {
+				ds, _ = util.DirSize(path)
+			}
 			mu.Lock()
 			dirSize += ds
 			mu.Unlock()
@@ -45,6 +51,15 @@ func (a *App) UpdateLibrarySize(refreshAC bool) {
 // initLibraryWatcher will initialize the library watcher.
 //   - Used by AutoScanner
 func (a *App) initLibraryWatcher(paths []string) {
+	filesystemPaths := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if !androidtvstorage.IsPath(path) {
+			filesystemPaths = append(filesystemPaths, path)
+		}
+	}
+	if len(filesystemPaths) == 0 {
+		return
+	}
 	// Create a new watcher
 	watcher, err := scanner.NewWatcher(&scanner.NewWatcherOptions{
 		Logger:         a.Logger,
@@ -57,7 +72,7 @@ func (a *App) initLibraryWatcher(paths []string) {
 
 	// Initialize library file watcher
 	err = watcher.InitLibraryFileWatcher(&scanner.WatchLibraryFilesOptions{
-		LibraryPaths: paths,
+		LibraryPaths: filesystemPaths,
 	})
 	if err != nil {
 		a.Logger.Error().Err(err).Msg("app: Failed to watch library files")

@@ -3,8 +3,11 @@ package mediastream
 import (
 	"errors"
 	"fmt"
+	pathutil "path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/mediastream/videofile"
 	"seanime/internal/util/result"
+	"strings"
 
 	"github.com/rs/zerolog"
 	"github.com/samber/mo"
@@ -102,10 +105,10 @@ func (p *PlaybackManager) PreloadPlayback(filepath string, streamType StreamType
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-func (p *PlaybackManager) newMediaContainer(filepath string, streamType StreamType) (ret *MediaContainer, err error) {
-	p.logger.Debug().Str("filepath", filepath).Any("type", streamType).Msg("mediastream: New media container requested")
+func (p *PlaybackManager) newMediaContainer(sourcePath string, streamType StreamType) (ret *MediaContainer, err error) {
+	p.logger.Debug().Str("filepath", sourcePath).Any("type", streamType).Msg("mediastream: New media container requested")
 	// Get the hash of the file.
-	hash, err := videofile.GetHashFromPath(filepath)
+	hash, err := videofile.GetHashFromPath(sourcePath)
 	if err != nil {
 		return nil, err
 	}
@@ -122,28 +125,40 @@ func (p *PlaybackManager) newMediaContainer(filepath string, streamType StreamTy
 
 	// Get the media information of the file.
 	ret = &MediaContainer{
-		Filepath:   filepath,
+		Filepath:   sourcePath,
 		Hash:       hash,
 		StreamType: streamType,
 	}
 
-	p.logger.Debug().Msg("mediastream: Extracting media info")
+	if androidtvstorage.IsPath(sourcePath) {
+		storageInfo, statErr := androidtvstorage.Stat(sourcePath)
+		if statErr != nil {
+			return nil, statErr
+		}
+		ret.MediaInfo = &videofile.MediaInfo{
+			Sha:       hash,
+			Path:      sourcePath,
+			Extension: strings.TrimPrefix(pathutil.Ext(sourcePath), "."),
+			Size:      uint64(storageInfo.Size),
+			Videos:    []videofile.Video{},
+			Audios:    []videofile.Audio{},
+			Subtitles: []videofile.Subtitle{},
+			Fonts:     []string{},
+			Chapters:  []videofile.Chapter{},
+		}
+	} else {
+		p.logger.Debug().Msg("mediastream: Extracting media info")
+		ret.MediaInfo, err = p.repository.mediaInfoExtractor.GetInfo(p.repository.settings.MustGet().FfprobePath, sourcePath)
+		if err != nil {
+			return nil, err
+		}
 
-	ret.MediaInfo, err = p.repository.mediaInfoExtractor.GetInfo(p.repository.settings.MustGet().FfprobePath, filepath)
-	if err != nil {
-		return nil, err
+		p.logger.Debug().Msg("mediastream: Extracted media info, extracting attachments")
+		if err = videofile.ExtractAttachment(p.repository.settings.MustGet().FfmpegPath, sourcePath, hash, ret.MediaInfo, p.repository.cacheDir, p.logger); err != nil {
+			p.logger.Error().Err(err).Msg("mediastream: Failed to extract attachments")
+			return nil, err
+		}
 	}
-
-	p.logger.Debug().Msg("mediastream: Extracted media info, extracting attachments")
-
-	// Extract the attachments from the file.
-	err = videofile.ExtractAttachment(p.repository.settings.MustGet().FfmpegPath, filepath, hash, ret.MediaInfo, p.repository.cacheDir, p.logger)
-	if err != nil {
-		p.logger.Error().Err(err).Msg("mediastream: Failed to extract attachments")
-		return nil, err
-	}
-
-	p.logger.Debug().Msg("mediastream: Extracted attachments")
 
 	streamUrl := ""
 	switch streamType {
