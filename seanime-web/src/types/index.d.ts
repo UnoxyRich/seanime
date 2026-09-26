@@ -25,6 +25,27 @@ declare global {
     }
 
     interface Window {
+        __seanimeAndroidTVBridgeToken?: string;
+        AndroidTVNativeBridge?: {
+            serverStatus: (token: string) => string;
+            serverError: (token: string) => string;
+            requestMediaFolder: (token: string, purpose: "library-main" | "library-additional" | "manga-local" | "torrent-stream" | "screenshot") => void;
+            getStorageRoots: (token: string) => string;
+            removeStorageFolder: (token: string, uri: string) => void;
+            openExternalUrl: (token: string, url: string) => void;
+            requestDownloadTarget: (token: string, requestId: string, filename: string, mimeType: string) => boolean;
+            writeDownloadChunk: (token: string, requestId: string, base64Data: string) => boolean;
+            finishDownload: (token: string, requestId: string) => boolean;
+            cancelDownload: (token: string, requestId: string) => void;
+            supportedAbi: (token: string) => string;
+            downloadAndInstallUpdate: (token: string, url: string, filename: string) => void;
+            playNative: (token: string, url: string, title: string, subtitleTracksJson: string, startPositionMs: number, subtitleStyleJson: string) => void;
+            updateNativePlayer: (token: string, url: string, title: string, subtitleTracksJson: string, startPositionMs: number, subtitleStyleJson: string) => void;
+            updateNativeSubtitleStyle: (token: string, subtitleStyleJson: string) => void;
+            nativePlayerActive: (token: string) => boolean;
+            installUpdate: (token: string, filePath: string) => void;
+            setPlaybackActive: (token: string, active: boolean) => void;
+        };
         AndroidTV?: {
             serverStatus: () => string;
             serverError: () => string;

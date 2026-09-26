@@ -34,6 +34,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.documentfile.provider.DocumentFile
 import androidx.core.content.FileProvider
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import app.seanime.tv.gomobile.mobile.Mobile
 import org.json.JSONArray
 import org.json.JSONObject
@@ -42,6 +44,7 @@ import java.io.File
 import java.io.OutputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.ConcurrentHashMap
+import java.util.UUID
 
 private data class AndroidTVDownloadDocument(val uri: Uri, val output: OutputStream)
 
@@ -53,7 +56,9 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val serverExecutor = Executors.newSingleThreadExecutor()
     private val serverPort = 43211
+    private val androidTvBridgeToken = UUID.randomUUID().toString()
     private var started = false
+    private var secureBridgeAvailable = false
     private var serverReadyHandled = false
     private var displayedError: String? = null
     private var activityResumed = false
@@ -124,7 +129,18 @@ class MainActivity : Activity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 settings.safeBrowsingEnabled = true
             }
-            addJavascriptInterface(AndroidTVBridge(this@MainActivity, this), "AndroidTV")
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                val bridgeToken = JSONObject.quote(androidTvBridgeToken)
+                WebViewCompat.addDocumentStartJavaScript(
+                    this,
+                    "if (window === window.top) Object.defineProperty(window, '__seanimeAndroidTVBridgeToken', {value: $bridgeToken, writable: false, configurable: false});",
+                    setOf("http://127.0.0.1:$serverPort"),
+                )
+                addJavascriptInterface(AndroidTVBridge(this@MainActivity, this, androidTvBridgeToken), "AndroidTVNativeBridge")
+                secureBridgeAvailable = true
+            } else {
+                Log.e("SeanimeWeb", "Secure WebView document-start scripts are unavailable; native bridge disabled")
+            }
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(message: ConsoleMessage): Boolean {
                     Log.d("SeanimeWeb", "${message.message()} (${message.sourceId()}:${message.lineNumber()})")
@@ -135,6 +151,7 @@ class MainActivity : Activity() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url
                     if (uri.host == "127.0.0.1" && uri.port == serverPort) return false
+                    if (!request.isForMainFrame) return false
                     openExternalUrl(uri.toString())
                     return true
                 }
@@ -144,6 +161,13 @@ class MainActivity : Activity() {
                     view.requestFocus(View.FOCUS_DOWN)
                     statusText.visibility = View.GONE
                     this@MainActivity.loadingProgress.visibility = View.GONE
+                    if (!secureBridgeAvailable) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Update Android System WebView to enable Seanime TV storage, downloads, and native playback",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
                 }
 
                 override fun onReceivedError(
@@ -667,7 +691,7 @@ class MainActivity : Activity() {
             unregisterReceiver(updateDownloadReceiver)
             updateReceiverRegistered = false
         }
-        webView.removeJavascriptInterface("AndroidTV")
+        webView.removeJavascriptInterface("AndroidTVNativeBridge")
         setActiveWebView(null)
         setActiveActivity(null)
         webView.destroy()
@@ -745,15 +769,22 @@ class MainActivity : Activity() {
     }
 }
 
-private class AndroidTVBridge(private val activity: MainActivity, private val webView: WebView) {
-    @JavascriptInterface
-    fun serverStatus(): String = Mobile.serverStatus()
+private class AndroidTVBridge(
+    private val activity: MainActivity,
+    private val webView: WebView,
+    private val expectedToken: String,
+) {
+    private fun isAuthorized(token: String): Boolean = token == expectedToken
 
     @JavascriptInterface
-    fun serverError(): String = Mobile.serverError()
+    fun serverStatus(token: String): String = if (isAuthorized(token)) Mobile.serverStatus() else ""
 
     @JavascriptInterface
-    fun requestMediaFolder(purpose: String) {
+    fun serverError(token: String): String = if (isAuthorized(token)) Mobile.serverError() else ""
+
+    @JavascriptInterface
+    fun requestMediaFolder(token: String, purpose: String) {
+        if (!isAuthorized(token)) return
         val normalizedPurpose = purpose.takeIf { it in setOf("library-main", "library-additional", "manga-local", "torrent-stream", "screenshot") } ?: "library-main"
         activity.runOnUiThread {
             activity.pendingStoragePurpose = normalizedPurpose
@@ -765,7 +796,8 @@ private class AndroidTVBridge(private val activity: MainActivity, private val we
     }
 
     @JavascriptInterface
-    fun getStorageRoots(): String {
+    fun getStorageRoots(token: String): String {
+        if (!isAuthorized(token)) return "[]"
         val saved = try {
             JSONArray(activity.getSharedPreferences("android-tv-storage", Activity.MODE_PRIVATE).getString("roots", "[]") ?: "[]")
         } catch (_: Exception) {
@@ -789,64 +821,74 @@ private class AndroidTVBridge(private val activity: MainActivity, private val we
     }
 
     @JavascriptInterface
-    fun removeStorageFolder(uri: String) {
+    fun removeStorageFolder(token: String, uri: String) {
+        if (!isAuthorized(token)) return
         activity.runOnUiThread { activity.removeStorageTree(uri) }
     }
 
     @JavascriptInterface
-    fun openExternalUrl(url: String) {
+    fun openExternalUrl(token: String, url: String) {
+        if (!isAuthorized(token)) return
         activity.runOnUiThread { activity.openExternalUrl(url) }
     }
 
     @JavascriptInterface
-    fun requestDownloadTarget(requestId: String, filename: String, mimeType: String): Boolean =
-        activity.requestDownloadTarget(requestId, filename, mimeType)
+    fun requestDownloadTarget(token: String, requestId: String, filename: String, mimeType: String): Boolean =
+        isAuthorized(token) && activity.requestDownloadTarget(requestId, filename, mimeType)
 
     @JavascriptInterface
-    fun writeDownloadChunk(requestId: String, base64Data: String): Boolean =
-        activity.writeDownloadChunk(requestId, base64Data)
+    fun writeDownloadChunk(token: String, requestId: String, base64Data: String): Boolean =
+        isAuthorized(token) && activity.writeDownloadChunk(requestId, base64Data)
 
     @JavascriptInterface
-    fun finishDownload(requestId: String): Boolean = activity.finishDownload(requestId)
+    fun finishDownload(token: String, requestId: String): Boolean =
+        isAuthorized(token) && activity.finishDownload(requestId)
 
     @JavascriptInterface
-    fun cancelDownload(requestId: String) {
+    fun cancelDownload(token: String, requestId: String) {
+        if (!isAuthorized(token)) return
         activity.cancelDownload(requestId)
     }
 
     @JavascriptInterface
-    fun installUpdate(filePath: String) {
+    fun installUpdate(token: String, filePath: String) {
+        if (!isAuthorized(token)) return
         activity.runOnUiThread { activity.installUpdate(filePath) }
     }
 
     @JavascriptInterface
-    fun supportedAbi(): String = MainActivity.supportedAbi()
+    fun supportedAbi(token: String): String = if (isAuthorized(token)) MainActivity.supportedAbi() else ""
 
     @JavascriptInterface
-    fun downloadAndInstallUpdate(url: String, filename: String) {
+    fun downloadAndInstallUpdate(token: String, url: String, filename: String) {
+        if (!isAuthorized(token)) return
         activity.runOnUiThread { activity.downloadAndInstallUpdate(url, filename) }
     }
 
     @JavascriptInterface
-    fun playNative(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
+    fun playNative(token: String, url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
+        if (!isAuthorized(token)) return
         activity.runOnUiThread { activity.launchNativePlayer(url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson) }
     }
 
     @JavascriptInterface
-    fun updateNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
+    fun updateNativePlayer(token: String, url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
+        if (!isAuthorized(token)) return
         activity.updateNativePlayer(url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson)
     }
 
     @JavascriptInterface
-    fun updateNativeSubtitleStyle(subtitleStyleJson: String) {
+    fun updateNativeSubtitleStyle(token: String, subtitleStyleJson: String) {
+        if (!isAuthorized(token)) return
         activity.updateNativeSubtitleStyle(subtitleStyleJson)
     }
 
     @JavascriptInterface
-    fun nativePlayerActive(): Boolean = NativePlayerActivity.isVisible()
+    fun nativePlayerActive(token: String): Boolean = isAuthorized(token) && NativePlayerActivity.isVisible()
 
     @JavascriptInterface
-    fun setPlaybackActive(active: Boolean) {
+    fun setPlaybackActive(token: String, active: Boolean) {
+        if (!isAuthorized(token)) return
         activity.setWebPlaybackActive(active)
     }
 }

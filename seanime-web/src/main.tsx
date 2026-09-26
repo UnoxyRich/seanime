@@ -15,6 +15,36 @@ import { getDenshiViewTransition } from "./lib/router/view-transitions"
 import { routeTree } from "./routeTree.gen"
 import "@fontsource-variable/inter/index.css"
 
+function installAndroidTVBridgeFacade() {
+    if (!__isAndroidTV__ || typeof window === "undefined") return
+    const native = window.AndroidTVNativeBridge
+    const token = window.__seanimeAndroidTVBridgeToken
+    if (!native || !token) return
+
+    window.AndroidTV = {
+        serverStatus: () => native.serverStatus(token),
+        serverError: () => native.serverError(token),
+        requestMediaFolder: (purpose) => native.requestMediaFolder(token, purpose),
+        getStorageRoots: () => native.getStorageRoots(token),
+        removeStorageFolder: (uri) => native.removeStorageFolder(token, uri),
+        openExternalUrl: (url) => native.openExternalUrl(token, url),
+        requestDownloadTarget: (requestId, filename, mimeType) => native.requestDownloadTarget(token, requestId, filename, mimeType),
+        writeDownloadChunk: (requestId, base64Data) => native.writeDownloadChunk(token, requestId, base64Data),
+        finishDownload: (requestId) => native.finishDownload(token, requestId),
+        cancelDownload: (requestId) => native.cancelDownload(token, requestId),
+        supportedAbi: () => native.supportedAbi(token),
+        downloadAndInstallUpdate: (url, filename) => native.downloadAndInstallUpdate(token, url, filename),
+        playNative: (url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson) => native.playNative(token, url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson),
+        updateNativePlayer: (url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson) => native.updateNativePlayer(token, url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson),
+        updateNativeSubtitleStyle: (subtitleStyleJson) => native.updateNativeSubtitleStyle(token, subtitleStyleJson),
+        nativePlayerActive: () => native.nativePlayerActive(token),
+        installUpdate: (filePath) => native.installUpdate(token, filePath),
+        setPlaybackActive: (active) => native.setPlaybackActive(token, active),
+    }
+}
+
+installAndroidTVBridgeFacade()
+
 type RouterPreloadMode = false | "intent" | "viewport"
 
 function createAppRouter(defaultPreload: RouterPreloadMode, defaultPreloadDelay?: number) {
