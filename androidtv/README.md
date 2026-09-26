@@ -37,8 +37,9 @@ Run the Android host smoke test on an Android TV emulator or device with:
 ```
 
 The test checks embedded UI loading, top-level bridge authorization, sandboxed
-iframe isolation, and server shutdown/restart. The `Android TV checks` workflow
-runs it on an API 36 x86_64 TV emulator.
+iframe isolation, D-pad directional focus movement, and server
+shutdown/restart. The `Android TV checks` workflow runs it on an API 36 x86_64
+TV emulator.
 
 ## Android host behavior
 
@@ -80,7 +81,9 @@ runs it on an API 36 x86_64 TV emulator.
   active torrent pieces remain in app-local storage for random-access
   streaming; after the selected file completes, Seanime copies it to the
   configured SAF folder. This completion copy has not yet been verified on a
-  physical Android TV device.
+  physical Android TV device. Some TV firmware images only provide placeholder
+  document-picker activities; Seanime detects those and explains that a file
+  manager with a working document provider is needed for SAF storage features.
 - Android ffmpeg/ffprobe are bundled with MediaCodec support and libx264 CPU
   encoding fallback. Hardware transcoding capability and performance still
   need validation on representative Android TV hardware.
