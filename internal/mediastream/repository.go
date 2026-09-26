@@ -23,12 +23,17 @@ import (
 	"github.com/samber/mo"
 )
 
+type mediaInfoExtractor interface {
+	GetInfo(ffprobePath string, filePath string) (*videofile.MediaInfo, error)
+	GetInfoFromURL(ffprobePath string, sourceURL string, mediaPath string, hash string) (*videofile.MediaInfo, error)
+}
+
 type (
 	Repository struct {
 		transcoder           mo.Option[*cassette.Cassette]
 		settings             mo.Option[*models.MediastreamSettings]
 		playbackManager      *PlaybackManager
-		mediaInfoExtractor   *videofile.MediaInfoExtractor
+		mediaInfoExtractor   mediaInfoExtractor
 		logger               *zerolog.Logger
 		wsEventManager       events.WSEventManagerInterface
 		mediacoreCoordinator *mediacore.Coordinator

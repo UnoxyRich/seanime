@@ -53,11 +53,13 @@ Android accepts each APK as an in-place upgrade.
   selected SAF roots, and the Go scanner and directory selector traverse them.
   SAF media uses direct range streaming to the Media3 player by default. When
   transcoding is enabled, the server stages the selected media in app cache for
-  FFmpeg and removes it when the transcode stream shuts down. SAF direct-play
-  still skips FFprobe and attachment extraction. Scans retain existing library rows
-  when a selected SAF tree is unplugged or its grant is revoked, then rescan
-  them after access returns. The manga local provider can scan SAF roots and
-  stages CBZ/ZIP archives in the app cache when required. Torrent-stream
+  FFmpeg and removes it when the transcode stream shuts down. Direct-play media
+  metadata and embedded subtitles/fonts are inspected through a temporary,
+  loopback-only range source, without staging the complete video. Scans retain
+  existing library rows when a selected SAF tree is unplugged or its grant is
+  revoked, then rescan them after access returns. The manga local provider can
+  scan SAF roots and stage CBZ/ZIP archives in the app cache when required.
+  Torrent-stream
   active torrent pieces remain in app-local storage for random-access
   streaming; after the selected file completes, Seanime copies it to the
   configured SAF folder. This completion copy has not yet been verified on a
@@ -66,13 +68,15 @@ Android accepts each APK as an in-place upgrade.
   encoding fallback. Hardware transcoding capability and performance still
   need validation on representative Android TV hardware.
 - The native player can capture and save the current video frame to a selected
-  SAF folder. The standard web screenshot controls remain available for browser
-  playback; Media3 screenshot capture excludes separately rendered subtitles.
+  SAF folder. On Android 8 and later it captures the composed player window so
+  Media3-rendered subtitles are included while player controls are hidden.
+  Web-rendered libass/Anime4K overlays are not part of native playback
+  screenshots.
 - Android TV checks the fork's GitHub releases, chooses the APK matching the
   device ABI, downloads it with Android Download Manager, and opens the Android
   package installer. The release flow remains unavailable until a signed APK
-  release is published with the same persistent keystore. Screenshot export
-  and advanced subtitle rendering still need Android-specific integration.
+  release is published with the same persistent keystore. Advanced web subtitle
+  styling and Anime4K rendering still need integration with native playback.
 
 The Android native player, SAF adapter, background lifecycle, transcode staging,
 and update installer still need end-to-end validation on physical Android TV

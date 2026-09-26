@@ -131,20 +131,9 @@ func (p *PlaybackManager) newMediaContainer(sourcePath string, streamType Stream
 	}
 
 	if androidtvstorage.IsPath(sourcePath) {
-		storageInfo, statErr := androidtvstorage.Stat(sourcePath)
-		if statErr != nil {
-			return nil, statErr
-		}
-		ret.MediaInfo = &videofile.MediaInfo{
-			Sha:       hash,
-			Path:      sourcePath,
-			Extension: strings.TrimPrefix(pathutil.Ext(sourcePath), "."),
-			Size:      uint64(storageInfo.Size),
-			Videos:    []videofile.Video{},
-			Audios:    []videofile.Audio{},
-			Subtitles: []videofile.Subtitle{},
-			Fonts:     []string{},
-			Chapters:  []videofile.Chapter{},
+		ret.MediaInfo, err = p.newAndroidTVMediaInfo(sourcePath, hash)
+		if err != nil {
+			return nil, err
 		}
 	} else {
 		p.logger.Debug().Msg("mediastream: Extracting media info")
@@ -188,4 +177,81 @@ func (p *PlaybackManager) newMediaContainer(sourcePath string, streamType Stream
 	p.mediaContainers.Set(hash, ret)
 
 	return
+}
+
+func (p *PlaybackManager) newAndroidTVMediaInfo(sourcePath, hash string) (*videofile.MediaInfo, error) {
+	storageInfo, err := androidtvstorage.Stat(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	if storageInfo.IsDirectory {
+		return nil, fmt.Errorf("Android TV media source is a directory: %s", sourcePath)
+	}
+
+	mediaInfo := &videofile.MediaInfo{
+		Sha:       hash,
+		Path:      sourcePath,
+		Extension: strings.TrimPrefix(pathutil.Ext(sourcePath), "."),
+		Size:      uint64(max(storageInfo.Size, 0)),
+		Videos:    []videofile.Video{},
+		Audios:    []videofile.Audio{},
+		Subtitles: []videofile.Subtitle{},
+		Fonts:     []string{},
+		Chapters:  []videofile.Chapter{},
+	}
+	if p.repository.mediaInfoExtractor == nil {
+		return mediaInfo, nil
+	}
+
+	var ffprobePath, ffmpegPath string
+	if p.repository.settings.IsPresent() {
+		settings := p.repository.settings.MustGet()
+		ffprobePath = settings.FfprobePath
+		ffmpegPath = settings.FfmpegPath
+	}
+
+	probeErr := withAndroidTVStorageSourceURL(sourcePath, func(sourceURL string) error {
+		probedInfo, err := p.repository.mediaInfoExtractor.GetInfoFromURL(ffprobePath, sourceURL, sourcePath, hash)
+		if err != nil {
+			return err
+		}
+		if probedInfo == nil {
+			return errors.New("FFprobe returned empty Android TV media information")
+		}
+
+		probedInfo.Sha = hash
+		probedInfo.Path = sourcePath
+		probedInfo.Extension = strings.TrimPrefix(pathutil.Ext(sourcePath), ".")
+		probedInfo.Size = uint64(max(storageInfo.Size, 0))
+		if probedInfo.Videos == nil {
+			probedInfo.Videos = []videofile.Video{}
+		}
+		if probedInfo.Audios == nil {
+			probedInfo.Audios = []videofile.Audio{}
+		}
+		if probedInfo.Subtitles == nil {
+			probedInfo.Subtitles = []videofile.Subtitle{}
+		}
+		if probedInfo.Fonts == nil {
+			probedInfo.Fonts = []string{}
+		}
+		if probedInfo.Chapters == nil {
+			probedInfo.Chapters = []videofile.Chapter{}
+		}
+		mediaInfo = probedInfo
+
+		if p.repository.cacheDir != "" {
+			if err := videofile.ExtractAttachment(ffmpegPath, sourceURL, hash, mediaInfo, p.repository.cacheDir, p.logger); err != nil {
+				p.logger.Warn().Err(err).Str("hash", hash).Msg("mediastream: Could not extract Android TV media attachments")
+			}
+		}
+		return nil
+	})
+	if probeErr != nil {
+		// Preserve direct playback when a document provider or codec is not
+		// supported by FFprobe. Media3 can still request byte ranges directly.
+		p.logger.Warn().Err(probeErr).Str("path", sourcePath).Msg("mediastream: Could not inspect Android TV media source")
+	}
+
+	return mediaInfo, nil
 }

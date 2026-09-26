@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -41,6 +42,7 @@ import java.lang.ref.WeakReference
 class NativePlayerActivity : Activity() {
     private var player: ExoPlayer? = null
     private var activePlayerView: PlayerView? = null
+    private var playerControlsView: View? = null
     private var lastPositionMs = 0L
     private var completed = false
     private val subtitleCacheFiles = mutableListOf<File>()
@@ -114,6 +116,7 @@ class NativePlayerActivity : Activity() {
         frame.addView(playerView, FrameLayout.LayoutParams(-1, -1))
 
         val trackButtons = FrameLayout(this)
+        playerControlsView = trackButtons
         val audio = trackButton("Audio") { showTrackDialog(C.TRACK_TYPE_AUDIO) }
         val subtitles = trackButton("Subtitles") { showTrackDialog(C.TRACK_TYPE_TEXT) }
         val screenshot = trackButton("Screenshot") { captureScreenshot() }
@@ -220,14 +223,37 @@ class NativePlayerActivity : Activity() {
             return
         }
         val bitmap = Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.ARGB_8888)
-        PixelCopy.request(surface, bitmap, { result ->
-            if (result != PixelCopy.SUCCESS) {
-                bitmap.recycle()
-                android.widget.Toast.makeText(this, "Could not capture the video frame", android.widget.Toast.LENGTH_LONG).show()
-                return@request
+        val playerView = activePlayerView
+        val controls = playerControlsView
+        val controlsVisibility = controls?.visibility ?: View.VISIBLE
+        playerView?.hideController()
+        controls?.visibility = View.INVISIBLE
+        surface.post {
+            val onCopy = PixelCopy.OnPixelCopyFinishedListener { result ->
+                controls?.visibility = controlsVisibility
+                playerView?.showController()
+                if (result != PixelCopy.SUCCESS) {
+                    bitmap.recycle()
+                    android.widget.Toast.makeText(this, "Could not capture the video frame", android.widget.Toast.LENGTH_LONG).show()
+                    return@OnPixelCopyFinishedListener
+                }
+                saveScreenshot(bitmap)
             }
-            saveScreenshot(bitmap)
-        }, Handler(Looper.getMainLooper()))
+            val handler = Handler(Looper.getMainLooper())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val location = IntArray(2)
+                surface.getLocationInWindow(location)
+                val crop = Rect(
+                    location[0],
+                    location[1],
+                    location[0] + surface.width,
+                    location[1] + surface.height,
+                )
+                PixelCopy.request(window, crop, bitmap, onCopy, handler)
+            } else {
+                PixelCopy.request(surface, bitmap, onCopy, handler)
+            }
+        }
     }
 
     private fun saveScreenshot(bitmap: Bitmap) {
@@ -282,6 +308,7 @@ class NativePlayerActivity : Activity() {
         }
         player = null
         activePlayerView = null
+        playerControlsView = null
         subtitleCacheFiles.forEach { it.delete() }
         subtitleCacheFiles.clear()
         nativePlayerVisible = false

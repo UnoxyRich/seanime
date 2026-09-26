@@ -5,11 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rs/zerolog"
+	"github.com/samber/mo"
 	"seanime/internal/androidtvstorage"
+	"seanime/internal/database/models"
+	"seanime/internal/mediastream/videofile"
 )
 
 type playbackStorageAdapter struct{}
@@ -39,7 +45,51 @@ func (playbackStorageAdapter) MkdirAll(string) error           { return errors.N
 func (playbackStorageAdapter) Remove(string) error             { return errors.New("unused") }
 func (playbackStorageAdapter) URI(path string) (string, error) { return "content://test/" + path, nil }
 
-func TestSAFPlaybackUsesDirectMedia3StreamWithoutFFprobe(t *testing.T) {
+type playbackMediaInfoExtractor struct {
+	sourceURL  string
+	mediaPath  string
+	hash       string
+	mediaInfo  *videofile.MediaInfo
+	probeError error
+}
+
+func (f *playbackMediaInfoExtractor) GetInfo(string, string) (*videofile.MediaInfo, error) {
+	return nil, errors.New("unexpected local media probe")
+}
+
+func (f *playbackMediaInfoExtractor) GetInfoFromURL(_ string, sourceURL, mediaPath, hash string) (*videofile.MediaInfo, error) {
+	f.sourceURL = sourceURL
+	f.mediaPath = mediaPath
+	f.hash = hash
+	if f.probeError != nil {
+		return nil, f.probeError
+	}
+
+	request, err := http.NewRequest(http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Range", "bytes=5-8")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusPartialContent {
+		return nil, errors.New("SAF source did not honor a byte-range request")
+	}
+	data, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) != 4 {
+		return nil, errors.New("SAF source returned an incorrect byte range")
+	}
+	mediaInfo := *f.mediaInfo
+	return &mediaInfo, nil
+}
+
+func TestSAFPlaybackKeepsDirectMedia3FallbackWithoutFFprobe(t *testing.T) {
 	androidtvstorage.SetAdapter(playbackStorageAdapter{})
 	t.Cleanup(func() { androidtvstorage.SetAdapter(nil) })
 
@@ -66,6 +116,64 @@ func TestSAFPlaybackUsesDirectMedia3StreamWithoutFFprobe(t *testing.T) {
 	}
 	if container.MediaInfo == nil || container.MediaInfo.Videos == nil || container.MediaInfo.Audios == nil {
 		t.Fatalf("native player metadata collections were left nil: %#v", container.MediaInfo)
+	}
+}
+
+func TestSAFPlaybackProbesRangeSourceAndExtractsAttachmentsWithoutStaging(t *testing.T) {
+	androidtvstorage.SetAdapter(playbackStorageAdapter{})
+	t.Cleanup(func() { androidtvstorage.SetAdapter(nil) })
+
+	logger := zerolog.New(io.Discard)
+	cacheDir := t.TempDir()
+	ffmpegArgsPath := filepath.Join(t.TempDir(), "ffmpeg-args.txt")
+	ffmpegPath := filepath.Join(t.TempDir(), "ffmpeg")
+	ffmpegScript := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SEANIME_TEST_FFMPEG_ARGS\"\n"
+	if err := os.WriteFile(ffmpegPath, []byte(ffmpegScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SEANIME_TEST_FFMPEG_ARGS", ffmpegArgsPath)
+
+	subtitleExtension := "srt"
+	extractor := &playbackMediaInfoExtractor{mediaInfo: &videofile.MediaInfo{
+		Videos:    []videofile.Video{{Codec: "h264", Width: 1920, Height: 1080}},
+		Audios:    []videofile.Audio{{Index: 0, Codec: "aac", Language: new("eng"), Channels: 2}},
+		Subtitles: []videofile.Subtitle{{Index: 0, Codec: "subrip", Extension: &subtitleExtension}},
+		Fonts:     []string{"fonts/selected.ttf"},
+		Chapters:  []videofile.Chapter{{StartTime: 0, EndTime: 1, Name: "Opening"}},
+	}}
+	repository := &Repository{
+		logger:             &logger,
+		cacheDir:           cacheDir,
+		mediaInfoExtractor: extractor,
+		settings: mo.Some(&models.MediastreamSettings{
+			FfmpegPath:  ffmpegPath,
+			FfprobePath: "ffprobe",
+		}),
+	}
+	manager := NewPlaybackManager(repository)
+	path := "/androidtv/0123456789abcdef/Series/episode.mkv"
+	container, err := manager.newMediaContainer(path, StreamTypeDirect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if extractor.sourceURL == "" || extractor.mediaPath != path || extractor.hash != container.Hash {
+		t.Fatalf("FFprobe source identity was not preserved: %#v", extractor)
+	}
+	if container.MediaInfo.Path != path || container.MediaInfo.Sha != container.Hash || container.MediaInfo.Size != 42 {
+		t.Fatalf("SAF media metadata identity mismatch: %#v", container.MediaInfo)
+	}
+	if len(container.MediaInfo.Videos) != 1 || len(container.MediaInfo.Audios) != 1 || len(container.MediaInfo.Subtitles) != 1 || len(container.MediaInfo.Fonts) != 1 || len(container.MediaInfo.Chapters) != 1 {
+		t.Fatalf("FFprobe metadata was not retained: %#v", container.MediaInfo)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, "androidtv-transcode-input")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("direct SAF inspection unexpectedly staged a full media copy: %v", err)
+	}
+	ffmpegArgs, err := os.ReadFile(ffmpegArgsPath)
+	if err != nil {
+		t.Fatalf("FFmpeg attachment extraction did not run: %v", err)
+	}
+	if !strings.Contains(string(ffmpegArgs), "-dump_attachment:t") || !strings.Contains(string(ffmpegArgs), extractor.sourceURL) {
+		t.Fatalf("FFmpeg did not receive the range-readable SAF source: %s", ffmpegArgs)
 	}
 }
 

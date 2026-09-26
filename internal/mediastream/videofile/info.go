@@ -138,8 +138,21 @@ func (e *MediaInfoExtractor) GetInfo(ffprobePath, path string) (mi *MediaInfo, e
 	if err != nil {
 		return nil, err
 	}
+	return e.getInfo(ffprobePath, path, path, hash)
+}
 
-	e.logger.Debug().Str("path", path).Str("hash", hash).Msg("mediastream: Getting media information [MediaInfoExtractor]")
+// GetInfoFromURL probes a range-readable source such as an Android TV SAF
+// document while retaining the original virtual path and cache identity.
+func (e *MediaInfoExtractor) GetInfoFromURL(ffprobePath, sourceURL, mediaPath, hash string) (*MediaInfo, error) {
+	if hash == "" {
+		return nil, fmt.Errorf("media cache hash is empty")
+	}
+	return e.getInfo(ffprobePath, sourceURL, mediaPath, hash)
+}
+
+func (e *MediaInfoExtractor) getInfo(ffprobePath, sourcePath, mediaPath, hash string) (mi *MediaInfo, err error) {
+
+	e.logger.Debug().Str("path", mediaPath).Str("hash", hash).Msg("mediastream: Getting media information [MediaInfoExtractor]")
 
 	bucketName := fmt.Sprintf("mediastream_mediainfo_%s", hash)
 	bucket := filecache.NewBucket(bucketName, 24*7*52*time.Hour)
@@ -150,17 +163,23 @@ func (e *MediaInfoExtractor) GetInfo(ffprobePath, path string) (mi *MediaInfo, e
 	// Look in the cache
 	if found, _ := e.fileCacher.Get(bucket, hash, &mi); found {
 		e.logger.Debug().Str("hash", hash).Msg("mediastream: Media information cache HIT [MediaInfoExtractor]")
+		mi.Path = mediaPath
+		mi.Sha = hash
+		mi.Extension = strings.TrimPrefix(filepath.Ext(mediaPath), ".")
 		return mi, nil
 	}
 
 	e.logger.Debug().Str("hash", hash).Msg("mediastream: Extracting media information using FFprobe")
 
 	// Get the media information of the file.
-	mi, err = FfprobeGetInfo(ffprobePath, path, hash)
+	mi, err = FfprobeGetInfo(ffprobePath, sourcePath, hash)
 	if err != nil {
-		e.logger.Error().Err(err).Str("path", path).Msg("mediastream: Failed to extract media information using FFprobe")
+		e.logger.Error().Err(err).Str("path", mediaPath).Msg("mediastream: Failed to extract media information using FFprobe")
 		return nil, err
 	}
+	mi.Path = mediaPath
+	mi.Sha = hash
+	mi.Extension = strings.TrimPrefix(filepath.Ext(mediaPath), ".")
 
 	// Save in the cache
 	_ = e.fileCacher.Set(bucket, hash, mi)
@@ -193,7 +212,7 @@ func FfprobeGetInfo(ffprobePath, path, hash string) (*MediaInfo, error) {
 		return nil, err
 	}
 
-	ext := filepath.Ext(path)[1:]
+	ext := strings.TrimPrefix(filepath.Ext(path), ".")
 
 	sizeUint64, _ := strconv.ParseUint(data.Format.Size, 10, 64)
 

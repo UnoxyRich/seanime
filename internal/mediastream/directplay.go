@@ -1,9 +1,12 @@
 package mediastream
 
 import (
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -128,18 +131,63 @@ func (r *Repository) ServeEchoDirectPlay(c echo.Context, clientId string) error 
 }
 
 func serveAndroidTVStorageFile(c echo.Context, filePath, filename string) error {
-	entry, err := androidtvstorage.Stat(filePath)
+	handler, err := androidTVStorageFileHandler(filePath, filename)
 	if err != nil {
 		return c.NoContent(http.StatusNotFound)
+	}
+	handler.ServeHTTP(c.Response(), c.Request())
+	return nil
+}
+
+func androidTVStorageFileHandler(filePath, filename string) (http.Handler, error) {
+	entry, err := androidtvstorage.Stat(filePath)
+	if err != nil {
+		return nil, err
 	}
 	reader, size, err := androidtvstorage.NewReaderAt(filePath)
 	if err != nil {
-		return c.NoContent(http.StatusNotFound)
+		return nil, err
 	}
-	c.Response().Header().Set("Accept-Ranges", "bytes")
-	if c.Response().Header().Get("Content-Disposition") == "" {
-		c.Response().Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filename))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Accept-Ranges", "bytes")
+		if w.Header().Get("Content-Disposition") == "" {
+			w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filename))
+		}
+		http.ServeContent(w, r, filename, time.UnixMilli(entry.ModTime), io.NewSectionReader(reader, 0, size))
+	}), nil
+}
+
+// withAndroidTVStorageSourceURL exposes one SAF document as a short-lived,
+// loopback-only HTTP range source for FFprobe and FFmpeg. It avoids copying a
+// potentially very large USB file into app cache just to inspect its tracks.
+func withAndroidTVStorageSourceURL(sourcePath string, use func(string) error) error {
+	filename := filepath.Base(sourcePath)
+	var tokenBytes [16]byte
+	if _, err := cryptorand.Read(tokenBytes[:]); err != nil {
+		return fmt.Errorf("create Android TV media source token: %w", err)
 	}
-	http.ServeContent(c.Response(), c.Request(), filename, time.UnixMilli(entry.ModTime), io.NewSectionReader(reader, 0, size))
-	return nil
+	token := hex.EncodeToString(tokenBytes[:])
+	handler, err := androidTVStorageFileHandler(sourcePath, filename)
+	if err != nil {
+		return err
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("start Android TV media source: %w", err)
+	}
+	defer listener.Close()
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/"+token+"/"+filename {
+				http.NotFound(w, r)
+				return
+			}
+			handler.ServeHTTP(w, r)
+		}),
+	}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	sourceURL := "http://" + listener.Addr().String() + "/" + token + "/" + url.PathEscape(filename)
+	return use(sourceURL)
 }
