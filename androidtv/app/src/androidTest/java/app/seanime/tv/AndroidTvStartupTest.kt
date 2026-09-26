@@ -13,12 +13,26 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AndroidTvStartupTest {
+    @Test
+    fun callbackDestinationsUseTheLocalBridgeOrigin() {
+        assertEquals(
+            "http://127.0.0.1:43211/api/auth?code=sample#returned",
+            MainActivity.localPageUrl("http://localhost:43211/api/auth?code=sample#returned"),
+        )
+        assertNull(MainActivity.localPageUrl("https://127.0.0.1:43211/"))
+        assertNull(MainActivity.localPageUrl("http://127.0.0.1:43212/"))
+        assertNull(MainActivity.localPageUrl("http://localhost.example:43211/"))
+        assertNull(MainActivity.localPageUrl("http://user@127.0.0.1:43211/"))
+        assertNull(MainActivity.localPageUrl("file:///data/local/tmp/page.html"))
+    }
+
     @Test
     fun embeddedUiBridgeAndServerLifecycleWork() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -61,6 +75,28 @@ class AndroidTvStartupTest {
                 "Android TV arrow keys did not move focus spatially",
                 evaluateJavascript(scenario, dpadNavigationProbe()) == "true",
             )
+
+            assertEquals("true", evaluateJavascript(scenario,
+                "history.pushState({}, '', '/#androidtv-restored-page'); true"))
+            scenario.recreate()
+            waitUntil("WebView route after activity recreation", 30_000) {
+                evaluateJavascript(scenario,
+                    "document.readyState === 'complete' && location.hash === '#androidtv-restored-page' && window.AndroidTV?.serverStatus() === 'ready'") == "true"
+            }
+            scenario.onActivity { activity ->
+                activity.startActivity(MainActivity.localPageIntent(activity, "http://localhost:43211/#androidtv-callback"))
+            }
+            waitUntil("callback intent delivery to the existing activity", 30_000) {
+                evaluateJavascript(scenario,
+                    "location.hostname === '127.0.0.1' && location.hash === '#androidtv-callback' && window.AndroidTV?.serverStatus() === 'ready'") == "true"
+            }
+            assertEquals("true", evaluateJavascript(scenario,
+                "history.replaceState({}, '', '/#androidtv-after-callback'); true"))
+            scenario.recreate()
+            waitUntil("callback is not replayed during recreation", 30_000) {
+                evaluateJavascript(scenario,
+                    "document.readyState === 'complete' && location.hash === '#androidtv-after-callback' && window.AndroidTV?.serverStatus() === 'ready'") == "true"
+            }
         } finally {
             scenario.close()
         }

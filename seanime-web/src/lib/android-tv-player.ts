@@ -19,12 +19,27 @@ export type AndroidTVPlayerSnapshot = {
 
 type SendCommand = (command: AndroidTVPlayerCommand, value: number) => void
 
+const activeAdapters = new WeakMap<HTMLVideoElement, { pauseBrowser: () => void; dispose: () => void }>()
+const browserPlaybackEvents = [
+    "play", "playing", "pause", "timeupdate", "durationchange", "loadedmetadata", "loadeddata", "canplay", "canplaythrough",
+    "waiting", "stalled", "ended", "seeking", "seeked", "ratechange", "volumechange", "resize", "error", "emptied", "abort", "suspend", "progress",
+]
+
+/** Pause only the browser decoder while handing a source to Media3. */
+export function pauseAndroidTVBrowserPlayer(video: HTMLVideoElement | null | undefined) {
+    if (!video) return
+    const adapter = activeAdapters.get(video)
+    if (adapter) adapter.pauseBrowser()
+    else video.pause()
+}
+
 /**
  * VideoCore, plugins and continuity share one HTMLVideoElement. During native
  * playback, expose Media3's state on that instance and route its controls to
  * Android. No browser prototype is changed; disposal restores every property.
  */
 export function attachAndroidTVPlayer(video: HTMLVideoElement, url: string, send: SendCommand) {
+    activeAdapters.get(video)?.dispose()
     const originalPlay = video.play.bind(video)
     const originalPause = video.pause.bind(video)
     const originals = new Map<string, PropertyDescriptor | undefined>()
@@ -50,6 +65,12 @@ export function attachAndroidTVPlayer(video: HTMLVideoElement, url: string, send
     }
 
     const emit = (type: string) => video.dispatchEvent(new Event(type))
+    // Browser decoding can finish or fail after a handoff. Only Media3 events
+    // may update continuity, Nakama and playlists while it owns playback.
+    const suppressBrowserEvent = (event: Event) => {
+        if (event.isTrusted && !snapshot.closed) event.stopImmediatePropagation()
+    }
+    for (const type of browserPlaybackEvents) video.addEventListener(type, suppressBrowserEvent, true)
     const duration = () => snapshot.durationMs > 0 ? snapshot.durationMs / 1000 : Number.NaN
     const command = (name: AndroidTVPlayerCommand, value = 0) => {
         if (!disposed && !snapshot.closed) send(name, value)
@@ -63,11 +84,16 @@ export function attachAndroidTVPlayer(video: HTMLVideoElement, url: string, send
     function dispose() {
         if (disposed) return
         disposed = true
+        if (activeAdapters.get(video) === registration) activeAdapters.delete(video)
+        for (const type of browserPlaybackEvents) video.removeEventListener(type, suppressBrowserEvent, true)
         for (const [name, descriptor] of originals) {
             if (descriptor) Object.defineProperty(video, name, descriptor)
             else Reflect.deleteProperty(video, name)
         }
     }
+
+    const registration = { pauseBrowser: originalPause, dispose }
+    activeAdapters.set(video, registration)
 
     define("duration", { get: duration })
     define("currentTime", {

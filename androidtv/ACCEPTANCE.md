@@ -7,13 +7,14 @@ and device model with each result.
 
 ## Current evidence
 
-- The shared frontend suite passes 70 tests, including playback recovery,
-  Media3 state/command adaptation, and browser HLS handoff.
+- The shared frontend suite passes 73 tests, including playback recovery,
+  Media3 state/command adaptation, browser HLS handoff, source-refresh pause
+  isolation, and suppression of late browser playback events.
 - ARM64 and x86_64 debug APKs build; their debug signatures verify.
 - Android instrumentation sources compile. They cover server startup/restart,
   bridge access, sample D-pad widgets, a test document provider, native player
-  lifecycle/commands, missing-source recovery, and execution of the bundled
-  media tools.
+  lifecycle/commands, missing-source recovery, WebView route restoration,
+  callback intent delivery, and execution of the bundled media tools.
 - The latest instrumentation suite and physical-device scenarios below have
   no recorded passing run for the current implementation.
 - All four native libraries in each debug APK pass the 16 KiB ELF/ZIP check

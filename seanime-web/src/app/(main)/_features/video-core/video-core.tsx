@@ -1,7 +1,7 @@
 import { getServerBaseUrl } from "@/api/client/server-url"
 import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import { useHandleCurrentMediaContinuity } from "@/api/hooks/continuity.hooks"
-import { attachAndroidTVPlayer, type AndroidTVPlayerSnapshot } from "@/lib/android-tv-player"
+import { attachAndroidTVPlayer, pauseAndroidTVBrowserPlayer, type AndroidTVPlayerSnapshot } from "@/lib/android-tv-player"
 import { useDirectstreamConvertSubs } from "@/api/hooks/directstream.hooks"
 import { useCancelDiscordActivity } from "@/api/hooks/discord.hooks"
 import { MediaCoreBufferingOverlay, MediaCoreErrorOverlay, MediaCoreLoadingOverlay } from "@/app/(main)/_features/media-core/media-core-overlays"
@@ -435,7 +435,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
     const launchAndroidTVPlayer = React.useCallback(() => {
         if (!streamUrl || !window.AndroidTV) return
 
-        videoRef.current?.pause()
+        pauseAndroidTVBrowserPlayer(videoRef.current)
         const subtitleTracks = (state.playbackInfo?.subtitleTracks ?? []).map(track => ({
             src: track.src?.replace("{{SERVER_URL}}", getServerBaseUrl()),
             content: track.content,
@@ -470,7 +470,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
             default: track.default,
         }))
         nativePlaybackId.current = playbackId
-        videoRef.current?.pause()
+        pauseAndroidTVBrowserPlayer(videoRef.current)
         window.AndroidTV.updateNativePlayer(
             streamUrl,
             state.playbackInfo?.media?.title?.userPreferred || "Seanime TV",

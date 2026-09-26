@@ -62,6 +62,9 @@ class MainActivity : Activity() {
     private var started = false
     private var secureBridgeAvailable = false
     private var serverReadyHandled = false
+    private var savedWebViewState: Bundle? = null
+    private var savedPageUrl: String? = null
+    private var pendingLocalUrl: String? = null
     private var displayedError: String? = null
     private var activityResumed = false
     private var webPlaybackActive = false
@@ -107,6 +110,10 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        savedWebViewState = savedInstanceState?.getBundle(STATE_WEB_VIEW)
+        savedPageUrl = localPageUrl(savedInstanceState?.getString(STATE_PAGE_URL))
+        pendingLocalUrl = consumeLocalPageIntent(intent) ?: localPageUrl(savedInstanceState?.getString(STATE_PENDING_LOCAL_PAGE))
+        pendingStoragePurpose = savedInstanceState?.getString(STATE_STORAGE_PURPOSE) ?: pendingStoragePurpose
         window.decorView.systemUiVisibility = (
             View.SYSTEM_UI_FLAG_FULLSCREEN or
                 View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
@@ -236,8 +243,56 @@ class MainActivity : Activity() {
         statusText.text = getString(R.string.server_starting)
         statusText.visibility = View.VISIBLE
         loadingProgress.visibility = View.VISIBLE
-        val url = "http://127.0.0.1:$serverPort/"
+        val navigationUrl = pendingLocalUrl
+        pendingLocalUrl = null
+        val webState = savedWebViewState
+        savedWebViewState = null
+        val previousUrl = savedPageUrl
+        savedPageUrl = null
+        if (navigationUrl == null && webState != null && webView.restoreState(webState) != null && localPageUrl(webView.url) != null) {
+            webView.reload()
+            return
+        }
+        val url = navigationUrl ?: previousUrl ?: "http://127.0.0.1:$serverPort/"
         if (webView.url == url) webView.reload() else webView.loadUrl(url)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_STORAGE_PURPOSE, pendingStoragePurpose)
+        outState.putString(STATE_PENDING_LOCAL_PAGE, pendingLocalUrl)
+        outState.putString(STATE_PAGE_URL, pendingLocalUrl ?: localPageUrl(webView.url) ?: savedPageUrl)
+        val webState = Bundle()
+        if (localPageUrl(webView.url) != null && webView.saveState(webState) != null) {
+            outState.putBundle(STATE_WEB_VIEW, webState)
+        } else {
+            savedWebViewState?.let { outState.putBundle(STATE_WEB_VIEW, it) }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumeLocalPageIntent(intent)?.let(::navigateToLocalPage)
+    }
+
+    private fun consumeLocalPageIntent(intent: Intent): String? {
+        val url = localPageUrl(intent.getStringExtra(EXTRA_LOCAL_PAGE))
+        // OAuth callbacks are one-shot; activity recreation must not replay one.
+        intent.removeExtra(EXTRA_LOCAL_PAGE)
+        return url
+    }
+
+    private fun navigateToLocalPage(url: String) {
+        pendingLocalUrl = url
+        val status = Mobile.serverStatus()
+        if (status == "ready") {
+            serverReadyHandled = false
+            loadSeanime()
+        } else {
+            if (status != "starting" && status != "stopping") started = false
+            serverForegroundStart()
+        }
     }
 
     private fun showServerError(message: String) {
@@ -746,6 +801,11 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        private const val EXTRA_LOCAL_PAGE = "local-page"
+        private const val STATE_WEB_VIEW = "main-web-view"
+        private const val STATE_PAGE_URL = "main-page-url"
+        private const val STATE_PENDING_LOCAL_PAGE = "pending-local-page"
+        private const val STATE_STORAGE_PURPOSE = "storage-purpose"
         const val STORAGE_PICK_REQUEST = 521
         private const val UPDATE_PREFERENCES = "android-tv-updates"
         private const val PENDING_UPDATE_DOWNLOAD_ID = "pending-download-id"
@@ -798,10 +858,23 @@ class MainActivity : Activity() {
         }
 
         fun deliverOAuthReturn(url: String): Boolean {
-            val view = activeWebView?.get() ?: return false
-            view.post { view.loadUrl(url) }
+            val target = localPageUrl(url) ?: return false
+            val activity = activeActivity?.get()?.takeUnless { it.isFinishing || it.isDestroyed } ?: return false
+            activity.runOnUiThread { activity.navigateToLocalPage(target) }
             return true
         }
+
+        internal fun localPageUrl(url: String?): String? {
+            val uri = url?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return null
+            if (uri.scheme != "http" || uri.host !in setOf("127.0.0.1", "localhost") ||
+                uri.port != 43211 || uri.userInfo != null) return null
+            return uri.buildUpon().encodedAuthority("127.0.0.1:43211").build().toString()
+        }
+
+        internal fun localPageIntent(context: Context, url: String): Intent =
+            Intent(context, MainActivity::class.java)
+                .putExtra(EXTRA_LOCAL_PAGE, requireNotNull(localPageUrl(url)))
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
         fun notifyNativePlaybackProgress(payload: JSONObject) {
             activeWebView?.get()?.post {

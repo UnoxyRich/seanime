@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { attachAndroidTVPlayer, type AndroidTVPlayerSnapshot } from "./android-tv-player"
+import { attachAndroidTVPlayer, pauseAndroidTVBrowserPlayer, type AndroidTVPlayerSnapshot } from "./android-tv-player"
 
 const url = "http://127.0.0.1:43211/stream/episode-one"
 const state = (overrides: Partial<AndroidTVPlayerSnapshot> = {}): AndroidTVPlayerSnapshot => ({
@@ -24,6 +24,66 @@ beforeEach(() => {
 })
 
 describe("Android TV media adapter", () => {
+    it("ignores late browser pause and completion events while Media3 owns playback", () => {
+        const paused = vi.fn()
+        const ended = vi.fn()
+        video.addEventListener("pause", paused)
+        video.addEventListener("ended", ended)
+        const adapter = attachAndroidTVPlayer(video, url, vi.fn())
+        adapter.update(state())
+        const browserEvent = (type: string) => {
+            const event = new Event(type)
+            Object.defineProperty(event, "isTrusted", { value: true })
+            video.dispatchEvent(event)
+        }
+        browserEvent("pause")
+        browserEvent("ended")
+        expect(paused).not.toHaveBeenCalled()
+        expect(ended).not.toHaveBeenCalled()
+        adapter.update(state({ paused: true, completed: true }))
+        expect(paused).toHaveBeenCalledOnce()
+        expect(ended).toHaveBeenCalledOnce()
+        adapter.update(state({ paused: true, completed: true, active: false, closed: true }))
+        browserEvent("pause")
+        expect(paused).toHaveBeenCalledTimes(2)
+        adapter.dispose()
+        browserEvent("ended")
+        expect(ended).toHaveBeenCalledTimes(2)
+    })
+
+    it("pauses the browser decoder during URL refresh without pausing native playback", () => {
+        pauseAndroidTVBrowserPlayer(video)
+        expect(pause).toHaveBeenCalledOnce()
+        const send = vi.fn()
+        const adapter = attachAndroidTVPlayer(video, url, send)
+        adapter.update(state())
+        pauseAndroidTVBrowserPlayer(video)
+        expect(pause).toHaveBeenCalledTimes(2)
+        expect(send).not.toHaveBeenCalled()
+        expect(video.paused).toBe(false)
+        adapter.dispose()
+        pauseAndroidTVBrowserPlayer(video)
+        expect(pause).toHaveBeenCalledTimes(3)
+        expect(send).not.toHaveBeenCalled()
+        pauseAndroidTVBrowserPlayer(null)
+    })
+
+    it("replaces an adapter without wrapping stale native controls", () => {
+        const previousSend = vi.fn()
+        const previous = attachAndroidTVPlayer(video, url, previousSend)
+        const send = vi.fn()
+        const next = attachAndroidTVPlayer(video, `${url}?refreshed`, send)
+        expect(previous.isDisposed()).toBe(true)
+        pauseAndroidTVBrowserPlayer(video)
+        expect(pause).toHaveBeenCalledOnce()
+        video.pause()
+        expect(send).toHaveBeenCalledWith("pause", 0)
+        expect(previousSend).not.toHaveBeenCalled()
+        previous.dispose()
+        next.dispose()
+        expect(video.pause).toBe(pause)
+    })
+
     it("reports native duration and progress even when the browser cannot decode metadata", () => {
         expect(video.duration).toBeNaN()
         const adapter = attachAndroidTVPlayer(video, url, vi.fn())

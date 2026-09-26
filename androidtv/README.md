@@ -72,6 +72,10 @@ command paths used by the Go server.
   in separate Android-managed directories.
 - Startup polling begins after the Go start request is registered, avoiding
   an incorrect stopped-server error while the worker thread is starting.
+- Recreated main and OAuth activities restore their WebView page and history.
+  Main-page restoration waits for server readiness. OAuth callbacks can reopen
+  the main activity, use its canonical local origin, and are consumed from the
+  launch intent once so recreation does not replay that intent.
 - The signed FFmpeg 8.1.3 source release is built with the pinned GPL x264
   revision for ARM64 and x86_64. Android extracts the matching executables into
   its installed native-library directory. The app creates `ffmpeg`/`ffprobe`
@@ -110,6 +114,9 @@ command paths used by the Go server.
   and audio/speed controls are forwarded to the matching native stream. The
   browser HLS loader pauses during native playback and resumes without
   autoplay when returning to the web player.
+- Source refresh pauses only the browser decoder, preserving Media3's playing
+  or paused state. Late browser pause/completion events are suppressed during
+  native playback so they cannot alter native progress or advance playlists.
 - The native host exposes a Storage Access Framework picker, persists grants,
   and implements listing, metadata, ranged reads, chunked writes, directory
   creation, and deletion through a gomobile adapter. Library settings can use

@@ -45,8 +45,11 @@ class AuthWebViewActivity : Activity() {
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val target = request.url
-                    val localSeanime = target.host in setOf("127.0.0.1", "localhost") && target.port == SERVER_PORT
-                    if (localSeanime && MainActivity.deliverOAuthReturn(target.toString())) {
+                    val localSeanime = MainActivity.localPageUrl(target.toString())
+                    if (request.isForMainFrame && localSeanime != null) {
+                        if (!MainActivity.deliverOAuthReturn(localSeanime)) {
+                            startActivity(MainActivity.localPageIntent(this@AuthWebViewActivity, localSeanime))
+                        }
                         finish()
                         return true
                     }
@@ -55,8 +58,21 @@ class AuthWebViewActivity : Activity() {
             }
         }
         setContentView(webView)
-        webView.loadUrl(uri.toString())
+        val webState = savedInstanceState?.getBundle(STATE_WEB_VIEW)
+        if (webState == null || webView.restoreState(webState) == null) {
+            webView.loadUrl(uri.toString())
+        } else {
+            webView.reload()
+        }
         webView.requestFocus(View.FOCUS_DOWN)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        if (::webView.isInitialized) {
+            val webState = Bundle()
+            if (webView.saveState(webState) != null) outState.putBundle(STATE_WEB_VIEW, webState)
+        }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -73,7 +89,7 @@ class AuthWebViewActivity : Activity() {
     }
 
     companion object {
-        private const val SERVER_PORT = 43211
+        private const val STATE_WEB_VIEW = "auth-web-view"
 
         fun intent(context: Context, uri: Uri): Intent = Intent(context, AuthWebViewActivity::class.java)
             .setData(uri)
