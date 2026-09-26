@@ -32,6 +32,10 @@ declare global {
             getStorageRoots: () => string;
             removeStorageFolder: (uri: string) => void;
             openExternalUrl: (url: string) => void;
+            requestDownloadTarget: (requestId: string, filename: string, mimeType: string) => boolean;
+            writeDownloadChunk: (requestId: string, base64Data: string) => boolean;
+            finishDownload: (requestId: string) => boolean;
+            cancelDownload: (requestId: string) => void;
             supportedAbi: () => string;
             downloadAndInstallUpdate: (url: string, filename: string) => void;
             playNative: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number, subtitleStyleJson: string) => void;

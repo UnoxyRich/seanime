@@ -4,7 +4,7 @@ import { DeleteLogs_Variables, GetAnnouncements_Variables, UpdateHomeItems_Varia
 import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import { MemoryStatsResponse, Models_HomeItem, Status, Updater_Announcement } from "@/api/generated/types"
 import { serverAuthTokenAtom } from "@/app/(main)/_atoms/server-status.atoms"
-import { copyToClipboard, openTab } from "@/lib/helpers/browser"
+import { copyToClipboard, downloadBlobAs } from "@/lib/helpers/browser"
 import { __isDesktop__ } from "@/types/constants"
 import { useQueryClient } from "@tanstack/react-query"
 import { useAtomValue } from "jotai"
@@ -138,17 +138,11 @@ export function useDownloadMemoryProfile() {
                     new Date().toISOString().replace(/[:.]/g, "-").split("T")[1].split(".")[0]
                 const filename = `seanime-${profileType}-profile-${timestamp}.pprof`
 
-                const url = window.URL.createObjectURL(blob)
-                const link = document.createElement("a")
-                link.href = url
-                link.setAttribute("download", filename)
-                link.style.display = "none"
-                document.body.appendChild(link)
-                link.click()
-                document.body.removeChild(link)
-                window.URL.revokeObjectURL(url)
-
-                toast.success(`Profile "${profileType}" downloaded`)
+                if (await downloadBlobAs(blob, filename)) {
+                    toast.success(`Profile "${profileType}" downloaded`)
+                } else {
+                    toast.info("Profile download canceled")
+                }
             }
             catch (error) {
                 console.error("Download error:", error)
@@ -197,10 +191,11 @@ export function useDownloadGoRoutineProfile() {
                     new Date().toISOString().replace(/[:.]/g, "-").split("T")[1].split(".")[0]
                 const filename = `seanime-goroutine-profile-${timestamp}.pprof`
 
-                const url = window.URL.createObjectURL(blob)
-                openTab(url)
-
-                toast.success("Goroutine profile downloaded")
+                if (await downloadBlobAs(blob, filename)) {
+                    toast.success("Goroutine profile downloaded")
+                } else {
+                    toast.info("Goroutine profile download canceled")
+                }
             }
             catch (error) {
                 console.error("Download error:", error)
@@ -250,17 +245,11 @@ export function useDownloadCPUProfile() {
                     new Date().toISOString().replace(/[:.]/g, "-").split("T")[1].split(".")[0]
                 const filename = `seanime-cpu-profile-${timestamp}.pprof`
 
-                const url = window.URL.createObjectURL(blob)
-                const link = document.createElement("a")
-                link.href = url
-                link.setAttribute("download", filename)
-                link.style.display = "none"
-                document.body.appendChild(link)
-                link.click()
-                document.body.removeChild(link)
-                window.URL.revokeObjectURL(url)
-
-                toast.success(`CPU profile (${duration}s) downloaded`)
+                if (await downloadBlobAs(blob, filename)) {
+                    toast.success(`CPU profile (${duration}s) downloaded`)
+                } else {
+                    toast.info("CPU profile download canceled")
+                }
             }
             catch (error) {
                 console.error("Download error:", error)

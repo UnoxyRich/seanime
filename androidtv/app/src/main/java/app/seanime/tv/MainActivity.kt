@@ -14,6 +14,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.Base64
 import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
@@ -38,7 +39,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.ref.WeakReference
 import java.io.File
+import java.io.OutputStream
 import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
+
+private data class AndroidTVDownloadDocument(val uri: Uri, val output: OutputStream)
 
 class MainActivity : Activity() {
     private lateinit var root: FrameLayout
@@ -56,6 +61,8 @@ class MainActivity : Activity() {
     internal var pendingStoragePurpose = "library-main"
     private var retryButton: Button? = null
     private var updateReceiverRegistered = false
+    private var pendingDownloadRequestId: String? = null
+    private val downloadDocuments = ConcurrentHashMap<String, AndroidTVDownloadDocument>()
     private val updatePreferences by lazy { getSharedPreferences(UPDATE_PREFERENCES, MODE_PRIVATE) }
 
     private val updateDownloadReceiver = object : BroadcastReceiver() {
@@ -318,6 +325,75 @@ class MainActivity : Activity() {
         }
     }
 
+    internal fun requestDownloadTarget(requestId: String, filename: String, mimeType: String): Boolean {
+        if (!requestId.matches(Regex("^[A-Za-z0-9_-]{1,80}$"))) return false
+        val safeFilename = filename
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .replace(Regex("[\\r\\n]"), "_")
+            .take(160)
+            .ifBlank { "seanime-download" }
+        val safeMimeType = mimeType.takeIf { it.matches(Regex("^[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+$")) }
+            ?: "application/octet-stream"
+
+        runOnUiThread {
+            if (pendingDownloadRequestId != null) {
+                dispatchDownloadTargetEvent(requestId, false, "Another file save is already open")
+                return@runOnUiThread
+            }
+            pendingDownloadRequestId = requestId
+            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = safeMimeType
+                putExtra(Intent.EXTRA_TITLE, safeFilename)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            }
+            runCatching { startActivityForResult(intent, DOWNLOAD_TARGET_REQUEST) }
+                .onFailure { error ->
+                    pendingDownloadRequestId = null
+                    dispatchDownloadTargetEvent(requestId, false, error.message ?: "Unable to choose a save location")
+                }
+        }
+        return true
+    }
+
+    internal fun writeDownloadChunk(requestId: String, base64Data: String): Boolean {
+        val document = downloadDocuments[requestId] ?: return false
+        if (base64Data.length > MAX_DOWNLOAD_CHUNK_BASE64_LENGTH) return false
+        return runCatching {
+            val bytes = Base64.decode(base64Data, Base64.NO_WRAP)
+            document.output.write(bytes)
+            true
+        }.getOrDefault(false)
+    }
+
+    internal fun finishDownload(requestId: String): Boolean {
+        val document = downloadDocuments.remove(requestId) ?: return false
+        val flushed = runCatching { document.output.flush() }.isSuccess
+        val closed = runCatching { document.output.close() }.isSuccess
+        val result = flushed && closed
+        if (!result) DocumentFile.fromSingleUri(this, document.uri)?.delete()
+        return result
+    }
+
+    internal fun cancelDownload(requestId: String) {
+        val document = downloadDocuments.remove(requestId) ?: return
+        runCatching { document.output.close() }
+        DocumentFile.fromSingleUri(this, document.uri)?.delete()
+    }
+
+    private fun dispatchDownloadTargetEvent(requestId: String, ready: Boolean, error: String? = null) {
+        val detail = JSONObject()
+            .put("requestId", requestId)
+            .put("ready", ready)
+            .put("error", error ?: JSONObject.NULL)
+            .toString()
+        webView.evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('seanime-androidtv-download-target',{detail:$detail}))",
+            null,
+        )
+    }
+
     internal fun downloadAndInstallUpdate(url: String, filename: String) {
         val uri = runCatching { Uri.parse(url) }.getOrNull()
         val supportedAbi = supportedAbi()
@@ -526,6 +602,21 @@ class MainActivity : Activity() {
             val purpose = pendingStoragePurpose
             pendingStoragePurpose = "library-main"
             onStorageTreeSelected(if (resultCode == RESULT_OK) data?.data else null, data?.flags ?: 0, purpose)
+        } else if (requestCode == DOWNLOAD_TARGET_REQUEST) {
+            val requestId = pendingDownloadRequestId
+            pendingDownloadRequestId = null
+            if (requestId != null && resultCode == RESULT_OK && data?.data != null) {
+                val uri = data.data!!
+                val output = runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
+                if (output == null) {
+                    dispatchDownloadTargetEvent(requestId, false, "Android could not open the selected file")
+                } else {
+                    downloadDocuments[requestId] = AndroidTVDownloadDocument(uri, output)
+                    dispatchDownloadTargetEvent(requestId, true)
+                }
+            } else if (requestId != null) {
+                dispatchDownloadTargetEvent(requestId, false, "Download canceled")
+            }
         }
     }
 
@@ -571,6 +662,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        downloadDocuments.keys.toList().forEach(::cancelDownload)
         if (updateReceiverRegistered) {
             unregisterReceiver(updateDownloadReceiver)
             updateReceiverRegistered = false
@@ -597,6 +689,8 @@ class MainActivity : Activity() {
         private const val PENDING_UPDATE_INSTALL_PATH = "pending-install-path"
         internal const val SCREENSHOT_TREE_URI = "screenshot-tree-uri"
         private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
+        private const val DOWNLOAD_TARGET_REQUEST = 522
+        private const val MAX_DOWNLOAD_CHUNK_BASE64_LENGTH = 400_000
         private val serverLifecycleExecutor = Executors.newSingleThreadExecutor()
         @Volatile private var activeWebView: WeakReference<WebView>? = null
         @Volatile private var activeActivity: WeakReference<MainActivity>? = null
@@ -702,6 +796,22 @@ private class AndroidTVBridge(private val activity: MainActivity, private val we
     @JavascriptInterface
     fun openExternalUrl(url: String) {
         activity.runOnUiThread { activity.openExternalUrl(url) }
+    }
+
+    @JavascriptInterface
+    fun requestDownloadTarget(requestId: String, filename: String, mimeType: String): Boolean =
+        activity.requestDownloadTarget(requestId, filename, mimeType)
+
+    @JavascriptInterface
+    fun writeDownloadChunk(requestId: String, base64Data: String): Boolean =
+        activity.writeDownloadChunk(requestId, base64Data)
+
+    @JavascriptInterface
+    fun finishDownload(requestId: String): Boolean = activity.finishDownload(requestId)
+
+    @JavascriptInterface
+    fun cancelDownload(requestId: String) {
+        activity.cancelDownload(requestId)
     }
 
     @JavascriptInterface

@@ -41,6 +41,9 @@ Android accepts each APK as an in-place upgrade.
   Go's existing transcoder can use them without changing its API.
 - OAuth and external web destinations stay inside an Android WebView. OAuth
   redirects to Seanime's local callback are returned to the app's main WebView.
+- Browser-generated diagnostic profiles and issue-report archives use the
+  Android document picker, then stream to the selected destination in bounded
+  chunks instead of relying on WebView's unsupported Blob download behavior.
 - The TV build reports its client identity as `androidtv` and keeps the shared
   Seanime routes and web playback UI.
 - The shared player can hand a stream to an optional Media3 player. It supports

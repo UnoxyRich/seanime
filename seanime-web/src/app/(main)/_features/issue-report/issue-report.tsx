@@ -3,6 +3,7 @@ import { Report_ClickLog, Report_ConsoleLog, Report_NetworkLog, Report_ReactQuer
 import { useSaveIssueReport } from "@/api/hooks/report.hooks"
 import { WebSocketContext } from "@/app/(main)/_atoms/websocket.atoms"
 import { useServerHMACAuth } from "@/app/(main)/_hooks/use-server-status"
+import { downloadBlobAs } from "@/lib/helpers/browser"
 import { IconButton } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/components/ui/core/styling"
@@ -631,7 +632,7 @@ export function IssueReport() {
 
     const { password, getHMACTokenQueryParam } = useServerHMACAuth()
 
-    async function downloadIssueReport() {
+    async function downloadIssueReport(): Promise<boolean> {
         const endpoint = "/api/v1/report/issue/download"
         const tokenQuery = await getHMACTokenQueryParam(endpoint)
         if (password && !tokenQuery) {
@@ -657,14 +658,7 @@ export function IssueReport() {
         const blob = await response.blob()
         const contentDisposition = response.headers.get("content-disposition")
         const filename = contentDisposition?.match(/filename="?([^";]+)"?/i)?.[1] ?? "issue_report.zip"
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement("a")
-        link.href = url
-        link.download = filename
-        document.body.appendChild(link)
-        link.click()
-        link.remove()
-        setTimeout(() => URL.revokeObjectURL(url), 0)
+        return downloadBlobAs(blob, filename)
     }
 
     async function handleStopRecording() {
@@ -701,8 +695,11 @@ export function IssueReport() {
                 isAnimeLibraryIssue: recordLocalFiles,
             })
             setDownloadingReport(true)
-            await downloadIssueReport()
-            toast.success("Issue report saved successfully")
+            if (await downloadIssueReport()) {
+                toast.success("Issue report saved successfully")
+            } else {
+                toast.info("Issue report download canceled")
+            }
         }
         catch (error) {
             if (typeof error === "object" && error !== null && "isAxiosError" in error) {
