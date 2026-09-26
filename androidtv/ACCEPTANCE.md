@@ -7,23 +7,27 @@ and device model with each result.
 
 ## Current evidence
 
-- The shared frontend suite passes 73 tests, including playback recovery,
+- The shared frontend suite passes 78 tests, including playback recovery,
   Media3 state/command adaptation, browser HLS handoff, source-refresh pause
-  isolation, and suppression of late browser playback events.
+  isolation, suppression of late browser playback events, and older-WebView
+  bridge bootstrap.
 - ARM64 and x86_64 debug APKs build; their debug signatures verify.
-- Android instrumentation sources compile. They cover server startup/restart,
+- All 10 Android instrumentation tests pass on the API 31 ARM64 TV emulator
+  with WebView 91 and 4 KiB pages. They cover server startup/restart,
   bridge access, sample D-pad widgets, a test document provider, native player
   lifecycle/commands, missing-source recovery, WebView route restoration,
-  callback intent delivery, and execution of the bundled media tools.
-- The latest instrumentation suite and physical-device scenarios below have
-  no recorded passing run for the current implementation.
+  callback intent delivery, and execution of the bundled media tools. The media
+  test encodes H.264 with the bundled CPU encoder, checks it with ffprobe,
+  decodes it with FFmpeg, and renders/seeks it in Media3 while paused.
+- The four transcoding capability tests and seven playback checkpoint tests
+  pass. Physical-device scenarios below still need recorded passing runs.
 - All four native libraries in each debug APK pass the 16 KiB ELF/ZIP check
   in `scripts/verify_android_native_alignment.py`; its seven regression tests
   pass. Runtime operation on a 16 KiB device still needs a separate test run.
-- A checksum-verified API 31 ARM64 TV image was temporarily installed using
-  sparse files. The emulator refused to create its data partition because it
-  required about 7.2 GiB free. The unused test image/AVD were then removed to
-  recover build space. This attempt provides no runtime test evidence.
+- The earlier emulator disk blocker was resolved using the checksum-verified
+  API 31 image and a task-owned sparse data partition. The AVD is available
+  for continued testing. See the [dated run record](acceptance/2026-09-26-api31-arm64.md)
+  for source revision, APK hashes, environment, and test scope.
 
 ## Remaining process-restoration work
 
