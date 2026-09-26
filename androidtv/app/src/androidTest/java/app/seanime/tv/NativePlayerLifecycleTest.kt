@@ -4,6 +4,7 @@ import android.net.Uri
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
+import android.view.KeyEvent
 import androidx.lifecycle.Lifecycle
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -24,6 +25,63 @@ import org.junit.runner.RunWith
 @OptIn(UnstableApi::class)
 @RunWith(AndroidJUnit4::class)
 class NativePlayerLifecycleTest {
+    @Test
+    fun failedSourceCanRetryWithRemoteAndKeepPausedPosition() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val fixture = File(context.cacheDir, "native-retry-${System.nanoTime()}.wav")
+        val scenario = ActivityScenario.launch<NativePlayerActivity>(
+            NativePlayerActivity.intent(context, Uri.fromFile(fixture), "Unavailable source", "[]", 2_000, "{}",
+                """{"speed":1.25,"volume":0.4,"paused":true}"""),
+        )
+        try {
+            awaitError(scenario)
+            scenario.onActivity { activity ->
+                assertTrue(activity.findViewById<View>(R.id.native_player_retry).hasFocus())
+                assertFalse(requireNotNull(findPlayerView(activity.window.decorView)).isShown)
+            }
+            writeSilentWav(fixture)
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitReady(scenario)
+            scenario.onActivity { activity ->
+                val playerView = requireNotNull(findPlayerView(activity.window.decorView))
+                val player = requireNotNull(playerView.player)
+                assertEquals(View.GONE, activity.findViewById<View>(R.id.native_player_error_panel).visibility)
+                assertTrue(playerView.isShown)
+                assertEquals(2_000L, player.currentPosition)
+                assertFalse("retry resumed a paused stream", player.playWhenReady)
+                assertEquals(1.25f, player.playbackParameters.speed, 0.001f)
+                assertEquals(0.4f, player.volume, 0.001f)
+            }
+        } finally {
+            scenario.close()
+            fixture.delete()
+        }
+    }
+
+    @Test
+    fun failedSourceOffersRemoteReturnToWebPlayer() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val fixture = File(context.cacheDir, "native-missing-${System.nanoTime()}.wav")
+        val scenario = ActivityScenario.launch<NativePlayerActivity>(
+            NativePlayerActivity.intent(context, Uri.fromFile(fixture), "Unavailable source", "[]", 0, "{}"),
+        )
+        try {
+            awaitError(scenario)
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            scenario.onActivity { activity ->
+                assertTrue(activity.findViewById<View>(R.id.native_player_return).hasFocus())
+            }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            instrumentation.waitForIdleSync()
+            assertEquals(Lifecycle.State.DESTROYED, scenario.state)
+            assertFalse(NativePlayerActivity.isVisible())
+        } finally {
+            scenario.close()
+        }
+    }
+
     @Test
     fun nativeCommandsControlOnlyTheMatchingSource() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -154,6 +212,20 @@ class NativePlayerLifecycleTest {
             SystemClock.sleep(50)
         }
         throw AssertionError("native player did not prepare the local WAV fixture")
+    }
+
+    private fun awaitError(scenario: ActivityScenario<NativePlayerActivity>) {
+        val deadline = SystemClock.elapsedRealtime() + 10_000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            var displayed = false
+            scenario.onActivity { activity ->
+                displayed = findPlayerView(activity.window.decorView)?.player?.playerError != null &&
+                    activity.findViewById<View>(R.id.native_player_error_panel).isShown
+            }
+            if (displayed) return
+            SystemClock.sleep(50)
+        }
+        throw AssertionError("native player did not show recovery controls for a missing source")
     }
 
     private fun findPlayerView(view: View): PlayerView? {

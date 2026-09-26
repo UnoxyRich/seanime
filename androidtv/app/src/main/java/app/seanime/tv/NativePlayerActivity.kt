@@ -21,11 +21,14 @@ import android.view.WindowManager
 import android.webkit.CookieManager
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.util.UnstableApi
@@ -51,6 +54,9 @@ class NativePlayerActivity : Activity() {
     private var player: ExoPlayer? = null
     private var activePlayerView: PlayerView? = null
     private var playerControlsView: View? = null
+    private var playbackErrorView: View? = null
+    private var playbackErrorText: TextView? = null
+    private var playbackRetryButton: Button? = null
     private var lastPositionMs = 0L
     private var completed = false
     private var mediaUri: Uri? = null
@@ -130,6 +136,32 @@ class NativePlayerActivity : Activity() {
         screenshotParams.topMargin = 144
         trackButtons.addView(screenshot, screenshotParams)
         frame.addView(trackButtons)
+        val errorPanel = LinearLayout(this).apply {
+            id = R.id.native_player_error_panel
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            val inset = (48 * resources.displayMetrics.density).toInt()
+            setPadding(inset, inset, inset, inset)
+            setBackgroundColor(0xFF08070D.toInt())
+            visibility = View.GONE
+        }
+        playbackErrorText = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 22f
+            gravity = Gravity.CENTER
+        }.also { errorPanel.addView(it) }
+        playbackRetryButton = trackButton(getString(R.string.player_retry)) { retryPlayback() }.apply {
+            id = R.id.native_player_retry
+            nextFocusUpId = R.id.native_player_retry
+            nextFocusDownId = R.id.native_player_return
+        }.also { errorPanel.addView(it) }
+        errorPanel.addView(trackButton(getString(R.string.player_return)) { finish() }.apply {
+            id = R.id.native_player_return
+            nextFocusUpId = R.id.native_player_retry
+            nextFocusDownId = R.id.native_player_return
+        })
+        playbackErrorView = errorPanel
+        frame.addView(errorPanel, FrameLayout.LayoutParams(-1, -1))
         setContentView(frame)
     }
 
@@ -176,6 +208,7 @@ class NativePlayerActivity : Activity() {
             }
 
             override fun onEvents(player: Player, events: Player.Events) {
+                if (events.contains(Player.EVENT_PLAYER_ERROR)) showPlaybackError(player.playerError)
                 publishSnapshot()
             }
         })
@@ -205,6 +238,7 @@ class NativePlayerActivity : Activity() {
         mediaTitle = title
         this.subtitleTracksJson = subtitleTracksJson
         this.subtitleStyleJson = subtitleStyleJson
+        showPlaybackError(null)
         if (!preservePosition) completed = false
         lastPositionMs = position
         resumePlayWhenReady = playWhenReady
@@ -227,7 +261,7 @@ class NativePlayerActivity : Activity() {
             .put("positionMs", current.currentPosition.coerceAtLeast(0))
             .put("durationMs", current.duration.coerceAtLeast(0))
             .put("bufferedPositionMs", current.bufferedPosition.coerceAtLeast(0))
-            .put("paused", !active || !current.playWhenReady || completed)
+            .put("paused", !active || !current.playWhenReady || completed || current.playerError != null)
             .put("buffering", current.playbackState == Player.STATE_BUFFERING)
             .put("completed", completed)
             .put("speed", current.playbackParameters.speed.toDouble())
@@ -247,6 +281,27 @@ class NativePlayerActivity : Activity() {
             savedTrackSelectionParameters = it.trackSelectionParameters
             if (!muted) savedVolume = it.volume
         }
+    }
+
+    private fun showPlaybackError(error: PlaybackException?) {
+        val wasVisible = playbackErrorView?.visibility == View.VISIBLE
+        playbackErrorView?.visibility = if (error == null) View.GONE else View.VISIBLE
+        activePlayerView?.visibility = if (error == null) View.VISIBLE else View.INVISIBLE
+        playerControlsView?.visibility = if (error == null) View.VISIBLE else View.INVISIBLE
+        if (error != null) {
+            playbackErrorText?.text = getString(R.string.player_error, error.errorCodeName)
+            playbackRetryButton?.requestFocus()
+        } else if (wasVisible && !isFinishing) {
+            activePlayerView?.requestFocus()
+        }
+    }
+
+    private fun retryPlayback() {
+        val current = player ?: return
+        showPlaybackError(null)
+        // prepare() retains the failed item's position and playWhenReady,
+        // including a paused stream. No playlist completion is synthesized.
+        current.prepare()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -493,6 +548,7 @@ class NativePlayerActivity : Activity() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         rememberPlaybackState()
         publishSnapshot(active = false, closed = isFinishing)
+        showPlaybackError(null)
         activePlayerView?.player = null
         current.release()
         player = null

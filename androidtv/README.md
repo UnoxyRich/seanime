@@ -6,6 +6,9 @@ The application label and package ID are provisional (`Seanime TV`,
 `app.seanime.tv`). The repository's GPL-3.0 license and upstream attribution
 remain in place.
 
+See [the acceptance matrix](ACCEPTANCE.md) for the full feature scope and
+remaining device validation.
+
 ## Build
 
 Install Go at the version required by the repository, Node.js, JDK 17, Android
@@ -22,6 +25,15 @@ The Gradle task builds the `androidtv` frontend, copies it under `mobile/web`
 for Go embedding, creates a gomobile AAR for ARM64 and x86_64, and packages
 ABI-split APKs for ARM64 and x86_64. Each APK includes only the media binaries
 for its matching ABI. The debug APKs are signed with Gradle's debug key.
+FFmpeg and the Go bridge are linked for 16 KiB pages. Check every native library
+and any uncompressed native ZIP entries in the built APKs from the repo root:
+
+```sh
+python3 scripts/verify_android_native_alignment.py androidtv/app/build/outputs/apk/debug/*.apk
+```
+
+The CI checks and release workflow run this verifier. Alignment is a build
+requirement; playback and storage still need runtime testing on both page sizes.
 Publishing an Android TV update requires a persistent release keystore. Configure
 the GitHub Actions secrets `SEANIME_ANDROID_KEYSTORE_BASE64`,
 `SEANIME_ANDROID_KEYSTORE_PASSWORD`, `SEANIME_ANDROID_KEY_ALIAS`, and
@@ -48,6 +60,8 @@ and activity recreation, including playlist handoffs, pause state, position,
 speed, volume, and track preferences.
 It also checks source-bound native play/pause/seek commands and the initial
 speed, volume, and mute settings passed by the web client.
+Missing-source tests exercise D-pad retry and return controls, including a
+source becoming available after an error while playback is paused.
 The media-tools test launches both packaged executables through the same
 command paths used by the Go server.
 
@@ -56,6 +70,8 @@ command paths used by the Go server.
 - The app uses a Leanback TV launcher activity and a 320×180 TV banner.
 - The local server binds only to `127.0.0.1:43211`; app data and cache are kept
   in separate Android-managed directories.
+- Startup polling begins after the Go start request is registered, avoiding
+  an incorrect stopped-server error while the worker thread is starting.
 - The signed FFmpeg 8.1.3 source release is built with the pinned GPL x264
   revision for ARM64 and x86_64. Android extracts the matching executables into
   its installed native-library directory. The app creates `ffmpeg`/`ffprobe`
@@ -84,6 +100,9 @@ command paths used by the Go server.
 - Native playback releases its decoder while the activity is stopped and
   recreates it on return with the latest episode and playback settings. The
   retained WebView resumes receiving progress and playlist events on return.
+- Native playback errors show focused remote controls to retry the source or
+  return to the web player. Retrying retains the position, speed, volume and
+  pause state; failures do not advance the playlist.
 - Media3 reports duration, position, buffering, pause state, speed, volume,
   and completion to the shared player. Its per-element adapter supplies these
   values to watch continuity, progress updates, playlists, and player events,

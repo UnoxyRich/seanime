@@ -27,7 +27,7 @@ class AndroidTvStartupTest {
         try {
             assertTrue(
                 "Seanime server failed: ${Mobile.serverStatus()} (${Mobile.serverError()})",
-                Mobile.waitForServer(60_000),
+                waitForServerStatus("ready", 60_000),
             )
             waitUntil("embedded Seanime UI and authenticated bridge", 30_000) {
                 evaluateJavascript(

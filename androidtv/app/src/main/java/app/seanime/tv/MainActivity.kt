@@ -209,15 +209,21 @@ class MainActivity : Activity() {
         serverReadyHandled = false
         val dataDir = filesDir.resolve("seanime/data").absolutePath
         val cacheDir = cacheDir.resolve("seanime").absolutePath
+        handler.removeCallbacks(readinessPoll)
         serverExecutor.execute {
             runCatching {
                 Mobile.startServer(dataDir, cacheDir, serverPort.toLong())
+            }.onSuccess {
+                // The JNI call starts Go asynchronously. Poll only after it
+                // registers that start, so the initial "stopped" state cannot
+                // be mistaken for a failed launch on a slower device.
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) readinessPoll.run()
+                }
             }.onFailure { error ->
                 runOnUiThread { showServerError(error.message ?: "Unable to start Seanime.") }
             }
         }
-        handler.removeCallbacks(readinessPoll)
-        handler.post(readinessPoll)
     }
 
     private fun loadSeanime() {
@@ -734,8 +740,8 @@ class MainActivity : Activity() {
                 Mobile.setAppInForeground(false)
                 Mobile.stopServer()
             }
-            serverExecutor.shutdown()
         }
+        serverExecutor.shutdown()
         super.onDestroy()
     }
 

@@ -1,0 +1,5 @@
+<resources>
+    <item name="native_player_error_panel" type="id" />
+    <item name="native_player_retry" type="id" />
+    <item name="native_player_return" type="id" />
+</resources>
