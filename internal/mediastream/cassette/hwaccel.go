@@ -69,6 +69,8 @@ func BuildHwAccelProfile(opts HwAccelOptions, ffmpegPath string, logger *zerolog
 		return qsvProfile(defaultDevice, preset, true)
 	case "nvidia":
 		return nvidiaProfile(preset)
+	case "mediacodec":
+		return mediaCodecProfile()
 	case "videotoolbox":
 		return videotoolboxProfile()
 	case "custom":
@@ -87,21 +89,7 @@ func probeHardwareEncoder(ffmpegPath string, logger *zerolog.Logger) string {
 		ffmpegPath = "ffmpeg"
 	}
 
-	type candidate struct {
-		name    string
-		encoder string
-	}
-
-	candidates := []candidate{
-		{"nvidia", "h264_nvenc"},
-		{"qsv", "h264_qsv"},
-		{"vaapi", "h264_vaapi"},
-	}
-	if runtime.GOOS == "darwin" {
-		candidates = append(candidates, candidate{"videotoolbox", "h264_videotoolbox"})
-	}
-
-	for _, c := range candidates {
+	for _, c := range hardwareEncoderCandidates(runtime.GOOS) {
 		if testEncoder(ffmpegPath, c.encoder) {
 			logger.Info().
 				Str("encoder", c.encoder).
@@ -114,6 +102,26 @@ func probeHardwareEncoder(ffmpegPath string, logger *zerolog.Logger) string {
 
 	logger.Info().Msg("cassette: no hardware encoder available, using CPU")
 	return "disabled"
+}
+
+type hardwareEncoderCandidate struct {
+	name    string
+	encoder string
+}
+
+func hardwareEncoderCandidates(goos string) []hardwareEncoderCandidate {
+	if goos == "android" {
+		return []hardwareEncoderCandidate{{"mediacodec", "h264_mediacodec"}}
+	}
+	candidates := []hardwareEncoderCandidate{
+		{"nvidia", "h264_nvenc"},
+		{"qsv", "h264_qsv"},
+		{"vaapi", "h264_vaapi"},
+	}
+	if goos == "darwin" {
+		candidates = append(candidates, hardwareEncoderCandidate{"videotoolbox", "h264_videotoolbox"})
+	}
+	return candidates
 }
 
 // TestEncoder attempts a minimal encode to verify if it works
@@ -269,6 +277,19 @@ func videotoolboxProfile() HwAccelProfile {
 	}
 }
 
+func mediaCodecProfile() HwAccelProfile {
+	return HwAccelProfile{
+		Name: "mediacodec",
+		EncodeFlags: []string{
+			"-c:v", "h264_mediacodec",
+			"-profile:v", "main",
+		},
+		ScaleFilter:   "scale=%d:%d,format=yuv420p",
+		NoScaleFilter: "format=yuv420p",
+		ForcedIDR:     true,
+	}
+}
+
 // runtime fallback and adjustments
 
 // BuildVideoFilter generates the scale filter string
@@ -324,7 +345,7 @@ func FallbackToCPU(preset string) HwAccelProfile {
 func DetectHwAccelFailure(stderr string) bool {
 	lower := strings.ToLower(stderr)
 	failureSignals := []string{
-		"hwaccel", "vaapi", "cuvid", "vdpau", "qsv",
+		"hwaccel", "vaapi", "cuvid", "vdpau", "qsv", "mediacodec",
 		"cuda", "nvenc", "videotoolbox",
 		"no capable devices found",
 		"device creation failed",

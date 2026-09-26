@@ -13,6 +13,7 @@ import { Modal } from "@/components/ui/modal"
 import { RadioGroup } from "@/components/ui/radio-group"
 import { VerticalMenu } from "@/components/ui/vertical-menu"
 import { WSEvents } from "@/lib/server/ws-events"
+import { __isAndroidTV__ } from "@/types/constants"
 import { atom } from "jotai"
 import { useAtom } from "jotai/react"
 import React from "react"
@@ -49,6 +50,14 @@ export function UpdateModal(props: UpdateModalProps) {
     // Install update
     const { mutate: installUpdate, isPending } = useInstallLatestUpdate()
     const [fallbackDestination, setFallbackDestination] = React.useState<string>("")
+    const androidTVApk = React.useMemo(() => {
+        if (!__isAndroidTV__ || typeof window === "undefined" || !window.AndroidTV) return undefined
+        const abi = window.AndroidTV.supportedAbi()
+        if (!abi) return undefined
+        return updateData?.release?.assets?.find(asset =>
+            asset.name.toLowerCase().endsWith(".apk") && asset.name.toLowerCase().includes(abi.toLowerCase()),
+        )
+    }, [updateData])
 
     React.useEffect(() => {
         if (serverStatus?.settings?.library?.disableUpdateCheck) return
@@ -72,6 +81,18 @@ export function UpdateModal(props: UpdateModalProps) {
         installUpdate({ fallback_destination: "" })
     }
 
+    function handleInstallAndroidTVUpdate() {
+        if (!androidTVApk) {
+            toast.error("This release does not include an Android TV APK for this device")
+            return
+        }
+        if (!window.AndroidTV) {
+            toast.error("The Android TV installer is unavailable")
+            return
+        }
+        window.AndroidTV.downloadAndInstallUpdate(androidTVApk.browser_download_url, androidTVApk.name)
+    }
+
     if (!updateModalOpen && (serverStatus?.settings?.library?.disableUpdateCheck || isLoading || !updateData || !updateData.release)) return null
 
     return (
@@ -92,7 +113,7 @@ export function UpdateModal(props: UpdateModalProps) {
                 onOpenChange={() => ignoreUpdate()}
                 contentClass="max-w-3xl"
             >
-                <Downloader release={updateData?.release} />
+                {!__isAndroidTV__ && <Downloader release={updateData?.release} />}
 
                 <div className="space-y-2">
                     <h3 className="text-center">A new update is available!</h3>
@@ -104,11 +125,21 @@ export function UpdateModal(props: UpdateModalProps) {
                         intent="info"
                         description="Update Seanime from the desktop application."
                     />}
+                    {__isAndroidTV__ && !androidTVApk && <Alert
+                        intent="warning"
+                        description="This release does not include an Android TV APK for this device."
+                    />}
 
                     <UpdateChangelogBody updateData={updateData} />
 
                     <div className="flex gap-2 w-full items-center !mt-4">
-                        {!serverStatus?.isDesktopSidecar && <Modal
+                        {__isAndroidTV__ ? <Button
+                            leftIcon={<GrInstall className="text-2xl" />}
+                            onClick={handleInstallAndroidTVUpdate}
+                            disabled={!androidTVApk}
+                        >
+                            Download and install
+                        </Button> : !serverStatus?.isDesktopSidecar && <Modal
                             trigger={<Button leftIcon={<GrInstall className="text-2xl" />}>
                                 Update now
                             </Button>}
@@ -129,7 +160,7 @@ export function UpdateModal(props: UpdateModalProps) {
                         <SeaLink href={updateData?.release?.html_url || ""} target="_blank">
                             <Button intent="white-subtle" rightIcon={<BiLinkExternal />}>See on GitHub</Button>
                         </SeaLink>
-                        {!serverStatus?.isDesktopSidecar &&
+                        {!__isAndroidTV__ && !serverStatus?.isDesktopSidecar &&
                             <Button intent="white" leftIcon={<BiDownload />} onClick={() => setDownloaderOpen(true)}>Download</Button>}
                     </div>
                 </div>

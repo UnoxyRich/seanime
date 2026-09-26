@@ -30,6 +30,8 @@ mobile/web/*
 !mobile/web/.gitkeep
 seanime-web/out-androidtv/
 androidtv/local.properties
+/androidtv/app/src/main/jniLibs/
+/androidtv/app/src/main/assets/ffmpeg/
 web-desktop/
 web-denshi/
 out/

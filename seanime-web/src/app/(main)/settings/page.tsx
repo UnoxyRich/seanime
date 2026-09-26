@@ -39,7 +39,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useRouter, useSearchParams } from "@/lib/navigation"
 import { DEFAULT_TORRENT_CLIENT, DEFAULT_TORRENT_PROVIDER, settingsSchema, TORRENT_PROVIDER } from "@/lib/server/settings"
 import { THEME_DEFAULT_VALUES } from "@/lib/theme/theme-hooks"
-import { __isElectronDesktop__ } from "@/types/constants"
+import { __isAndroidTV__, __isElectronDesktop__ } from "@/types/constants"
 import { useQueryClient } from "@tanstack/react-query"
 import { useSetAtom } from "jotai"
 import { useAtom } from "jotai/react"
@@ -584,7 +584,7 @@ export default function Page() {
                                 screenshotDir: status?.settings?.mediaPlayer?.screenshotDir ?? "",
                                 scannerUseLegacyMatching: status?.settings?.library?.scannerUseLegacyMatching ?? false,
                                 scannerConfig: status?.settings?.library?.scannerConfig ?? "",
-                                updateChannel: status?.settings?.library?.updateChannel || "github",
+                                updateChannel: __isAndroidTV__ ? "androidtv" : status?.settings?.library?.updateChannel || "github",
                                 enableExtensionSecureMode: status?.settings?.library?.enableExtensionSecureMode ?? false,
                                 defaultPlaybackSource: status?.settings?.library?.defaultPlaybackSource || "-",
                                 hideAnimeSpoilers: status?.themeSettings?.hideAnimeSpoilers ?? THEME_DEFAULT_VALUES.hideAnimeSpoilers,

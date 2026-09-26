@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/components/ui/core/styling"
 import { Field } from "@/components/ui/form"
 import { Switch } from "@/components/ui/switch"
-import { __isElectronDesktop__ } from "@/types/constants"
+import { __isAndroidTV__, __isElectronDesktop__ } from "@/types/constants"
 import { useAtom } from "jotai/react"
 import React from "react"
 import { useFormContext, useWatch } from "react-hook-form"
@@ -318,7 +318,9 @@ export function ServerSettings(props: ServerSettingsProps) {
                     label="Update Channel"
                     name="updateChannel"
                     help={__isElectronDesktop__ ? "Also applies to Seanime Denshi auto-updates." : ""}
-                    options={[
+                    options={__isAndroidTV__ ? [
+                        { label: "Seanime TV releases", value: "androidtv" },
+                    ] : [
                         { label: "GitHub (Default)", value: "github" },
                         { label: "Seanime", value: "seanime" },
                         { label: "Seanime (Canary)", value: "seanime_nightly" },

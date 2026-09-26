@@ -1,9 +1,14 @@
 package mediastream
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/database/models"
 	"seanime/internal/events"
 	"seanime/internal/mediacore"
@@ -31,6 +36,7 @@ type (
 		reqMu                sync.Mutex
 		cacheDir             string // where attachments are stored
 		transcodeDir         string // where stream segments are stored
+		stagedSourceMu       sync.Mutex
 	}
 
 	NewRepositoryOptions struct {
@@ -149,6 +155,60 @@ func (r *Repository) ClearTranscodeDir() {
 
 func (r *Repository) TranscoderIsInitialized() bool {
 	return r.IsInitialized() && r.transcoder.IsPresent()
+}
+
+// PrepareAndroidTVTranscodeSource stages a SAF document in app-managed cache
+// because FFmpeg requires a local, seekable filesystem path.
+func (r *Repository) PrepareAndroidTVTranscodeSource(sourcePath string) (string, error) {
+	if !androidtvstorage.IsPath(sourcePath) {
+		return sourcePath, nil
+	}
+	if r.cacheDir == "" {
+		return "", errors.New("media cache directory is not set")
+	}
+
+	r.stagedSourceMu.Lock()
+	defer r.stagedSourceMu.Unlock()
+
+	info, err := androidtvstorage.Stat(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("inspect Android TV media source: %w", err)
+	}
+	if info.IsDirectory {
+		return "", errors.New("Android TV transcode source is a directory")
+	}
+
+	identity := fmt.Sprintf("%s:%d:%d", sourcePath, info.Size, info.ModTime)
+	sum := sha256.Sum256([]byte(identity))
+	stageDirectory := filepath.Join(r.cacheDir, "androidtv-transcode-input")
+	destination := filepath.Join(stageDirectory, hex.EncodeToString(sum[:16])+path.Ext(sourcePath))
+	if cached, statErr := os.Stat(destination); statErr == nil && cached.Size() == info.Size {
+		return destination, nil
+	}
+
+	if _, err := androidtvstorage.CopyToLocal(sourcePath, destination); err != nil {
+		return "", fmt.Errorf("stage Android TV media source for transcoding: %w", err)
+	}
+	return destination, nil
+}
+
+// RemoveStagedAndroidTVTranscodeSource removes a cache file created for a SAF
+// transcode without accepting arbitrary local paths.
+func (r *Repository) RemoveStagedAndroidTVTranscodeSource(stagedPath string) error {
+	if r.cacheDir == "" || stagedPath == "" {
+		return nil
+	}
+	stageDirectory := filepath.Clean(filepath.Join(r.cacheDir, "androidtv-transcode-input"))
+	cleanedPath := filepath.Clean(stagedPath)
+	if filepath.Dir(cleanedPath) != stageDirectory {
+		return nil
+	}
+	r.stagedSourceMu.Lock()
+	defer r.stagedSourceMu.Unlock()
+	if err := os.Remove(cleanedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func (r *Repository) RequestTranscodeStream(filepath string, clientId string) (ret *MediaContainer, err error) {

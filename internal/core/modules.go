@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"runtime"
 	"seanime/internal/api/anilist"
 	"seanime/internal/continuity"
 	"seanime/internal/database/db"
@@ -508,7 +509,9 @@ func (a *App) InitOrRefreshModules() {
 
 		if a.Updater != nil {
 			a.Updater.SetEnabled(!settings.Library.DisableUpdateCheck)
-			if settings.Library.UpdateChannel != "" {
+			if runtime.GOOS == "android" {
+				a.Updater.UpdateChannel = "androidtv"
+			} else if settings.Library.UpdateChannel != "" {
 				a.Updater.UpdateChannel = settings.Library.UpdateChannel
 			} else {
 				a.Updater.UpdateChannel = "github"
@@ -743,6 +746,10 @@ func (a *App) InitOrRefreshMediastreamSettings() {
 	var found bool
 	settings, found = a.Database.GetMediastreamSettings()
 	if !found {
+		transcodeHwAccel := "cpu"
+		if runtime.GOOS == "android" {
+			transcodeHwAccel = "auto"
+		}
 
 		var err error
 		settings, err = a.Database.UpsertMediastreamSettings(&models.MediastreamSettings{
@@ -750,7 +757,7 @@ func (a *App) InitOrRefreshMediastreamSettings() {
 				ID: 1,
 			},
 			TranscodeEnabled:    false,
-			TranscodeHwAccel:    "cpu",
+			TranscodeHwAccel:    transcodeHwAccel,
 			TranscodePreset:     "fast",
 			PreTranscodeEnabled: false,
 		})

@@ -1,0 +1,83 @@
+name: Android TV release assets
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  android-tv:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: seanime-web/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+
+      - name: Install native media build tools
+        run: sudo apt-get update && sudo apt-get install --yes nasm pkg-config
+
+      - name: Prepare Android signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.SEANIME_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64" || {
+            echo "Configure SEANIME_ANDROID_KEYSTORE_BASE64 and the three Android signing password/alias secrets."
+            exit 1
+          }
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/seanime-tv-release.jks"
+          test -s "$RUNNER_TEMP/seanime-tv-release.jks"
+
+      - name: Install frontend dependencies
+        working-directory: seanime-web
+        run: npm ci
+
+      - name: Build signed Android TV APKs
+        working-directory: androidtv
+        env:
+          SEANIME_ANDROID_VERSION_NAME: ${{ github.event.release.tag_name }}
+          SEANIME_ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/seanime-tv-release.jks
+          SEANIME_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.SEANIME_ANDROID_KEYSTORE_PASSWORD }}
+          SEANIME_ANDROID_KEY_ALIAS: ${{ secrets.SEANIME_ANDROID_KEY_ALIAS }}
+          SEANIME_ANDROID_KEY_PASSWORD: ${{ secrets.SEANIME_ANDROID_KEY_PASSWORD }}
+        run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Attach Android TV APKs to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          overwrite_files: true
+          files: |
+            androidtv/app/build/outputs/apk/release/app-arm64-v8a-release.apk
+            androidtv/app/build/outputs/apk/release/app-x86_64-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

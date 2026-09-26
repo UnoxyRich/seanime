@@ -28,10 +28,12 @@ declare global {
         AndroidTV?: {
             serverStatus: () => string;
             serverError: () => string;
-            requestMediaFolder: (purpose: "library-main" | "library-additional" | "manga-local" | "torrent-stream") => void;
+            requestMediaFolder: (purpose: "library-main" | "library-additional" | "manga-local" | "torrent-stream" | "screenshot") => void;
             getStorageRoots: () => string;
             removeStorageFolder: (uri: string) => void;
             openExternalUrl: (url: string) => void;
+            supportedAbi: () => string;
+            downloadAndInstallUpdate: (url: string, filename: string) => void;
             playNative: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number) => void;
             updateNativePlayer: (url: string, title: string, subtitleTracksJson: string, startPositionMs: number) => void;
             nativePlayerActive: () => boolean;

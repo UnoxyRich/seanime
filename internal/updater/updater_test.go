@@ -1,6 +1,10 @@
 package updater
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,4 +46,52 @@ func TestUpdater_GetLatestUpdate(t *testing.T) {
 	update, err := u.GetLatestUpdate()
 	require.NoError(t, err)
 	require.Nil(t, update)
+}
+
+func TestUpdater_GetLatestAndroidTVRelease(t *testing.T) {
+	var statusProbeCalled atomic.Bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/status" {
+			statusProbeCalled.Store(true)
+			http.Error(w, "not expected for Android TV", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"url":          "https://github.com/UnoxyRich/seanime/releases/tag/v3.5.2",
+			"html_url":     "https://github.com/UnoxyRich/seanime/releases/tag/v3.5.2",
+			"tag_name":     "v3.5.2",
+			"name":         "Seanime TV v3.5.2",
+			"draft":        false,
+			"prerelease":   false,
+			"published_at": "2026-09-01T00:00:00Z",
+			"body":         "Android TV release",
+			"assets": []map[string]any{{
+				"name":                 "app-arm64-v8a-release.apk",
+				"content_type":         "application/vnd.android.package-archive",
+				"state":                "uploaded",
+				"size":                 1024,
+				"browser_download_url": "https://github.com/UnoxyRich/seanime/releases/download/v3.5.2/app-arm64-v8a-release.apk",
+			}},
+		})
+	}))
+	defer server.Close()
+	oldAndroidTVURL, oldGitHubStatusURL := androidTVGithubUrl, githubCheckUrl
+	androidTVGithubUrl = server.URL + "/releases/latest"
+	githubCheckUrl = server.URL + "/status"
+	defer func() {
+		androidTVGithubUrl, githubCheckUrl = oldAndroidTVURL, oldGitHubStatusURL
+	}()
+
+	u := New("3.4.0", nil, nil)
+	u.client = server.Client()
+	u.UpdateChannel = "androidtv"
+
+	update, err := u.GetLatestUpdate()
+	require.NoError(t, err)
+	require.NotNil(t, update)
+	assert.Equal(t, "v3.5.2", update.Release.TagName)
+	require.Len(t, update.Release.Assets, 1)
+	assert.Equal(t, "app-arm64-v8a-release.apk", update.Release.Assets[0].Name)
+	assert.Equal(t, "androidtv", u.UpdateChannel)
+	assert.False(t, statusProbeCalled.Load())
 }

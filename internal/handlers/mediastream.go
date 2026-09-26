@@ -92,11 +92,20 @@ func (h *Handler) HandleRequestMediastreamMediaContainer(c echo.Context) error {
 	b.ClientId = getRequestClientId(c, b.ClientId)
 
 	b.Path = util.ResolvePhysicalPath(b.Path)
+	var stagedAndroidTVSource string
 	if androidtvstorage.IsPath(b.Path) {
-		// SAF documents can be read directly by Media3 through the local range
-		// endpoint. Until Android transcoding is bundled, keep those sources on
-		// the direct path regardless of the desktop transcoding preference.
-		b.StreamType = mediastream.StreamTypeDirect
+		if b.StreamType == mediastream.StreamTypeTranscode && h.App.MediastreamRepository.TranscoderIsInitialized() {
+			stagedPath, err := h.App.MediastreamRepository.PrepareAndroidTVTranscodeSource(b.Path)
+			if err != nil {
+				return h.RespondWithError(c, err)
+			}
+			b.Path = stagedPath
+			stagedAndroidTVSource = stagedPath
+		} else {
+			// Media3 can read SAF documents directly. When transcoding is disabled,
+			// preserve that direct path instead of staging a potentially large file.
+			b.StreamType = mediastream.StreamTypeDirect
+		}
 	}
 
 	if err := h.guardStrictFilesystemPath(c, b.Path); err != nil {
@@ -122,6 +131,7 @@ func (h *Handler) HandleRequestMediastreamMediaContainer(c echo.Context) error {
 		err = fmt.Errorf("stream type %s not implemented", b.StreamType)
 	}
 	if err != nil {
+		_ = h.App.MediastreamRepository.RemoveStagedAndroidTVTranscodeSource(stagedAndroidTVSource)
 		return h.RespondWithError(c, err)
 	}
 
@@ -152,6 +162,9 @@ func (h *Handler) HandlePreloadMediastreamMediaContainer(c echo.Context) error {
 
 	b.Path = util.ResolvePhysicalPath(b.Path)
 	if androidtvstorage.IsPath(b.Path) {
+		// Preloading a large removable-storage file would stage it in full before
+		// playback starts. Let Media3 preload the range-readable SAF source; the
+		// actual transcode request stages the file only when needed.
 		b.StreamType = mediastream.StreamTypeDirect
 	}
 

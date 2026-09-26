@@ -17,6 +17,7 @@ import (
 var (
 	websiteUrl           = "https://seanime.app/api/release"
 	fallbackGithubUrl    = "https://api.github.com/repos/5rahim/seanime/releases/latest"
+	androidTVGithubUrl   = "https://api.github.com/repos/UnoxyRich/seanime/releases/latest"
 	githubCheckUrl       = "https://seanime.app/api/github-status"
 	seanimeStableUrl     = "https://seanime.app/api/updates/stable/stable_server.json"
 	seanimeNightlyUrl    = "https://seanime.app/api/updates/nightly/nightly_server.json"
@@ -153,6 +154,12 @@ func (u *Updater) fetchLatestRelease(channel string) (*Release, error) {
 			return nil, err
 		}
 		release = apiRelease
+	case "androidtv":
+		apiRelease, err := u.fetchLatestReleaseFromGitHubURL(androidTVGithubUrl)
+		if err != nil {
+			return nil, err
+		}
+		release = apiRelease
 	case "github":
 		fallthrough
 	default:
@@ -175,11 +182,15 @@ func (u *Updater) fetchLatestRelease(channel string) (*Release, error) {
 }
 
 func (u *Updater) fetchLatestReleaseFromGitHub() (*Release, error) {
-	if err := validateUpdateURL(fallbackGithubUrl); err != nil {
+	return u.fetchLatestReleaseFromGitHubURL(fallbackGithubUrl)
+}
+
+func (u *Updater) fetchLatestReleaseFromGitHubURL(releaseURL string) (*Release, error) {
+	if err := validateUpdateURL(releaseURL); err != nil {
 		return nil, err
 	}
 
-	response, err := u.client.Get(fallbackGithubUrl)
+	response, err := u.client.Get(releaseURL)
 	if err != nil {
 		return nil, err
 	}

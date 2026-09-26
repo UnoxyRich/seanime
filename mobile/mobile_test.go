@@ -19,8 +19,22 @@ func TestServerStartStopRestartServesEmbeddedWeb(t *testing.T) {
 		port := unusedLocalPort(t)
 
 		StartServer(dataDir, cacheDir, port)
+		SetAppInForeground(false)
 		if !WaitForServer(60_000) {
 			t.Fatalf("server did not become ready (status=%s, error=%s)", ServerStatus(), ServerError())
+		}
+		serverLifecycle.Lock()
+		startedInBackground := !serverLifecycle.foreground && serverLifecycle.instance.inBackground
+		serverLifecycle.Unlock()
+		if !startedInBackground {
+			t.Fatal("server did not honor the background state received while starting")
+		}
+		SetAppInForeground(true)
+		serverLifecycle.Lock()
+		resumedInForeground := serverLifecycle.foreground && !serverLifecycle.instance.inBackground
+		serverLifecycle.Unlock()
+		if !resumedInForeground {
+			t.Fatal("server did not resume foreground work")
 		}
 
 		for _, directory := range []string{dataDir, cacheDir} {

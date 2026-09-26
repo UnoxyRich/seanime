@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"seanime/internal/androidtvstorage"
 	"seanime/internal/core"
 	"seanime/internal/cron"
@@ -52,9 +53,11 @@ type AndroidStorageAdapter interface {
 
 var serverLifecycle struct {
 	sync.Mutex
-	status   string
-	lastErr  string
-	instance *serverInstance
+	status        string
+	lastErr       string
+	instance      *serverInstance
+	foreground    bool
+	foregroundSet bool
 }
 
 // SetAndroidStorageAdapter registers the Android host's SAF implementation.
@@ -93,6 +96,9 @@ func StartServer(dataDir string, cacheDir string, port int) {
 	serverLifecycle.instance = instance
 	serverLifecycle.status = "starting"
 	serverLifecycle.lastErr = ""
+	if !serverLifecycle.foregroundSet {
+		serverLifecycle.foreground = true
+	}
 	serverLifecycle.Unlock()
 
 	go startServer(instance, dataDir, cacheDir, port)
@@ -171,6 +177,8 @@ func WaitForServer(timeoutMillis int) bool {
 // while the TV app is backgrounded, then resumes them when the app returns.
 func SetAppInForeground(foreground bool) {
 	serverLifecycle.Lock()
+	serverLifecycle.foreground = foreground
+	serverLifecycle.foregroundSet = true
 	instance := serverLifecycle.instance
 	if instance == nil || serverLifecycle.status != "ready" {
 		serverLifecycle.Unlock()
@@ -298,6 +306,10 @@ func startServer(instance *serverInstance, dataDir string, cacheDir string, port
 		runErr = fmt.Errorf("create cache directory: %w", err)
 		return
 	}
+	if err := os.RemoveAll(filepath.Join(cacheDir, "androidtv-transcode-input")); err != nil {
+		runErr = fmt.Errorf("clear stale Android TV transcode sources: %w", err)
+		return
+	}
 	if err := os.Setenv("SEANIME_DATA_DIR", dataDir); err != nil {
 		runErr = err
 		return
@@ -309,6 +321,13 @@ func startServer(instance *serverInstance, dataDir string, cacheDir string, port
 	if err := os.Setenv("SEANIME_CACHE_DIR", cacheDir); err != nil {
 		runErr = err
 		return
+	}
+	if runtime.GOOS == "android" {
+		binaryDir := filepath.Join(filepath.Dir(dataDir), "bin")
+		if err := os.Setenv("PATH", binaryDir+string(os.PathListSeparator)+os.Getenv("PATH")); err != nil {
+			runErr = fmt.Errorf("configure Android app binary path: %w", err)
+			return
+		}
 	}
 
 	flags := core.SeanimeFlags{
@@ -337,6 +356,7 @@ func startServer(instance *serverInstance, dataDir string, cacheDir string, port
 	}
 	instance.app = app
 	instance.httpServer = httpServer
+	instance.inBackground = !serverLifecycle.foreground
 	serverLifecycle.status = "ready"
 	serverLifecycle.Unlock()
 

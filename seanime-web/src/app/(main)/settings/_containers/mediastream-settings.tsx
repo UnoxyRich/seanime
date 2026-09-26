@@ -26,6 +26,7 @@ const mediastreamSchema = defineSchema(({ z }) => z.object({
 }))
 
 const MEDIASTREAM_HW_ACCEL_OPTIONS = [
+    { label: "Auto (device hardware, CPU fallback)", value: "auto" },
     { label: "CPU (Disabled)", value: "cpu" },
     { label: "NVIDIA (NVENC)", value: "nvidia" },
     { label: "Intel (QSV)", value: "qsv" },
@@ -55,6 +56,14 @@ export function MediastreamSettings(props: MediastreamSettingsProps) {
     } = props
 
     const serverStatus = useServerStatus()
+
+    const hardwareAccelerationOptions = React.useMemo(() => {
+        if (serverStatus?.clientPlatform !== "androidtv") return MEDIASTREAM_HW_ACCEL_OPTIONS
+        return [
+            ...MEDIASTREAM_HW_ACCEL_OPTIONS,
+            { label: "Android MediaCodec", value: "mediacodec" },
+        ]
+    }, [serverStatus?.clientPlatform])
 
     const { data: settings, isLoading, refetch } = useGetMediastreamSettings(true)
 
@@ -182,7 +191,7 @@ export function MediastreamSettings(props: MediastreamSettingsProps) {
 
                         <SettingsCard title="Transcoding">
                             <Field.Select
-                                options={MEDIASTREAM_HW_ACCEL_OPTIONS}
+                                options={hardwareAccelerationOptions}
                                 name="transcodeHwAccel"
                                 label="Hardware acceleration"
                                 help="Hardware acceleration is highly recommended for a smoother transcoding experience."

@@ -1,11 +1,16 @@
 package app.seanime.tv
 
 import android.app.Activity
+import android.app.DownloadManager
 import android.content.ActivityNotFoundException
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -50,6 +55,18 @@ class MainActivity : Activity() {
     private var webPlaybackActive = false
     internal var pendingStoragePurpose = "library-main"
     private var retryButton: Button? = null
+    private var updateReceiverRegistered = false
+    private val updatePreferences by lazy { getSharedPreferences(UPDATE_PREFERENCES, MODE_PRIVATE) }
+
+    private val updateDownloadReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
+            val completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+            if (completedId == updatePreferences.getLong(PENDING_UPDATE_DOWNLOAD_ID, -2L)) {
+                finishUpdateDownload(completedId)
+            }
+        }
+    }
 
     private val readinessPoll = object : Runnable {
         override fun run() {
@@ -149,6 +166,7 @@ class MainActivity : Activity() {
         root.addView(statusText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
         setContentView(root)
 
+        registerUpdateDownloadReceiver()
         serverForegroundStart()
     }
 
@@ -161,10 +179,6 @@ class MainActivity : Activity() {
         serverExecutor.execute {
             runCatching {
                 Mobile.startServer(dataDir, cacheDir, serverPort.toLong())
-                val ready = Mobile.waitForServer(45_000L)
-                runOnUiThread {
-                    if (ready) loadSeanime() else showServerError(Mobile.serverError().ifBlank { "Seanime could not start." })
-                }
             }.onFailure { error ->
                 runOnUiThread { showServerError(error.message ?: "Unable to start Seanime.") }
             }
@@ -230,26 +244,137 @@ class MainActivity : Activity() {
     }
 
     internal fun installUpdate(filePath: String) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
-            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
-            return
-        }
         val apk = runCatching { File(filePath).canonicalFile }.getOrNull() ?: return
-        val allowedRoots = listOf(filesDir.resolve("seanime/updates"), cacheDir.resolve("seanime"))
+        val allowedRoots = listOfNotNull(
+            filesDir.resolve("seanime/updates"),
+            cacheDir.resolve("seanime"),
+            getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+        )
             .mapNotNull { runCatching { it.canonicalPath }.getOrNull() }
         if (!apk.isFile || apk.extension.lowercase() != "apk" || allowedRoots.none { apk.path.startsWith("$it/") }) {
             Toast.makeText(this, "Choose an APK from Seanime's update cache", Toast.LENGTH_LONG).show()
             return
         }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            updatePreferences.edit().putString(PENDING_UPDATE_INSTALL_PATH, apk.path).apply()
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            return
+        }
+
         val apkUri = runCatching {
             FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
         }.getOrNull() ?: return
+        updatePreferences.edit().remove(PENDING_UPDATE_INSTALL_PATH).apply()
         val intent = Intent(Intent.ACTION_VIEW)
             .setDataAndType(apkUri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { startActivity(intent) }.onFailure {
             Toast.makeText(this, "Unable to start the Android package installer", Toast.LENGTH_LONG).show()
         }
+    }
+
+    internal fun downloadAndInstallUpdate(url: String, filename: String) {
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        val supportedAbi = supportedAbi()
+        val safeFilename = filename.matches(Regex("^[A-Za-z0-9._-]+\\.apk$", RegexOption.IGNORE_CASE))
+        val expectedReleasePath = uri?.encodedPath.orEmpty().lowercase()
+            .startsWith("/unoxyrich/seanime/releases/download/")
+        if (
+            uri == null || uri.scheme != "https" || uri.host?.equals("github.com", ignoreCase = true) != true ||
+            !expectedReleasePath || !safeFilename || Uri.decode(uri.lastPathSegment.orEmpty()) != filename ||
+            supportedAbi.isBlank() || !filename.contains(supportedAbi, ignoreCase = true)
+        ) {
+            Toast.makeText(this, "This release does not contain a compatible Seanime TV APK", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val destination = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        if (destination == null) {
+            Toast.makeText(this, "Android storage is not available for the update", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val downloadManager = getSystemService(DownloadManager::class.java)
+        val previousId = updatePreferences.getLong(PENDING_UPDATE_DOWNLOAD_ID, -1L)
+        if (previousId >= 0) downloadManager.remove(previousId)
+
+        val outputFile = File(destination, "seanime-tv-update-$filename")
+        val request = DownloadManager.Request(uri)
+            .setTitle("Seanime TV update")
+            .setDescription("Downloading $filename")
+            .setMimeType(APK_MIME_TYPE)
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, outputFile.name)
+            .addRequestHeader("User-Agent", "Seanime TV/0.1.0")
+
+        runCatching { downloadManager.enqueue(request) }
+            .onSuccess { downloadId ->
+                updatePreferences.edit()
+                    .putLong(PENDING_UPDATE_DOWNLOAD_ID, downloadId)
+                    .putString(PENDING_UPDATE_DOWNLOAD_PATH, outputFile.absolutePath)
+                    .apply()
+                handler.postDelayed({ finishUpdateDownload(downloadId) }, 1_000)
+                Toast.makeText(this, "Downloading Seanime TV update", Toast.LENGTH_LONG).show()
+            }
+            .onFailure { error ->
+                Toast.makeText(this, error.message ?: "Could not start the update download", Toast.LENGTH_LONG).show()
+            }
+    }
+
+    private fun registerUpdateDownloadReceiver() {
+        if (updateReceiverRegistered) return
+        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(updateDownloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(updateDownloadReceiver, filter)
+        }
+        updateReceiverRegistered = true
+    }
+
+    private fun finishUpdateDownload(downloadId: Long) {
+        if (updatePreferences.getLong(PENDING_UPDATE_DOWNLOAD_ID, -1L) != downloadId) return
+        val downloadManager = getSystemService(DownloadManager::class.java)
+        val cursor = downloadManager.query(DownloadManager.Query().setFilterById(downloadId)) ?: return
+        cursor.use {
+            if (!it.moveToFirst()) {
+                clearPendingUpdateDownload()
+                Toast.makeText(this, "The update download was not found", Toast.LENGTH_LONG).show()
+                return
+            }
+
+            when (it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
+                DownloadManager.STATUS_SUCCESSFUL -> {
+                    val path = updatePreferences.getString(PENDING_UPDATE_DOWNLOAD_PATH, null)
+                    clearPendingUpdateDownload()
+                    if (path == null || !File(path).isFile) {
+                        Toast.makeText(this, "The downloaded update could not be opened", Toast.LENGTH_LONG).show()
+                        return
+                    }
+                    installUpdate(path)
+                }
+                DownloadManager.STATUS_FAILED -> {
+                    val reason = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                    clearPendingUpdateDownload()
+                    Toast.makeText(this, "Update download failed ($reason)", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun clearPendingUpdateDownload() {
+        updatePreferences.edit()
+            .remove(PENDING_UPDATE_DOWNLOAD_ID)
+            .remove(PENDING_UPDATE_DOWNLOAD_PATH)
+            .apply()
+    }
+
+    private fun resumePendingUpdateInstall() {
+        val pendingPath = updatePreferences.getString(PENDING_UPDATE_INSTALL_PATH, null) ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) return
+        installUpdate(pendingPath)
     }
 
     internal fun launchNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long) {
@@ -306,6 +431,9 @@ class MainActivity : Activity() {
         }
         updated.put(rootItem)
         prefs.edit().putString("roots", updated.toString()).apply()
+        if (purpose == "screenshot") {
+            prefs.edit().putString(SCREENSHOT_TREE_URI, uri.toString()).apply()
+        }
         dispatchStorageEvent(rootItem, purpose)
     }
 
@@ -329,6 +457,9 @@ class MainActivity : Activity() {
             if (item.optString("uri") != uriString) updated.put(item)
         }
         prefs.edit().putString("roots", updated.toString()).apply()
+        if (prefs.getString(SCREENSHOT_TREE_URI, null) == uriString) {
+            prefs.edit().remove(SCREENSHOT_TREE_URI).apply()
+        }
         dispatchStorageEvent(null, "library-main")
     }
 
@@ -370,8 +501,12 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        resumePendingUpdateInstall()
+        val pendingDownloadId = updatePreferences.getLong(PENDING_UPDATE_DOWNLOAD_ID, -1L)
+        if (pendingDownloadId >= 0) finishUpdateDownload(pendingDownloadId)
         activityResumed = true
         if (webPlaybackActive) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        scheduleServerForeground(true)
         webView.onResume()
         serverForegroundStart()
     }
@@ -379,22 +514,42 @@ class MainActivity : Activity() {
     override fun onPause() {
         activityResumed = false
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        if (!NativePlayerActivity.isVisible()) webView.onPause()
+        if (!NativePlayerActivity.isVisible()) {
+            scheduleServerForeground(false)
+            webView.onPause()
+        }
         super.onPause()
     }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        if (updateReceiverRegistered) {
+            unregisterReceiver(updateDownloadReceiver)
+            updateReceiverRegistered = false
+        }
         webView.removeJavascriptInterface("AndroidTV")
         setActiveWebView(null)
         setActiveActivity(null)
         webView.destroy()
-        if (isFinishing) serverExecutor.execute { Mobile.stopServer() }
+        if (isFinishing) {
+            serverExecutor.execute {
+                Mobile.setAppInForeground(false)
+                Mobile.stopServer()
+            }
+            serverExecutor.shutdown()
+        }
         super.onDestroy()
     }
 
     companion object {
         const val STORAGE_PICK_REQUEST = 521
+        private const val UPDATE_PREFERENCES = "android-tv-updates"
+        private const val PENDING_UPDATE_DOWNLOAD_ID = "pending-download-id"
+        private const val PENDING_UPDATE_DOWNLOAD_PATH = "pending-download-path"
+        private const val PENDING_UPDATE_INSTALL_PATH = "pending-install-path"
+        internal const val SCREENSHOT_TREE_URI = "screenshot-tree-uri"
+        private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
+        private val serverLifecycleExecutor = Executors.newSingleThreadExecutor()
         @Volatile private var activeWebView: WeakReference<WebView>? = null
         @Volatile private var activeActivity: WeakReference<MainActivity>? = null
 
@@ -406,10 +561,23 @@ class MainActivity : Activity() {
             activeActivity = activity?.let(::WeakReference)
         }
 
+        private fun scheduleServerForeground(foreground: Boolean) {
+            serverLifecycleExecutor.execute { Mobile.setAppInForeground(foreground) }
+        }
+
+        fun supportedAbi(): String = Build.SUPPORTED_ABIS.firstOrNull { it == "arm64-v8a" || it == "x86_64" }.orEmpty()
+
         fun notifyNativePlayerStopped() {
             val activity = activeActivity?.get() ?: return
             activity.runOnUiThread {
-                if (!activity.activityResumed && !activity.isDestroyed) activity.webView.onPause()
+                if (!activity.activityResumed && !activity.isDestroyed) {
+                    activity.webView.onPause()
+                    activity.handler.postDelayed({
+                        if (!activity.activityResumed && !NativePlayerActivity.isVisible()) {
+                            scheduleServerForeground(false)
+                        }
+                    }, 500)
+                }
             }
         }
 
@@ -444,7 +612,7 @@ private class AndroidTVBridge(private val activity: MainActivity, private val we
 
     @JavascriptInterface
     fun requestMediaFolder(purpose: String) {
-        val normalizedPurpose = purpose.takeIf { it in setOf("library-main", "library-additional", "manga-local", "torrent-stream") } ?: "library-main"
+        val normalizedPurpose = purpose.takeIf { it in setOf("library-main", "library-additional", "manga-local", "torrent-stream", "screenshot") } ?: "library-main"
         activity.runOnUiThread {
             activity.pendingStoragePurpose = normalizedPurpose
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
@@ -491,6 +659,14 @@ private class AndroidTVBridge(private val activity: MainActivity, private val we
     @JavascriptInterface
     fun installUpdate(filePath: String) {
         activity.runOnUiThread { activity.installUpdate(filePath) }
+    }
+
+    @JavascriptInterface
+    fun supportedAbi(): String = MainActivity.supportedAbi()
+
+    @JavascriptInterface
+    fun downloadAndInstallUpdate(url: String, filename: String) {
+        activity.runOnUiThread { activity.downloadAndInstallUpdate(url, filename) }
     }
 
     @JavascriptInterface

@@ -1,6 +1,8 @@
 import { DirectorySelector } from "@/components/shared/directory-selector"
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/modal"
+import { AndroidTVStoragePicker } from "@/components/shared/android-tv-storage-picker"
+import { __isAndroidTV__ } from "@/types/constants"
 import { upath } from "@/lib/helpers/upath"
 import React from "react"
 import { BiFolder } from "react-icons/bi"
@@ -53,13 +55,21 @@ export function ScreenshotDirModal({ open, onClose, onSave, portalContainer }: S
                 Select the folder where you would like to save your video screenshots.
             </p>
 
-            <DirectorySelector
-                value={path}
-                onSelect={setPath}
-                label="Screenshot Folder"
-                leftIcon={<BiFolder className="text-[--indigo]" />}
-                error={!isAbsolute ? "Must be an absolute path" : ""}
-            />
+            {__isAndroidTV__ ? (
+                <AndroidTVStoragePicker
+                    label="Choose screenshot folder"
+                    purpose="screenshot"
+                    onSelect={root => setPath(root.path)}
+                />
+            ) : (
+                <DirectorySelector
+                    value={path}
+                    onSelect={setPath}
+                    label="Screenshot Folder"
+                    leftIcon={<BiFolder className="text-[--indigo]" />}
+                    error={!isAbsolute ? "Must be an absolute path" : ""}
+                />
+            )}
 
             <div className="flex justify-end gap-2 mt-4">
                 <Button intent="gray-basic" onClick={onClose} disabled={saving}>

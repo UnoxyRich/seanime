@@ -3,12 +3,16 @@ package app.seanime.tv
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.PixelCopy
+import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -27,13 +31,16 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
+import androidx.documentfile.provider.DocumentFile
 import org.json.JSONArray
 import java.io.File
+import java.io.IOException
 import java.lang.ref.WeakReference
 
 @OptIn(UnstableApi::class)
 class NativePlayerActivity : Activity() {
     private var player: ExoPlayer? = null
+    private var activePlayerView: PlayerView? = null
     private var lastPositionMs = 0L
     private var completed = false
     private val subtitleCacheFiles = mutableListOf<File>()
@@ -103,15 +110,20 @@ class NativePlayerActivity : Activity() {
             controllerAutoShow = true
             requestFocus()
         }
+        activePlayerView = playerView
         frame.addView(playerView, FrameLayout.LayoutParams(-1, -1))
 
         val trackButtons = FrameLayout(this)
         val audio = trackButton("Audio") { showTrackDialog(C.TRACK_TYPE_AUDIO) }
         val subtitles = trackButton("Subtitles") { showTrackDialog(C.TRACK_TYPE_TEXT) }
+        val screenshot = trackButton("Screenshot") { captureScreenshot() }
         trackButtons.addView(audio, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP))
         val subtitleParams = FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP)
         subtitleParams.topMargin = 72
         trackButtons.addView(subtitles, subtitleParams)
+        val screenshotParams = FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP)
+        screenshotParams.topMargin = 144
+        trackButtons.addView(screenshot, screenshotParams)
         frame.addView(trackButtons)
         setContentView(frame)
 
@@ -197,6 +209,70 @@ class NativePlayerActivity : Activity() {
             .show()
     }
 
+    private fun captureScreenshot() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            android.widget.Toast.makeText(this, "Screenshot capture requires Android 7 or newer", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        val surface = activePlayerView?.videoSurfaceView as? SurfaceView
+        if (surface == null || surface.width <= 0 || surface.height <= 0) {
+            android.widget.Toast.makeText(this, "The video frame is not ready yet", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        val bitmap = Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.ARGB_8888)
+        PixelCopy.request(surface, bitmap, { result ->
+            if (result != PixelCopy.SUCCESS) {
+                bitmap.recycle()
+                android.widget.Toast.makeText(this, "Could not capture the video frame", android.widget.Toast.LENGTH_LONG).show()
+                return@request
+            }
+            saveScreenshot(bitmap)
+        }, Handler(Looper.getMainLooper()))
+    }
+
+    private fun saveScreenshot(bitmap: Bitmap) {
+        val uriString = getSharedPreferences("android-tv-storage", MODE_PRIVATE)
+            .getString(MainActivity.SCREENSHOT_TREE_URI, null)
+        if (uriString.isNullOrBlank()) {
+            bitmap.recycle()
+            android.widget.Toast.makeText(this, "Choose a screenshot folder in Seanime settings first", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        val treeUri = runCatching { Uri.parse(uriString) }.getOrNull()
+        val hasWriteGrant = contentResolver.persistedUriPermissions.any {
+            it.uri == treeUri && it.isReadPermission && it.isWritePermission
+        }
+        val folder = treeUri?.takeIf { hasWriteGrant }?.let { DocumentFile.fromTreeUri(this, it) }
+        if (folder == null || !folder.isDirectory || !folder.canWrite()) {
+            bitmap.recycle()
+            android.widget.Toast.makeText(this, "Screenshot folder access was removed; select it again in settings", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val filename = "seanime_screenshot_${System.currentTimeMillis()}_${System.nanoTime()}.png"
+        val image = folder.createFile("image/png", filename)
+        if (image == null) {
+            bitmap.recycle()
+            android.widget.Toast.makeText(this, "Could not create a screenshot in that folder", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        try {
+            val output = contentResolver.openOutputStream(image.uri, "wt")
+                ?: throw IOException("Could not open the screenshot file")
+            output.use {
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) {
+                    throw IOException("Could not encode the screenshot")
+                }
+            }
+            android.widget.Toast.makeText(this, "Screenshot saved", android.widget.Toast.LENGTH_LONG).show()
+        } catch (error: Exception) {
+            image.delete()
+            android.widget.Toast.makeText(this, error.message ?: "Could not save the screenshot", android.widget.Toast.LENGTH_LONG).show()
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
     override fun onStop() {
         progressHandler.removeCallbacksAndMessages(null)
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -205,6 +281,7 @@ class NativePlayerActivity : Activity() {
             it.release()
         }
         player = null
+        activePlayerView = null
         subtitleCacheFiles.forEach { it.delete() }
         subtitleCacheFiles.clear()
         nativePlayerVisible = false

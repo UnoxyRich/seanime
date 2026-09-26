@@ -165,12 +165,16 @@ func (r *Repository) ShutdownTranscodeStream(clientId string) {
 	if !r.playbackManager.currentMediaContainer.IsPresent() {
 		return
 	}
+	stagedSourcePath := r.playbackManager.currentMediaContainer.MustGet().Filepath
 
 	// Kill playback
 	r.playbackManager.KillPlayback()
 
 	// Destroy the current transcoder
 	r.transcoder.MustGet().Destroy()
+	if err := r.RemoveStagedAndroidTVTranscodeSource(stagedSourcePath); err != nil {
+		r.logger.Warn().Err(err).Msg("mediastream: Could not remove staged Android TV transcode source")
+	}
 
 	// Load a new transcoder
 	r.transcoder = mo.None[*cassette.Cassette]()
