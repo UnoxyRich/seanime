@@ -133,8 +133,10 @@ function MediastreamPage() {
     // request media container
     const {
         data: mediaContainer,
+        dataUpdatedAt: mediaContainerUpdatedAt,
         isError: isMediaContainerError,
         isPending: isMediaContainerPending,
+        isFetching: isMediaContainerFetching,
         refetch: refetchMediaContainer,
     } = useRequestMediastreamMediaContainer({
         path: filePath,
@@ -226,7 +228,7 @@ function MediastreamPage() {
             changeUrl(null)
         }
 
-    }, [mediaContainer, isMediaContainerPending, mediastreamSettings, isCodecSupported, directToken])
+    }, [mediaContainer, mediaContainerUpdatedAt, isMediaContainerPending, mediastreamSettings, isCodecSupported, directToken, transcodeToken, filePath, changeUrl])
 
 
     // handle fatal errors
@@ -235,12 +237,19 @@ function MediastreamPage() {
         if (!__isAndroidTV__ && mediaContainer?.streamType === "transcode") {
             shutdownTranscode()
         }
+        if (!__isAndroidTV__) changeUrl(null) // Keep the TV source URL available for Media3.
         setPlaybackError(__isAndroidTV__
             ? "Web playback failed. Try the TV player to continue."
             : "Playback error triggered. Please try again or switch stream type.")
-        if (!__isAndroidTV__) changeUrl(null) // Keep the source URL so the Media3 fallback can open it.
         toast.error("Playback error occurred")
     }, [mediaContainer?.streamType, shutdownTranscode, changeUrl])
+
+    const retryPlayback = async () => {
+        const result = await refetchMediaContainer()
+        // A successful retry may return an identical container. Its updated
+        // timestamp reapplies the URL above; clear the previous failure too.
+        if (!result.isError) setPlaybackError(null)
+    }
 
 
     // listen for shutdown stream event
@@ -360,13 +369,15 @@ function MediastreamPage() {
                 mediaPlayer={
                     <VideoCoreProvider id="mediastream" key={filePath}>
                         <div className="w-full aspect-video mx-auto border rounded-lg overflow-hidden bg-black relative z-20">
-                            {isMediaContainerError || playbackError ? (
+                            {/* Keep VideoCore and its native-player events mounted while TV fallback is available. */}
+                            {isMediaContainerError || (playbackError && (!__isAndroidTV__ || !activeUrl)) ? (
                                 <div className="flex flex-col items-center justify-center h-full w-full">
                                     <LuffyError title="Playback Error">
                                         {playbackError || "Could not load media container."}
                                     </LuffyError>
                                     <button
-                                        onClick={() => refetchMediaContainer()}
+                                        onClick={retryPlayback}
+                                        disabled={isMediaContainerFetching}
                                         className="mt-4 px-4 py-2 bg-gray-800 text-white rounded hover:bg-gray-700"
                                     >
                                         Retry
