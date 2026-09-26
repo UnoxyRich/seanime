@@ -41,6 +41,8 @@ import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.lang.ref.WeakReference
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 @OptIn(UnstableApi::class)
 class NativePlayerActivity : Activity() {
@@ -51,6 +53,9 @@ class NativePlayerActivity : Activity() {
     private var completed = false
     private val subtitleCacheFiles = mutableListOf<File>()
     private val progressHandler = Handler(Looper.getMainLooper())
+    private val screenshotExecutor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "Seanime TV screenshot")
+    }
     private val publishProgress = object : Runnable {
         override fun run() {
             val current = player
@@ -323,38 +328,45 @@ class NativePlayerActivity : Activity() {
             android.widget.Toast.makeText(this, "Choose a screenshot folder in Seanime settings first", android.widget.Toast.LENGTH_LONG).show()
             return
         }
-        val treeUri = runCatching { Uri.parse(uriString) }.getOrNull()
-        val hasWriteGrant = contentResolver.persistedUriPermissions.any {
-            it.uri == treeUri && it.isReadPermission && it.isWritePermission
-        }
-        val folder = treeUri?.takeIf { hasWriteGrant }?.let { DocumentFile.fromTreeUri(this, it) }
-        if (folder == null || !folder.isDirectory || !folder.canWrite()) {
-            bitmap.recycle()
-            android.widget.Toast.makeText(this, "Screenshot folder access was removed; select it again in settings", android.widget.Toast.LENGTH_LONG).show()
-            return
-        }
-
-        val filename = "seanime_screenshot_${System.currentTimeMillis()}_${System.nanoTime()}.png"
-        val image = folder.createFile("image/png", filename)
-        if (image == null) {
-            bitmap.recycle()
-            android.widget.Toast.makeText(this, "Could not create a screenshot in that folder", android.widget.Toast.LENGTH_LONG).show()
-            return
-        }
         try {
-            val output = contentResolver.openOutputStream(image.uri, "wt")
-                ?: throw IOException("Could not open the screenshot file")
-            output.use {
-                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) {
-                    throw IOException("Could not encode the screenshot")
+            screenshotExecutor.execute {
+                var image: DocumentFile? = null
+                try {
+                    val treeUri = Uri.parse(uriString)
+                    val hasWriteGrant = contentResolver.persistedUriPermissions.any {
+                        it.uri == treeUri && it.isReadPermission && it.isWritePermission
+                    }
+                    val folder = treeUri.takeIf { hasWriteGrant }?.let { DocumentFile.fromTreeUri(this, it) }
+                    if (folder == null || !folder.isDirectory || !folder.canWrite()) {
+                        throw IOException("Screenshot folder access was removed; select it again in settings")
+                    }
+
+                    val filename = "seanime_screenshot_${System.currentTimeMillis()}_${System.nanoTime()}.png"
+                    val createdImage = folder.createFile("image/png", filename)
+                        ?: throw IOException("Could not create a screenshot in that folder")
+                    image = createdImage
+                    val output = contentResolver.openOutputStream(createdImage.uri, "wt")
+                        ?: throw IOException("Could not open the screenshot file")
+                    output.use {
+                        if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) {
+                            throw IOException("Could not encode the screenshot")
+                        }
+                    }
+                    runOnUiThread {
+                        android.widget.Toast.makeText(this, "Screenshot saved", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                } catch (error: Exception) {
+                    image?.delete()
+                    runOnUiThread {
+                        android.widget.Toast.makeText(this, error.message ?: "Could not save the screenshot", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                } finally {
+                    bitmap.recycle()
                 }
             }
-            android.widget.Toast.makeText(this, "Screenshot saved", android.widget.Toast.LENGTH_LONG).show()
-        } catch (error: Exception) {
-            image.delete()
-            android.widget.Toast.makeText(this, error.message ?: "Could not save the screenshot", android.widget.Toast.LENGTH_LONG).show()
-        } finally {
+        } catch (_: RejectedExecutionException) {
             bitmap.recycle()
+            android.widget.Toast.makeText(this, "Could not save the screenshot", android.widget.Toast.LENGTH_LONG).show()
         }
     }
 
@@ -375,6 +387,11 @@ class NativePlayerActivity : Activity() {
         MainActivity.notifyNativePlaybackEnded(lastPositionMs, completed)
         MainActivity.notifyNativePlayerStopped()
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        screenshotExecutor.shutdown()
+        super.onDestroy()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
