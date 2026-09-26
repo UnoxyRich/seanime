@@ -12,6 +12,7 @@ val embeddedWeb = repoRoot.resolve("mobile/web")
 val ffmpegSourceScript = repoRoot.resolve("scripts/build-android-ffmpeg.sh")
 val ffmpegJniLibs = projectDir.resolve("src/main/jniLibs")
 val ffmpegMetadata = projectDir.resolve("src/main/assets/ffmpeg")
+val generatedAndroidRuntimeJniLibs = layout.buildDirectory.dir("generated/androidRuntimeJniLibs")
 val ffmpegBuildAbis = providers.environmentVariable("SEANIME_ANDROID_ABIS").orElse("arm64-v8a x86_64")
 val ffmpegBuildConfigChecksum = providers.provider {
     providers.exec {
@@ -22,6 +23,19 @@ val generatedAar = layout.buildDirectory.file("generated/gomobile/seanime-mobile
 val pinnedNdkPath = android.sdkDirectory.resolve("ndk/27.2.12479018")
 val gomobileNdkPath = providers.environmentVariable("ANDROID_NDK_HOME")
     .orElse(pinnedNdkPath.absolutePath)
+val androidNdkRuntimeLibDirectory = providers.provider {
+    val hostPrefix = when {
+        System.getProperty("os.name").startsWith("Mac", ignoreCase = true) -> "darwin-"
+        System.getProperty("os.name").startsWith("Linux", ignoreCase = true) -> "linux-"
+        System.getProperty("os.name").startsWith("Windows", ignoreCase = true) -> "windows-"
+        else -> throw GradleException("Unsupported host OS for Android NDK C++ runtime")
+    }
+    val prebuiltRoot = File(gomobileNdkPath.get(), "toolchains/llvm/prebuilt")
+    val prebuiltDirectory = prebuiltRoot.listFiles()
+        ?.firstOrNull { it.isDirectory && it.name.startsWith(hostPrefix) }
+        ?: throw GradleException("Android NDK host toolchain not found under $prebuiltRoot")
+    prebuiltDirectory.resolve("sysroot/usr/lib")
+}
 val androidVersionName = providers.environmentVariable("SEANIME_ANDROID_VERSION_NAME")
     .orElse("3.10.3")
     .get()
@@ -86,6 +100,8 @@ android {
             isUniversalApk = false
         }
     }
+
+    sourceSets.getByName("main").jniLibs.srcDir(generatedAndroidRuntimeJniLibs)
 
     signingConfigs {
         create("release") {
@@ -158,6 +174,16 @@ val buildAndroidFfmpeg by tasks.registering(Exec::class) {
     commandLine("bash", ffmpegSourceScript.absolutePath)
 }
 
+val stageAndroidNdkCppRuntime by tasks.registering(Copy::class) {
+    from(androidNdkRuntimeLibDirectory.map { it.resolve("aarch64-linux-android/libc++_shared.so") }) {
+        into("arm64-v8a")
+    }
+    from(androidNdkRuntimeLibDirectory.map { it.resolve("x86_64-linux-android/libc++_shared.so") }) {
+        into("x86_64")
+    }
+    into(generatedAndroidRuntimeJniLibs)
+}
+
 val initGoMobile by tasks.registering(Exec::class) {
     workingDir = repoRoot
     environment("PATH", goToolPath.get())
@@ -191,7 +217,7 @@ val bindGoMobile by tasks.registering(Exec::class) {
 }
 
 tasks.named("preBuild").configure {
-    dependsOn(bindGoMobile, buildAndroidFfmpeg)
+    dependsOn(bindGoMobile, buildAndroidFfmpeg, stageAndroidNdkCppRuntime)
 }
 
 dependencies {
