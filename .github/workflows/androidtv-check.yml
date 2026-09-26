@@ -1,0 +1,84 @@
+name: Android TV checks
+
+on:
+  pull_request:
+    paths:
+      - "androidtv/**"
+      - "mobile/**"
+      - "internal/**"
+      - "seanime-web/**"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/build-android-ffmpeg.sh"
+      - ".github/workflows/androidtv-check.yml"
+  push:
+    paths:
+      - "androidtv/**"
+      - "mobile/**"
+      - "internal/**"
+      - "seanime-web/**"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/build-android-ffmpeg.sh"
+      - ".github/workflows/androidtv-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-tv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: seanime-web/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+
+      - name: Install native media build tools
+        run: sudo apt-get update && sudo apt-get install --yes nasm pkg-config
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install frontend dependencies
+        working-directory: seanime-web
+        run: npm ci
+
+      - name: Run Android TV instrumentation tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: android-tv
+          arch: x86_64
+          profile: tv_1080p
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          disable-animations: true
+          working-directory: androidtv
+          script: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" ./gradlew :app:connectedDebugAndroidTest --no-daemon

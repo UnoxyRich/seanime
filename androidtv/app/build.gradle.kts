@@ -73,6 +73,7 @@ android {
         applicationId = "app.seanime.tv"
         minSdk = 23
         targetSdk = 34
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = androidVersionCode
         versionName = androidVersionName
     }
@@ -201,4 +202,7 @@ dependencies {
     implementation("androidx.webkit:webkit:1.15.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
+
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

@@ -30,6 +30,16 @@ The Android TV workflow builds signed APKs and attaches the ARM64 and x86_64
 variants to that release. Keep using the same keystore for every update so
 Android accepts each APK as an in-place upgrade.
 
+Run the Android host smoke test on an Android TV emulator or device with:
+
+```sh
+./gradlew :app:connectedDebugAndroidTest
+```
+
+The test checks embedded UI loading, top-level bridge authorization, sandboxed
+iframe isolation, and server shutdown/restart. The `Android TV checks` workflow
+runs it on an API 36 x86_64 TV emulator.
+
 ## Android host behavior
 
 - The app uses a Leanback TV launcher activity and a 320×180 TV banner.
@@ -41,6 +51,10 @@ Android accepts each APK as an in-place upgrade.
   Go's existing transcoder can use them without changing its API.
 - OAuth and external web destinations stay inside an Android WebView. OAuth
   redirects to Seanime's local callback are returned to the app's main WebView.
+- The JavaScript interface uses an origin-scoped document-start token, so
+  embedded remote pages can load without receiving native storage or playback
+  access. Devices need an Android System WebView with document-start script
+  support for native bridge features.
 - Browser-generated diagnostic profiles and issue-report archives use the
   Android document picker, then stream to the selected destination in bounded
   chunks instead of relying on WebView's unsupported Blob download behavior.
