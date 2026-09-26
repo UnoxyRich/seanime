@@ -56,6 +56,11 @@ class AndroidTvStartupTest {
                     "(() => { const status = JSON.parse(window.__seanimeTVFrameBridgeProbe).nativeStatus; return status === '' || status === 'missing'; })()",
                 ),
             )
+
+            assertTrue(
+                "Android TV arrow keys did not move focus spatially",
+                evaluateJavascript(scenario, dpadNavigationProbe()) == "true",
+            )
         } finally {
             scenario.close()
         }
@@ -102,6 +107,26 @@ class AndroidTvStartupTest {
         )
         assertEquals("sandboxed frame probe did not start", "\"started\"", result)
     }
+
+    private fun dpadNavigationProbe(): String =
+        """(() => {
+            if (!document.documentElement.classList.contains('android-tv')) return false;
+            document.body.innerHTML = '<main><button id="tv-focus-start">Start</button><button id="tv-focus-right">Right</button><button id="tv-focus-down">Down</button></main>';
+            const positions = {
+                'tv-focus-start': 'left:64px;top:64px',
+                'tv-focus-right': 'left:224px;top:64px',
+                'tv-focus-down': 'left:224px;top:160px',
+            };
+            for (const [id, position] of Object.entries(positions)) {
+                const button = document.getElementById(id);
+                button.style.cssText = 'position:fixed;width:120px;height:64px;' + position;
+            }
+            document.getElementById('tv-focus-start').focus();
+            document.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight',bubbles:true,cancelable:true}));
+            const movedRight = document.activeElement?.id === 'tv-focus-right';
+            document.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowDown',bubbles:true,cancelable:true}));
+            return movedRight && document.activeElement?.id === 'tv-focus-down';
+        })()"""
 
     private fun evaluateJavascript(scenario: ActivityScenario<MainActivity>, script: String): String? {
         val result = AtomicReference<String?>()
