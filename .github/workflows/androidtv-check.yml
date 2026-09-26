@@ -10,6 +10,8 @@ on:
       - "go.mod"
       - "go.sum"
       - "scripts/build-android-ffmpeg.sh"
+      - "scripts/verify_android_native_alignment.py"
+      - "scripts/test_android_native_alignment.py"
       - ".github/workflows/androidtv-check.yml"
   push:
     paths:
@@ -20,6 +22,8 @@ on:
       - "go.mod"
       - "go.sum"
       - "scripts/build-android-ffmpeg.sh"
+      - "scripts/verify_android_native_alignment.py"
+      - "scripts/test_android_native_alignment.py"
       - ".github/workflows/androidtv-check.yml"
   workflow_dispatch:
 
@@ -70,6 +74,20 @@ jobs:
       - name: Install frontend dependencies
         working-directory: seanime-web
         run: npm ci
+
+      - name: Test native alignment verifier
+        run: python3 -m unittest discover -s scripts -p test_android_native_alignment.py
+
+      - name: Test shared frontend
+        working-directory: seanime-web
+        run: npm test
+
+      - name: Build Android TV APKs
+        working-directory: androidtv
+        run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+
+      - name: Verify APK native alignment
+        run: python3 scripts/verify_android_native_alignment.py androidtv/app/build/outputs/apk/debug/*.apk
 
       - name: Run Android TV instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2

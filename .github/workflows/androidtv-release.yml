@@ -71,6 +71,9 @@ jobs:
           SEANIME_ANDROID_KEY_PASSWORD: ${{ secrets.SEANIME_ANDROID_KEY_PASSWORD }}
         run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" ./gradlew :app:assembleRelease --no-daemon
 
+      - name: Verify APK native alignment
+        run: python3 scripts/verify_android_native_alignment.py androidtv/app/build/outputs/apk/release/*.apk
+
       - name: Attach Android TV APKs to the release
         uses: softprops/action-gh-release@v2
         with:

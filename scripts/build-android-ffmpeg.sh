@@ -146,7 +146,7 @@ for ABI in "${ABIS[@]}"; do
                 --strip="$STRIP" \
                 --pkg-config-flags=--static \
                 --extra-cflags="-O2 -fPIC -I$PREFIX/include" \
-                --extra-ldflags="-L$PREFIX/lib" \
+                --extra-ldflags="-L$PREFIX/lib -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384" \
                 --enable-static \
                 --disable-shared \
                 --enable-gpl \
@@ -173,6 +173,9 @@ for ABI in "${ABIS[@]}"; do
     printf 'FFmpeg %s\nx264 %s\nAndroid ABI %s\nBuild config %s\n' \
         "$FFMPEG_VERSION" "$X264_COMMIT" "$ABI" "$BUILD_CONFIG_CHECKSUM" > "$ABI_METADATA/version"
     echo "Built Android FFmpeg tools for $ABI"
+    # Each ABI is installed before the next build starts. Release its temporary
+    # object files so a two-ABI build needs only one ABI's scratch space.
+    find "$WORK_DIR/$ABI" -depth -delete
 done
 
 NOTICE="$METADATA_ROOT/NOTICE.txt"

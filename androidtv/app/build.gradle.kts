@@ -210,7 +210,8 @@ val bindGoMobile by tasks.registering(Exec::class) {
         "-androidapi=23",
         "-javapkg=app.seanime.tv.gomobile",
         // anet uses a supported Android fix through net.zoneCache via go:linkname.
-        "-ldflags=-s -w -checklinkname=0 -X=seanime/internal/constants.Version=$androidVersionName",
+        "-ldflags=-s -w -checklinkname=0 -X=seanime/internal/constants.Version=$androidVersionName " +
+            "-extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384",
         "-o", generatedAar.get().asFile.absolutePath,
         "./mobile",
     )
