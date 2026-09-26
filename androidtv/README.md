@@ -36,10 +36,12 @@ Run the Android host smoke test on an Android TV emulator or device with:
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-The test checks embedded UI loading, top-level bridge authorization, sandboxed
-iframe isolation, D-pad directional focus movement, and server
-shutdown/restart. The `Android TV checks` workflow runs it on an API 36 x86_64
-TV emulator.
+The instrumentation suite checks embedded UI loading, top-level bridge
+authorization, sandboxed iframe isolation, D-pad directional focus movement,
+and server shutdown/restart. It also exercises selected SAF tree grants,
+directory creation, ranged reads, chunked writes and replacement, listing, and
+deletion through a debug-only in-memory document provider. The `Android TV
+checks` workflow runs the suite on an API 36 x86_64 TV emulator.
 
 ## Android host behavior
 
