@@ -3,4 +3,7 @@
     <string name="server_starting">Starting Seanime…</string>
     <string name="server_retry">Retry</string>
     <string name="storage_picker_title">Choose an anime or manga folder</string>
+    <string name="storage_picker_unavailable_title">Folder picker unavailable</string>
+    <string name="storage_picker_unavailable_message">This TV does not provide a system folder picker. Install or enable a file manager that can grant access to USB folders, then try again.</string>
+    <string name="storage_save_unavailable_message">This TV does not provide a system file picker for choosing a download location. Install or enable a file manager that supports saving documents, then try again.</string>
 </resources>

@@ -1,4 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT_TREE" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.CREATE_DOCUMENT" />
+        </intent>
+    </queries>
+
     <uses-feature android:name="android.software.leanback" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-permission android:name="android.permission.INTERNET" />

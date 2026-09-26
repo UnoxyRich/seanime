@@ -1,12 +1,14 @@
 package app.seanime.tv
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -260,6 +262,34 @@ class MainActivity : Activity() {
         retry.requestFocus()
     }
 
+    internal fun openStoragePicker(purpose: String) {
+        pendingStoragePurpose = purpose
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        if (!hasUsableDocumentPicker(intent)) {
+            showStoragePickerUnavailable(purpose)
+            return
+        }
+        runCatching { startActivityForResult(intent, STORAGE_PICK_REQUEST) }
+            .onFailure { showStoragePickerUnavailable(purpose) }
+    }
+
+    private fun hasUsableDocumentPicker(intent: Intent): Boolean {
+        val activityInfo = packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo ?: return false
+        return !activityInfo.name.endsWith("DocumentsStub", ignoreCase = true)
+    }
+
+    private fun showStoragePickerUnavailable(purpose: String) {
+        pendingStoragePurpose = "library-main"
+        dispatchStorageEvent(null, purpose)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.storage_picker_unavailable_title)
+            .setMessage(R.string.storage_picker_unavailable_message)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
     internal fun openExternalUrl(url: String) {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
         when (uri.scheme?.lowercase()) {
@@ -372,10 +402,15 @@ class MainActivity : Activity() {
                 putExtra(Intent.EXTRA_TITLE, safeFilename)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             }
+            if (!hasUsableDocumentPicker(intent)) {
+                pendingDownloadRequestId = null
+                dispatchDownloadTargetEvent(requestId, false, getString(R.string.storage_save_unavailable_message))
+                return@runOnUiThread
+            }
             runCatching { startActivityForResult(intent, DOWNLOAD_TARGET_REQUEST) }
                 .onFailure { error ->
                     pendingDownloadRequestId = null
-                    dispatchDownloadTargetEvent(requestId, false, error.message ?: "Unable to choose a save location")
+                    dispatchDownloadTargetEvent(requestId, false, error.message ?: getString(R.string.storage_save_unavailable_message))
                 }
         }
         return true
@@ -786,13 +821,7 @@ private class AndroidTVBridge(
     fun requestMediaFolder(token: String, purpose: String) {
         if (!isAuthorized(token)) return
         val normalizedPurpose = purpose.takeIf { it in setOf("library-main", "library-additional", "manga-local", "torrent-stream", "screenshot") } ?: "library-main"
-        activity.runOnUiThread {
-            activity.pendingStoragePurpose = normalizedPurpose
-            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-            }
-            activity.startActivityForResult(intent, MainActivity.STORAGE_PICK_REQUEST)
-        }
+        activity.runOnUiThread { activity.openStoragePicker(normalizedPurpose) }
     }
 
     @JavascriptInterface
