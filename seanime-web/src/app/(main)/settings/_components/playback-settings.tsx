@@ -19,7 +19,7 @@ import { cn } from "@/components/ui/core/styling"
 import { RadioGroup } from "@/components/ui/radio-group"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { __isElectronDesktop__ } from "@/types/constants"
+import { __isAndroidTV__, __isElectronDesktop__ } from "@/types/constants"
 import { useAtom, useSetAtom } from "jotai"
 import React from "react"
 import { BiDesktop } from "react-icons/bi"
@@ -73,10 +73,11 @@ export function PlaybackSettings() {
     const usingNativePlayer = __isElectronDesktop__ && electronPlaybackMethod === ElectronPlaybackMethod.NativePlayer
     const usingMpvPlayer = usingNativePlayer && serverStatus?.settings?.mediaPlayer?.mpvPrismEnabled
     const isMediastreamEnabled = !!serverStatus?.mediastreamSettings?.transcodeEnabled
+    const canUseMediastream = isMediastreamEnabled || __isAndroidTV__
 
     const downloadedMethod = downloadedMediaPlayback === PlaybackDownloadedMedia.ExternalPlayerLink
         ? PlaybackDownloadedMedia.ExternalPlayerLink
-        : activeOnDevice ? "mediastream" : PlaybackDownloadedMedia.Default
+        : (__isAndroidTV__ || activeOnDevice) ? "mediastream" : PlaybackDownloadedMedia.Default
 
     const engineMethod = serverStatus?.settings?.mediaPlayer?.mpvPrismEnabled ? "mpvcore" : "videocore"
 
@@ -107,7 +108,7 @@ export function PlaybackSettings() {
                 notifyUpdated()
                 return
             case "mediastream":
-                if (!isMediastreamEnabled) return
+                if (!canUseMediastream) return
                 setDownloadedMediaPlayback(PlaybackDownloadedMedia.Default)
                 setActiveOnDevice(true)
                 notifyUpdated()
@@ -305,23 +306,27 @@ export function PlaybackSettings() {
                         value={downloadedMethod}
                         onValueChange={handleDownloadedMethodChange}
                         options={[
-                            {
+                            ...(!__isAndroidTV__ ? [{
                                 value: PlaybackDownloadedMedia.Default,
                                 title: "Desktop media player",
                                 description: "Open the stream in your configured player with automatic tracking.",
                                 icon: LuLaptop,
                                 preview: <DesktopPlayerPreview />,
-                            },
+                            }] : []),
                             {
                                 value: "mediastream",
-                                title: "Transcoding / Direct Play",
-                                description: isMediastreamEnabled
-                                    ? "Play local files through an HTML5 video player, available on web."
-                                    : "Enable transcoding first to use the browser player.",
+                                title: __isAndroidTV__ ? "Android TV player" : "Transcoding / Direct Play",
+                                description: __isAndroidTV__
+                                    ? isMediastreamEnabled
+                                        ? "Play local files directly on TV, with transcoding available as a fallback."
+                                        : "Play local files directly on TV. Enable transcoding for unsupported formats."
+                                    : isMediastreamEnabled
+                                        ? "Play local files through an HTML5 video player, available on web."
+                                        : "Enable transcoding first to use the browser player.",
                                 icon: MdOutlineBroadcastOnHome,
-                                preview: <MediastreamPreview disabled={!isMediastreamEnabled} />,
-                                badge: !isMediastreamEnabled ? <Badge intent="warning" size="sm">Disabled</Badge> : undefined,
-                                disabled: !isMediastreamEnabled,
+                                preview: <MediastreamPreview disabled={!canUseMediastream} />,
+                                badge: !canUseMediastream ? <Badge intent="warning" size="sm">Disabled</Badge> : undefined,
+                                disabled: !canUseMediastream,
                             },
                             {
                                 value: PlaybackDownloadedMedia.ExternalPlayerLink,

@@ -1,6 +1,6 @@
 import { Anime_Entry, Anime_Playlist, Anime_PlaylistEpisode, HibikeTorrent_AnimeTorrent } from "@/api/generated/types"
 import { useGetAnimeEntry } from "@/api/hooks/anime_entries.hooks"
-import { useCurrentDevicePlaybackSettings } from "@/app/(main)/_atoms/playback.atoms"
+import { PlaybackDownloadedMedia, useCurrentDevicePlaybackSettings } from "@/app/(main)/_atoms/playback.atoms"
 import { useAutoPlaySelectedTorrent } from "@/app/(main)/_features/autoplay/autoplay"
 import { getBatchSelectionParams } from "@/app/(main)/_features/autoplay/batches.ts"
 import { nativePlayer_stateAtom } from "@/app/(main)/_features/native-player/native-player.atoms"
@@ -31,7 +31,7 @@ import { logger } from "@/lib/helpers/debug"
 import { useRouter } from "@/lib/navigation"
 import { getImageUrl } from "@/lib/server/assets"
 import { WSEvents } from "@/lib/server/ws-events"
-import { __isElectronDesktop__ } from "@/types/constants"
+import { __isAndroidTV__, __isElectronDesktop__ } from "@/types/constants"
 import { atom, useAtomValue } from "jotai"
 import { useAtom, useSetAtom } from "jotai/react"
 import React from "react"
@@ -67,6 +67,12 @@ export function usePlaylistManager() {
 
     function startPlaylist(playlist: Anime_Playlist) {
         toast.info("Starting playlist...")
+        const localFilePlaybackMethod = __isElectronDesktop__ && electronPlaybackMethod !== "default"
+            ? electronPlaybackMethod
+            : downloadedMediaPlayback === PlaybackDownloadedMedia.ExternalPlayerLink
+                ? PlaybackDownloadedMedia.ExternalPlayerLink
+                : (__isAndroidTV__ || activeOnDevice) ? "transcode" : downloadedMediaPlayback
+
         sendMessage({
             type: WSEvents.PLAYLIST,
             payload: {
@@ -74,9 +80,7 @@ export function usePlaylistManager() {
                 payload: {
                     clientId: clientId,
                     dbId: playlist.dbId,
-                    localFilePlaybackMethod: __isElectronDesktop__ && electronPlaybackMethod !== "default"
-                        ? electronPlaybackMethod
-                        : activeOnDevice ? "transcode" : downloadedMediaPlayback,
+                    localFilePlaybackMethod,
                     streamPlaybackMethod: __isElectronDesktop__ && electronPlaybackMethod !== "default"
                         ? electronPlaybackMethod
                         : torrentStreamingPlayback,

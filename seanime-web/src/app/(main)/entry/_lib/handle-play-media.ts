@@ -17,7 +17,7 @@ import { ExternalPlayerLink } from "@/lib/external-player-link/external-player-l
 import { openTab } from "@/lib/helpers/browser"
 import { logger } from "@/lib/helpers/debug"
 import { useRouter } from "@/lib/navigation"
-import { __isElectronDesktop__ } from "@/types/constants"
+import { __isAndroidTV__, __isElectronDesktop__ } from "@/types/constants"
 import { useAtomValue, useSetAtom } from "jotai"
 import React from "react"
 import { toast } from "sonner"
@@ -134,7 +134,8 @@ export function useHandlePlayMedia() {
         }
 
         // Handle media streaming
-        if (serverStatus?.mediastreamSettings?.transcodeEnabled && mediastreamActiveOnDevice) {
+        if (forcePlaybackMethod !== "playbackmanager" && (__isAndroidTV__ ||
+            (serverStatus?.mediastreamSettings?.transcodeEnabled && mediastreamActiveOnDevice))) {
             setMediastreamFilePath(path)
             React.startTransition(() => {
                 router.push(`/mediastream?id=${mediaId}`)
@@ -212,4 +213,3 @@ export function useForcePlaybackMethod() {
 
     return { forcePlaybackMethodFn, resetForcePlaybackMethod, getForcePlaybackMethod }
 }
-

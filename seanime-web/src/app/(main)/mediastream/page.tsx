@@ -100,7 +100,9 @@ function MediastreamPage() {
     const clientId = React.useMemo(() => sessionId ?? uuidv4(), [sessionId])
 
     // stream state
-    const [streamType, setStreamType] = React.useState<Mediastream_StreamType>("transcode")
+    const [streamType, setStreamType] = React.useState<Mediastream_StreamType>(
+        serverStatus?.mediastreamSettings?.transcodeEnabled === false ? "direct" : "transcode",
+    )
     const [url, setUrl] = React.useState<string | null>(null)
     const [urlFilePath, setUrlFilePath] = React.useState<string | undefined>(undefined)
     const [playbackError, setPlaybackError] = React.useState<string | null>(null)
@@ -137,7 +139,17 @@ function MediastreamPage() {
         path: filePath,
         streamType: streamType,
         clientId: clientId,
-    }, !!mediastreamSettings && !mediastreamSettingsLoading && !!filePath)
+    }, !!mediastreamSettings && !mediastreamSettingsLoading && !!filePath &&
+        (streamType !== "transcode" || mediastreamSettings.transcodeEnabled))
+
+    // A TV can direct play without FFmpeg. Avoid sending an unusable transcode
+    // request when this screen opens before the settings query has completed.
+    React.useEffect(() => {
+        if (!mediastreamSettingsLoading && mediastreamSettings &&
+            !mediastreamSettings.transcodeEnabled && streamType === "transcode") {
+            setStreamType("direct")
+        }
+    }, [mediastreamSettings, mediastreamSettingsLoading, streamType])
 
     const { mutate: shutdownTranscode } = useMediastreamShutdownTranscodeStream()
 
@@ -189,10 +201,13 @@ function MediastreamPage() {
         // switch to transcode if direct play not supported
         if (mediaContainer.streamType === "direct") {
             if (!codecSupported) {
-                log.warning("Codec not supported for direct play, switching to transcode")
-                setStreamType("transcode")
-                changeUrl(null)
-                return
+                if (mediastreamSettings?.transcodeEnabled) {
+                    log.warning("Codec not supported for direct play, switching to transcode")
+                    setStreamType("transcode")
+                    changeUrl(null)
+                    return
+                }
+                log.warning("Codec may not play in this browser and transcoding is disabled")
             }
         }
 
@@ -255,7 +270,7 @@ function MediastreamPage() {
     const goToEpisode = useLatestFunction((ep: Anime_Episode) => {
         if (ep.localFile?.path) {
             setFilePath(ep.localFile.path)
-            setStreamType("transcode") // reset to transcode if user prefers direct, the effect will switch it back
+            setStreamType(mediastreamSettings?.transcodeEnabled ? "transcode" : "direct")
         }
     })
 
@@ -524,13 +539,15 @@ function MediastreamPlaybackInfo({
                         <Button
                             intent="primary-subtle"
                             onClick={() => setStreamType("transcode")}
-                            disabled={!mediastreamSettings?.disableAutoSwitchToDirectPlay}
+                            disabled={!mediastreamSettings?.transcodeEnabled || !mediastreamSettings?.disableAutoSwitchToDirectPlay}
                             className="w-full"
                         >
                             Switch to transcoding
                         </Button>
-                        {!mediastreamSettings?.disableAutoSwitchToDirectPlay && <p className="text-[--muted] text-sm italic opacity-50">
-                            Enable 'Prefer transcoding' in the media streaming settings if you want to switch to transcoding
+                        {(!mediastreamSettings?.transcodeEnabled || !mediastreamSettings?.disableAutoSwitchToDirectPlay) && <p className="text-[--muted] text-sm italic opacity-50">
+                            {!mediastreamSettings?.transcodeEnabled
+                                ? "Enable transcoding in the media streaming settings to switch to transcoding"
+                                : "Enable 'Prefer transcoding' in the media streaming settings if you want to switch to transcoding"}
                         </p>}
                     </div>}
 
