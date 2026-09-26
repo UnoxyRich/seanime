@@ -17,10 +17,12 @@ import { vc_videoElement } from "@/app/(main)/_features/video-core/video-core-at
 import { vc_previousPausedState } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_lastKnownProgress } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_skipChapter } from "@/app/(main)/_features/video-core/video-core-atoms"
+import { vc_keybindingsAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
 import { vc_showOverlayFeedback } from "@/app/(main)/_features/video-core/video-core-overlay-display"
 import { VIDEOCORE_PREVIEW_CAPTURE_INTERVAL_SECONDS, VIDEOCORE_PREVIEW_THUMBNAIL_SIZE } from "@/app/(main)/_features/video-core/video-core-preview"
 import { vc_autoSkipOPEDAtom, vc_highlightOPEDChaptersAtom, vc_showChapterMarkersAtom } from "@/app/(main)/_features/video-core/video-core.atoms"
 import { vc_dispatchAction } from "@/app/(main)/_features/video-core/video-core.utils"
+import { __isAndroidTV__ } from "@/types/constants"
 import { atom, useAtomValue } from "jotai"
 import { useAtom, useSetAtom } from "jotai/react"
 import React from "react"
@@ -57,6 +59,7 @@ export function VideoCoreTimeRange(props: VideoCoreTimeRangeProps) {
 
     const currentTime = useAtomValue(vc_currentTime)
     const duration = useAtomValue(vc_duration)
+    const keybindings = useAtomValue(vc_keybindingsAtom)
     const buffered = useAtomValue(vc_closestBufferedTime)
     const [seekingTargetProgress, setSeekingTargetProgress] = useAtom(vc_seekingTargetProgress)
     const [seeking, setSeeking] = useAtom(vc_seeking)
@@ -507,8 +510,30 @@ export function VideoCoreTimeRange(props: VideoCoreTimeRangeProps) {
             onPointerMove={handlePointerMove}
             onPointerLeave={handlePointerLeave}
             onPointerCancel={handlePointerCancel}
+            onKeyDown={(event) => {
+                if (!__isAndroidTV__ || isWatchPartyPeer || !videoElement) return
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return
+
+                event.preventDefault()
+                event.stopPropagation()
+                const wasPaused = videoElement.paused
+                if (!wasPaused) videoElement.pause()
+                videoElement.dispatchEvent(new Event("seeking"))
+                action({
+                    type: "seek",
+                    payload: {
+                        time: event.key === "ArrowRight"
+                            ? keybindings.seekForwardFine.value
+                            : -keybindings.seekBackwardFine.value,
+                        flashTime: true,
+                    },
+                })
+                if (!wasPaused) videoElement.play()?.catch()
+                videoElement.dispatchEvent(new Event("seeked"))
+            }}
             isMobile={isMobile}
             duration={duration}
+            disabled={isWatchPartyPeer}
             onMarkerClick={(time) => {
                 action({ type: "seekTo", payload: { time } })
             }}

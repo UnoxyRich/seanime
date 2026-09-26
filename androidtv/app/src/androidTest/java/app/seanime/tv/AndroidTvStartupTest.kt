@@ -125,7 +125,51 @@ class AndroidTvStartupTest {
             document.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight',bubbles:true,cancelable:true}));
             const movedRight = document.activeElement?.id === 'tv-focus-right';
             document.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowDown',bubbles:true,cancelable:true}));
-            return movedRight && document.activeElement?.id === 'tv-focus-down';
+            const movedDown = document.activeElement?.id === 'tv-focus-down';
+
+            const slider = document.createElement('div');
+            slider.id = 'tv-focus-slider';
+            slider.setAttribute('role', 'slider');
+            slider.setAttribute('aria-orientation', 'horizontal');
+            slider.tabIndex = 0;
+            slider.style.cssText = 'position:fixed;width:120px;height:48px;left:224px;top:250px';
+            document.body.appendChild(slider);
+            let sliderReceivedArrow = false;
+            slider.addEventListener('keydown', event => { sliderReceivedArrow = event.key === 'ArrowRight'; });
+            slider.focus();
+            const sliderArrow = new KeyboardEvent('keydown', {key:'ArrowRight',bubbles:true,cancelable:true});
+            slider.dispatchEvent(sliderArrow);
+            const sliderKeptItsArrow = document.activeElement?.id === 'tv-focus-slider' && sliderReceivedArrow && !sliderArrow.defaultPrevented;
+            document.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowUp',bubbles:true,cancelable:true}));
+            const couldLeaveSliderVertically = document.activeElement?.id === 'tv-focus-down';
+
+            const menu = document.createElement('div');
+            menu.setAttribute('role', 'menu');
+            const menuItem = document.createElement('button');
+            menuItem.id = 'tv-focus-menu-item';
+            menuItem.setAttribute('role', 'menuitem');
+            menu.appendChild(menuItem);
+            document.body.appendChild(menu);
+            let menuReceivedArrow = false;
+            menuItem.addEventListener('keydown', event => { menuReceivedArrow = event.key === 'ArrowDown'; });
+            menuItem.focus();
+            const menuArrow = new KeyboardEvent('keydown', {key:'ArrowDown',bubbles:true,cancelable:true});
+            menuItem.dispatchEvent(menuArrow);
+
+            const dialog = document.createElement('div');
+            dialog.setAttribute('role', 'dialog');
+            dialog.setAttribute('aria-modal', 'true');
+            dialog.style.cssText = 'position:fixed;width:160px;height:88px;left:480px;top:250px';
+            const dialogButton = document.createElement('button');
+            dialogButton.id = 'tv-focus-dialog-button';
+            dialog.appendChild(dialogButton);
+            document.body.appendChild(dialog);
+            dialogButton.focus();
+            document.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowLeft',bubbles:true,cancelable:true}));
+            const focusStayedInDialog = document.activeElement?.id === 'tv-focus-dialog-button';
+
+            return movedRight && movedDown && sliderKeptItsArrow && couldLeaveSliderVertically &&
+                menuReceivedArrow && !menuArrow.defaultPrevented && focusStayedInDialog;
         })()"""
 
     private fun evaluateJavascript(scenario: ActivityScenario<MainActivity>, script: String): String? {

@@ -713,7 +713,6 @@ class MainActivity : Activity() {
         activityResumed = false
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (!NativePlayerActivity.isVisible()) {
-            scheduleServerForeground(false)
             webView.onPause()
         }
         super.onPause()

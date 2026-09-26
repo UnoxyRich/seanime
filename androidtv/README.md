@@ -37,10 +37,11 @@ Run the Android host smoke test on an Android TV emulator or device with:
 ```
 
 The instrumentation suite checks embedded UI loading, top-level bridge
-authorization, sandboxed iframe isolation, D-pad directional focus movement,
-and server shutdown/restart. It also exercises selected SAF tree grants,
-directory creation, ranged reads, chunked writes and replacement, listing, and
-deletion through a debug-only in-memory document provider. The `Android TV
+authorization, sandboxed iframe isolation, D-pad movement through controls,
+menus, sliders, dialogs, and server shutdown/restart. It also exercises
+selected SAF tree grants, directory creation, ranged reads, chunked writes and
+replacement, listing, and deletion through a debug-only in-memory document
+provider. The `Android TV
 checks` workflow runs the suite on an API 36 x86_64 TV emulator.
 
 ## Android host behavior
@@ -67,8 +68,9 @@ checks` workflow runs the suite on an API 36 x86_64 TV emulator.
   HLS, remote seek/play/pause controls, embedded and external SRT/VTT/ASS/SSA
   subtitles, audio track selection, playback-position handoff, and web-driven
   playlist transitions. In the WebView player, D-pad input reveals and focuses
-  the controls; arrow keys navigate focused controls instead of triggering
-  desktop seek and volume shortcuts. Inline and mini-player playback leave
+  the controls, keeps navigation inside the open dialog, and lets menus and
+  sliders handle their arrow keys. Left and right on the playback timeline use
+  the configured fine-seek interval. Inline and mini-player playback leave
   focus with the page.
 - The native host exposes a Storage Access Framework picker, persists grants,
   and implements listing, metadata, ranged reads, chunked writes, directory

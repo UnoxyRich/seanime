@@ -141,18 +141,38 @@ function AndroidTVInputSupport() {
 
         document.documentElement.classList.add("android-tv")
 
-        const focusables = () => Array.from(document.querySelectorAll<HTMLElement>(
-            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="button"], [tabindex]:not([tabindex="-1"])',
-        )).filter((element) => {
+        const isVisible = (element: HTMLElement) => {
             const style = window.getComputedStyle(element)
             const rect = element.getBoundingClientRect()
             return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0
-        })
+        }
+
+        const focusables = () => {
+            const overlays = Array.from(document.querySelectorAll<HTMLElement>(
+                '[role="dialog"],[role="alertdialog"],[data-radix-dialog-content]',
+            ))
+            const scope = overlays.reverse().find(isVisible) ?? document
+            return Array.from(scope.querySelectorAll<HTMLElement>(
+                'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="button"], [tabindex]:not([tabindex="-1"])',
+            )).filter(isVisible)
+        }
 
         const onKeyDown = (event: KeyboardEvent) => {
             if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return
             const active = document.activeElement
-            if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return
+            const activeElement = active instanceof Element ? active : null
+            const slider = activeElement?.closest('[role="slider"]')
+            if (slider) {
+                const verticalSlider = slider.getAttribute("aria-orientation") === "vertical"
+                const sliderArrow = verticalSlider
+                    ? event.key === "ArrowUp" || event.key === "ArrowDown"
+                    : event.key === "ArrowLeft" || event.key === "ArrowRight"
+                if (sliderArrow && slider.getAttribute("aria-disabled") !== "true") return
+            } else if (activeElement?.closest(
+                'input,textarea,select,[contenteditable="true"],[role="spinbutton"],[role="combobox"][aria-expanded="true"],[role="listbox"],[role="option"],[role="menu"],[role="menuitem"],[role="tablist"],[role="tree"],[role="grid"]',
+            )) {
+                return
+            }
             if (active instanceof HTMLVideoElement || active?.closest("[data-vc-element='video']")) return
 
             const items = focusables()

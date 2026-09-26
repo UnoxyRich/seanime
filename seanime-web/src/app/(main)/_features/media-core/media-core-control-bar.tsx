@@ -660,9 +660,11 @@ export interface MediaCoreTimeRangeViewProps {
     onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void
     onPointerLeave: (e: React.PointerEvent<HTMLDivElement>) => void
     onPointerCancel: (e: React.PointerEvent<HTMLDivElement>) => void
+    onKeyDown?: (e: React.KeyboardEvent<HTMLDivElement>) => void
     onMarkerClick?: (time: number) => void
     isMobile: boolean
     duration: number
+    disabled?: boolean
 }
 
 
@@ -690,9 +692,11 @@ export function MediaCoreTimeRangeView(props: MediaCoreTimeRangeViewProps) {
         onPointerMove,
         onPointerLeave,
         onPointerCancel,
+        onKeyDown,
         onMarkerClick,
         isMobile,
         duration,
+        disabled = false,
     } = props
 
     return (
@@ -703,6 +707,7 @@ export function MediaCoreTimeRangeView(props: MediaCoreTimeRangeViewProps) {
             className="w-full relative group/vc-time-range z-[2] flex h-8 cursor-pointer outline-none touch-none select-none [contain:layout_style] text-white"
             role="slider"
             tabIndex={0}
+            aria-disabled={disabled}
             aria-valuemin={0}
             aria-valuenow={progressPercentage}
             aria-valuetext={`${Math.round(progressPercentage)}%`}
@@ -713,6 +718,7 @@ export function MediaCoreTimeRangeView(props: MediaCoreTimeRangeViewProps) {
             onPointerLeave={onPointerLeave}
             onPointerCancel={onPointerCancel}
             onPointerMove={onPointerMove}
+            onKeyDown={onKeyDown}
         >
             {showThumbnail && (
                 <div
