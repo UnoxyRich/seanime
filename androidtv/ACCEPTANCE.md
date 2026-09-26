@@ -7,10 +7,10 @@ and device model with each result.
 
 ## Current evidence
 
-- The shared frontend suite passes 78 tests, including playback recovery,
+- The shared frontend suite passes 87 tests, including playback recovery,
   Media3 state/command adaptation, browser HLS handoff, source-refresh pause
   isolation, suppression of late browser playback events, and older-WebView
-  bridge bootstrap.
+  bridge bootstrap, Android stream routing, and shared player mounting.
 - ARM64 and x86_64 debug APKs build; their debug signatures verify.
 - All 10 Android instrumentation tests pass on the API 31 ARM64 TV emulator
   with WebView 91 and 4 KiB pages. They cover server startup/restart,
@@ -26,8 +26,9 @@ and device model with each result.
   pass. Runtime operation on a 16 KiB device still needs a separate test run.
 - The earlier emulator disk blocker was resolved using the checksum-verified
   API 31 image and a task-owned sparse data partition. The AVD is available
-  for continued testing. See the [dated run record](acceptance/2026-09-26-api31-arm64.md)
-  for source revision, APK hashes, environment, and test scope.
+  for continued testing. See the [media pipeline run](acceptance/2026-09-26-api31-arm64.md)
+  and [playback routing run](acceptance/2026-09-26-playback-routing.md)
+  for source revisions, APK hashes, environment, and test scope.
 
 ## Remaining process-restoration work
 
