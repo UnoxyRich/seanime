@@ -8,7 +8,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.DocumentsContract
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
@@ -40,7 +39,7 @@ class MainActivity : Activity() {
     private lateinit var root: FrameLayout
     private lateinit var webView: WebView
     private lateinit var statusText: TextView
-    private lateinit var progress: ProgressBar
+    private lateinit var loadingProgress: ProgressBar
     private val handler = Handler(Looper.getMainLooper())
     private val serverExecutor = Executors.newSingleThreadExecutor()
     private val serverPort = 43211
@@ -120,7 +119,7 @@ class MainActivity : Activity() {
                     super.onPageFinished(view, url)
                     view.requestFocus(View.FOCUS_DOWN)
                     statusText.visibility = View.GONE
-                    progress.visibility = View.GONE
+                    this@MainActivity.loadingProgress.visibility = View.GONE
                 }
 
                 override fun onReceivedError(
@@ -145,8 +144,8 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             text = getString(R.string.server_starting)
         }
-        progress = ProgressBar(this).apply { isIndeterminate = true }
-        root.addView(progress, FrameLayout.LayoutParams(72, 72, Gravity.CENTER))
+        loadingProgress = ProgressBar(this).apply { isIndeterminate = true }
+        root.addView(loadingProgress, FrameLayout.LayoutParams(72, 72, Gravity.CENTER))
         root.addView(statusText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
         setContentView(root)
 
@@ -183,7 +182,7 @@ class MainActivity : Activity() {
         retryButton = null
         statusText.text = getString(R.string.server_starting)
         statusText.visibility = View.VISIBLE
-        progress.visibility = View.VISIBLE
+        loadingProgress.visibility = View.VISIBLE
         val url = "http://127.0.0.1:$serverPort/"
         if (webView.url == url) webView.reload() else webView.loadUrl(url)
     }
@@ -192,7 +191,7 @@ class MainActivity : Activity() {
         if (isFinishing || isDestroyed) return
         if (displayedError == message && retryButton != null) return
         displayedError = message
-        progress.visibility = View.GONE
+        loadingProgress.visibility = View.GONE
         statusText.visibility = View.VISIBLE
         statusText.text = "Seanime TV could not start\n\n$message"
         retryButton?.let(root::removeView)
@@ -448,7 +447,7 @@ private class AndroidTVBridge(private val activity: MainActivity, private val we
         val normalizedPurpose = purpose.takeIf { it in setOf("library-main", "library-additional", "manga-local", "torrent-stream") } ?: "library-main"
         activity.runOnUiThread {
             activity.pendingStoragePurpose = normalizedPurpose
-            val intent = Intent(DocumentsContract.ACTION_OPEN_DOCUMENT_TREE).apply {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             }
             activity.startActivityForResult(intent, MainActivity.STORAGE_PICK_REQUEST)

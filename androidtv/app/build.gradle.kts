@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.Sync
+import java.io.File
 
 plugins {
     id("com.android.application")
@@ -9,10 +10,29 @@ val repoRoot = rootProject.projectDir.parentFile
 val webOutput = repoRoot.resolve("seanime-web/out-androidtv")
 val embeddedWeb = repoRoot.resolve("mobile/web")
 val generatedAar = layout.buildDirectory.file("generated/gomobile/seanime-mobile.aar")
+val goToolPath = providers.provider {
+    val configuredGoBin = providers.exec {
+        commandLine("go", "env", "GOBIN")
+    }.standardOutput.asText.get().trim()
+    val goPath = providers.exec {
+        commandLine("go", "env", "GOPATH")
+    }.standardOutput.asText.get().trim()
+    val goBins = buildList {
+        if (configuredGoBin.isNotEmpty()) add(configuredGoBin)
+        if (goPath.isNotEmpty()) {
+            goPath.split(File.pathSeparator)
+                .filter(String::isNotBlank)
+                .mapTo(this) { File(it, "bin").absolutePath }
+        }
+    }.distinct()
+    (goBins + System.getenv("PATH").orEmpty())
+        .filter(String::isNotBlank)
+        .joinToString(File.pathSeparator)
+}
 
 android {
     namespace = "app.seanime.tv"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "app.seanime.tv"
@@ -26,7 +46,7 @@ android {
         abi {
             isEnable = true
             reset()
-            include("armeabi-v7a", "arm64-v8a", "x86_64")
+            include("arm64-v8a", "x86_64")
             isUniversalApk = false
         }
     }
@@ -60,6 +80,7 @@ val embedAndroidWeb by tasks.registering(Sync::class) {
 
 val initGoMobile by tasks.registering(Exec::class) {
     workingDir = repoRoot
+    environment("PATH", goToolPath.get())
     commandLine("go", "run", "golang.org/x/mobile/cmd/gomobile", "init")
 }
 
@@ -74,11 +95,14 @@ val bindGoMobile by tasks.registering(Exec::class) {
         generatedAar.get().asFile.parentFile.mkdirs()
     }
     workingDir = repoRoot
+    environment("PATH", goToolPath.get())
     commandLine(
         "go", "run", "golang.org/x/mobile/cmd/gomobile", "bind",
-        "-target=android/arm,android/arm64,android/amd64",
+        "-target=android/arm64,android/amd64",
         "-androidapi=23",
         "-javapkg=app.seanime.tv.gomobile",
+        // anet uses a supported Android fix through net.zoneCache via go:linkname.
+        "-ldflags=-checklinkname=0",
         "-o", generatedAar.get().asFile.absolutePath,
         "./mobile",
     )

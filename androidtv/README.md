@@ -9,7 +9,7 @@ remain in place.
 ## Build
 
 Install Go at the version required by the repository, Node.js, JDK 17, Android
-SDK platform 35, and an Android NDK. Gradle runs gomobile from the version
+SDK platform 36, and an Android NDK. Gradle runs gomobile from the version
 already pinned by the root Go module. Run from this directory:
 
 ```sh
@@ -17,8 +17,8 @@ already pinned by the root Go module. Run from this directory:
 ```
 
 The Gradle task builds the `androidtv` frontend, copies it under `mobile/web`
-for Go embedding, creates a gomobile AAR for ARMv7, ARM64, and x86_64, and
-packages ABI-split APKs for ARMv7, ARM64, and x86_64. The debug APKs are
+for Go embedding, creates a gomobile AAR for ARM64 and x86_64, and packages
+ABI-split APKs for ARM64 and x86_64. The debug APKs are
 signed with Gradle's debug key.
 Release signing is not configured; provide a project signing configuration
 before distributing a release build.
