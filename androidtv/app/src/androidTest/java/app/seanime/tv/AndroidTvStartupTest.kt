@@ -41,8 +41,21 @@ class AndroidTvStartupTest {
 
             startSandboxedFrameBridgeProbe(scenario)
             waitUntil("sandboxed iframe bridge isolation", 10_000) {
-                evaluateJavascript(scenario, "window.__seanimeTVFrameBridgeProbe === true") == "true"
+                evaluateJavascript(scenario, "typeof window.__seanimeTVFrameBridgeProbe === 'string'") == "true"
             }
+            assertEquals(
+                "sandboxed iframe could read the native bridge token",
+                "true",
+                evaluateJavascript(scenario, "JSON.parse(window.__seanimeTVFrameBridgeProbe).token === 'blocked'"),
+            )
+            assertEquals(
+                "sandboxed iframe could invoke a privileged native method",
+                "true",
+                evaluateJavascript(
+                    scenario,
+                    "(() => { const status = JSON.parse(window.__seanimeTVFrameBridgeProbe).nativeStatus; return status === '' || status === 'missing'; })()",
+                ),
+            )
         } finally {
             scenario.close()
         }
@@ -69,19 +82,20 @@ class AndroidTvStartupTest {
         val result = evaluateJavascript(
             scenario,
             """(() => {
-                window.__seanimeTVFrameBridgeProbe = false;
+                window.__seanimeTVFrameBridgeProbe = null;
                 const frame = document.createElement('iframe');
                 frame.setAttribute('sandbox', 'allow-scripts');
                 const onMessage = (event) => {
                     if (event.source !== frame.contentWindow) return;
                     window.removeEventListener('message', onMessage);
                     const detail = event.data || {};
-                    window.__seanimeTVFrameBridgeProbe = detail.token === 'blocked' &&
-                        (detail.nativeStatus === '' || detail.nativeStatus === 'missing');
+                    window.__seanimeTVFrameBridgeProbe = JSON.stringify(detail);
                     frame.remove();
                 };
                 window.addEventListener('message', onMessage);
-                frame.srcdoc = '<script>(function(){let token="readable";try{void parent.__seanimeAndroidTVBridgeToken}catch(e){token="blocked"}const bridge=window.AndroidTVNativeBridge;const nativeStatus=bridge?bridge.serverStatus("untrusted-frame"):"missing";parent.postMessage({token:token,nativeStatus:nativeStatus},"*")})()<\\/script>';
+                const lessThan = String.fromCharCode(60);
+                const probe = '(function(){let token="readable";try{void parent.__seanimeAndroidTVBridgeToken}catch(e){token="blocked"}let nativeStatus="missing";try{const bridge=window.AndroidTVNativeBridge;if(bridge)nativeStatus=bridge.serverStatus("untrusted-frame")}catch(e){nativeStatus="blocked"}parent.postMessage({token:token,nativeStatus:nativeStatus},"*")})()';
+                frame.srcdoc = lessThan + 'script>' + probe + lessThan + '/script>';
                 document.body.appendChild(frame);
                 return 'started';
             })()""",
