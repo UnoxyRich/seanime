@@ -3,11 +3,14 @@ package manga_providers
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	// "image/jpeg"
 	"io"
 	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	hibikemanga "seanime/internal/extension/hibike/manga"
 	"seanime/internal/util/comparison"
 	"seanime/internal/util/result"
@@ -26,11 +29,13 @@ const (
 )
 
 type Local struct {
-	dir    string // Directory to scan for manga
-	logger *zerolog.Logger
+	dir      string // Directory to scan for manga
+	stageDir string // App-managed location for SAF archives that require filesystem access.
+	logger   *zerolog.Logger
 
 	mu                 sync.Mutex
 	currentChapterPath string
+	currentStagedPath  string
 	currentZipCloser   io.Closer
 	currentPages       *result.Map[string, *loadedPage]
 }
@@ -46,11 +51,58 @@ type chapterEntry struct {
 	IsDir        bool   // Whether this entry is a directory
 }
 
-func NewLocal(dir string, logger *zerolog.Logger) hibikemanga.Provider {
-	_ = os.MkdirAll(dir, 0755)
+type localSourceEntry struct {
+	name        string
+	isDirectory bool
+}
+
+func (p *Local) readDirectory(dirPath string) ([]localSourceEntry, error) {
+	if androidtvstorage.IsPath(dirPath) {
+		entries, err := androidtvstorage.List(dirPath)
+		if err != nil {
+			return nil, err
+		}
+		ret := make([]localSourceEntry, 0, len(entries))
+		for _, entry := range entries {
+			ret = append(ret, localSourceEntry{name: entry.Name, isDirectory: entry.IsDirectory})
+		}
+		return ret, nil
+	}
+
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return nil, err
+	}
+	ret := make([]localSourceEntry, 0, len(entries))
+	for _, entry := range entries {
+		ret = append(ret, localSourceEntry{name: entry.Name(), isDirectory: entry.IsDir()})
+	}
+	return ret, nil
+}
+
+func readLocalSourceFile(filePath string) ([]byte, error) {
+	if !androidtvstorage.IsPath(filePath) {
+		return os.ReadFile(filePath)
+	}
+	reader, size, err := androidtvstorage.NewReaderAt(filePath)
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(io.NewSectionReader(reader, 0, size))
+}
+
+func NewLocal(dir string, logger *zerolog.Logger, stagingDir ...string) hibikemanga.Provider {
+	if dir != "" && !androidtvstorage.IsPath(dir) {
+		_ = os.MkdirAll(dir, 0755)
+	}
+	localStageDir := filepath.Join(dir, "saf-source")
+	if len(stagingDir) > 0 && stagingDir[0] != "" {
+		localStageDir = filepath.Join(stagingDir[0], "manga-saf-source")
+	}
 
 	return &Local{
 		dir:          dir,
+		stageDir:     localStageDir,
 		logger:       logger,
 		currentPages: result.NewMap[string, *loadedPage](),
 	}
@@ -74,17 +126,17 @@ func (p *Local) getAllManga() (res []*hibikemanga.SearchResult, err error) {
 		return make([]*hibikemanga.SearchResult, 0), nil
 	}
 
-	entries, err := os.ReadDir(p.dir)
+	entries, err := p.readDirectory(p.dir)
 	if err != nil {
 		return nil, err
 	}
 
 	res = make([]*hibikemanga.SearchResult, 0)
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.isDirectory {
 			res = append(res, &hibikemanga.SearchResult{
-				ID:       entry.Name(),
-				Title:    entry.Name(),
+				ID:       entry.name,
+				Title:    entry.name,
 				Provider: LocalProvider,
 			})
 		}
@@ -266,7 +318,7 @@ func (p *Local) collectChapterEntries(currentPath, mangaID string, currentDepth 
 		return entries, nil
 	}
 
-	dirEntries, err := os.ReadDir(currentPath)
+	dirEntries, err := p.readDirectory(currentPath)
 	if err != nil {
 		return nil, err
 	}
@@ -274,13 +326,13 @@ func (p *Local) collectChapterEntries(currentPath, mangaID string, currentDepth 
 	entries = make([]*chapterEntry, 0)
 
 	for _, entry := range dirEntries {
-		entryPath := filepath.Join(currentPath, entry.Name())
+		entryPath := filepath.Join(currentPath, entry.name)
 
 		// Calculate relative path from manga root
 		var relativePath string
 		if currentDepth == 0 {
 			// At manga root level
-			relativePath = filepath.Join(mangaID, entry.Name())
+			relativePath = filepath.Join(mangaID, entry.name)
 		} else {
 			// Get the relative part from current path
 			relativeFromManga, err := filepath.Rel(filepath.Join(p.dir, mangaID), entryPath)
@@ -290,7 +342,7 @@ func (p *Local) collectChapterEntries(currentPath, mangaID string, currentDepth 
 			relativePath = filepath.Join(mangaID, relativeFromManga)
 		}
 
-		if entry.IsDir() {
+		if entry.isDirectory {
 			// Check if this directory contains only images (making it a chapter directory)
 			isImageDirectory, _ := p.isImageOnlyDirectory(entryPath)
 
@@ -326,7 +378,7 @@ func (p *Local) collectChapterEntries(currentPath, mangaID string, currentDepth 
 			}
 		} else {
 			// File entry - check if it's a potential chapter file
-			ext := strings.ToLower(filepath.Ext(entry.Name()))
+			ext := strings.ToLower(filepath.Ext(entry.name))
 			if ext == ".cbz" || ext == ".cbr" || ext == ".pdf" || ext == ".zip" {
 				entries = append(entries, &chapterEntry{
 					RelativePath: relativePath,
@@ -341,7 +393,7 @@ func (p *Local) collectChapterEntries(currentPath, mangaID string, currentDepth 
 
 // isImageOnlyDirectory checks if a directory contains only image files (no subdirectories or other files)
 func (p *Local) isImageOnlyDirectory(dirPath string) (bool, error) {
-	entries, err := os.ReadDir(dirPath)
+	entries, err := p.readDirectory(dirPath)
 	if err != nil {
 		return false, err
 	}
@@ -352,11 +404,11 @@ func (p *Local) isImageOnlyDirectory(dirPath string) (bool, error) {
 
 	hasImages := false
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.isDirectory {
 			return false, nil
 		}
 
-		if isFileImage(entry.Name()) {
+		if isFileImage(entry.name) {
 			hasImages = true
 		} else {
 			return false, nil
@@ -396,11 +448,15 @@ func (p *Local) FindChapterPages(id string) (ret []*hibikemanga.ChapterPage, err
 		return filepath.ToSlash(filepath.Join(LocalServePath, id, fileName))
 	}
 
-	ext := filepath.Ext(fullpath)
+	ext := strings.ToLower(filepath.Ext(fullpath))
 
 	// Close the current pages
 	if p.currentZipCloser != nil {
 		_ = p.currentZipCloser.Close()
+	}
+	if p.currentStagedPath != "" {
+		_ = os.Remove(p.currentStagedPath)
+		p.currentStagedPath = ""
 	}
 
 	p.currentPages.Range(func(_ string, loadedPage *loadedPage) bool {
@@ -413,7 +469,15 @@ func (p *Local) FindChapterPages(id string) (ret []*hibikemanga.ChapterPage, err
 
 	switch ext {
 	case ".zip", ".cbz":
-		r, err := zip.OpenReader(fullpath)
+		archivePath := fullpath
+		if androidtvstorage.IsPath(fullpath) {
+			archivePath, err = p.stageSAFArchive(fullpath, ext)
+			if err != nil {
+				return nil, err
+			}
+			p.currentStagedPath = archivePath
+		}
+		r, err := zip.OpenReader(archivePath)
 		if err != nil {
 			return nil, err
 		}
@@ -473,37 +537,43 @@ func (p *Local) FindChapterPages(id string) (ret []*hibikemanga.ChapterPage, err
 		// }
 	default:
 		// If it's a directory of images
-		stat, err := os.Stat(fullpath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to stat file: %w", err)
+		isDirectory := false
+		if androidtvstorage.IsPath(fullpath) {
+			entry, err := androidtvstorage.Stat(fullpath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to stat file: %w", err)
+			}
+			isDirectory = entry.IsDirectory
+		} else {
+			stat, err := os.Stat(fullpath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to stat file: %w", err)
+			}
+			isDirectory = stat.IsDir()
 		}
-		if !stat.IsDir() {
+		if !isDirectory {
 			return nil, fmt.Errorf("file is not a directory: %s", fullpath)
 		}
 
-		entries, err := os.ReadDir(fullpath)
+		entries, err := p.readDirectory(fullpath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read directory: %w", err)
 		}
 
 		for _, entry := range entries {
-			if !isFileImage(entry.Name()) {
+			if entry.isDirectory || !isFileImage(entry.name) {
 				continue
 			}
 
-			page, err := os.Open(filepath.Join(fullpath, entry.Name()))
-			if err != nil {
-				return nil, fmt.Errorf("failed to open page: %w", err)
-			}
-			buf, err := io.ReadAll(page)
+			buf, err := readLocalSourceFile(filepath.Join(fullpath, entry.name))
 			if err != nil {
 				return nil, fmt.Errorf("failed to read page: %w", err)
 			}
-			p.currentPages.Set(strings.ToLower(entry.Name()), &loadedPage{
+			p.currentPages.Set(strings.ToLower(entry.name), &loadedPage{
 				buf: buf,
 				page: &hibikemanga.ChapterPage{
 					Provider: LocalProvider,
-					URL:      formatUrl(entry.Name()),
+					URL:      formatUrl(entry.name),
 					Index:    0, // placeholder, will be set later
 					Buf:      buf,
 				},
@@ -543,6 +613,30 @@ func (p *Local) FindChapterPages(id string) (ret []*hibikemanga.ChapterPage, err
 	}
 
 	return ret, nil
+}
+
+func (p *Local) stageSAFArchive(sourcePath, extension string) (string, error) {
+	info, err := androidtvstorage.Stat(sourcePath)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDirectory {
+		return "", fmt.Errorf("manga archive path is a directory")
+	}
+	if p.stageDir == "" {
+		return "", fmt.Errorf("manga archive staging directory is not configured")
+	}
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", sourcePath, info.ModTime, info.Size)))
+	stagedPath := filepath.Join(p.stageDir, hex.EncodeToString(digest[:])+extension)
+	if _, err := os.Stat(stagedPath); err == nil {
+		return stagedPath, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if _, err := androidtvstorage.CopyToLocal(sourcePath, stagedPath); err != nil {
+		return "", fmt.Errorf("stage local manga archive: %w", err)
+	}
+	return stagedPath, nil
 }
 
 func (p *Local) ReadPage(path string) (ret io.ReadCloser, err error) {

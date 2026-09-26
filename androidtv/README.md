@@ -44,8 +44,9 @@ before distributing a release build.
   FFprobe and attachment extraction for those paths, and selects direct play
   until Android transcoding is available. Scans retain existing library rows
   when a selected SAF tree is unplugged or its grant is revoked, then rescan
-  them after access returns. Torrent storage and manga local sources still
-  need SAF integration.
+  them after access returns. The manga local provider can scan SAF roots and
+  stages CBZ/ZIP archives in the app cache when required. Torrent-stream
+  downloads are still staged in app-local storage.
 - Android ffmpeg/ffprobe executables are not bundled yet. Transcoding still
   needs an Android-compatible toolchain and device capability configuration.
 - The APK installation bridge can open an APK staged in Seanime's app cache;

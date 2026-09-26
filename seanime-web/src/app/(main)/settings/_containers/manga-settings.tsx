@@ -4,6 +4,7 @@ import { useStoredMangaProviders } from "@/app/(main)/manga/_lib/handle-manga-se
 import { SettingsCard, SettingsPageHeader } from "@/app/(main)/settings/_components/settings-card"
 import { SettingsSubmitButton } from "@/app/(main)/settings/_components/settings-submit-button"
 import { ConfirmationDialog, useConfirmationDialog } from "@/components/shared/confirmation-dialog"
+import { AndroidTVStoragePicker } from "@/components/shared/android-tv-storage-picker"
 import { Button } from "@/components/ui/button"
 import { Field } from "@/components/ui/form"
 import { atom } from "jotai"
@@ -118,6 +119,11 @@ export function MangaSettings(props: MangaSettingsProps) {
                     name="mangaLocalSourceDirectory"
                     label="Local Source Directory"
                     help="Directory where your manga is stored. This is only used by the local manga provider."
+                />
+                <AndroidTVStoragePicker
+                    purpose="manga-local"
+                    label="Choose manga folder on USB"
+                    onSelect={(root) => f.setValue("mangaLocalSourceDirectory", root.path, { shouldDirty: true, shouldTouch: true, shouldValidate: true })}
                 />
             </SettingsCard>
 
