@@ -7,7 +7,7 @@ and device model with each result.
 
 ## Current evidence
 
-- The shared frontend suite passes 93 tests in 16 files, including playback recovery,
+- The shared frontend suite passes 96 tests in 17 files, including playback recovery,
   Media3 state/command adaptation, browser HLS handoff, source-refresh pause
   isolation, suppression of late browser playback events, and older-WebView
   bridge bootstrap, `Object.hasOwn` and modern Array/Promise polyfills, and a
@@ -59,6 +59,12 @@ and device model with each result.
   the built-in Android TV player, and configures qBittorrent/Transmission as
   network services without desktop executable paths. See the
   [onboarding run](acceptance/2026-09-28-onboarding-tv.md).
+- The Android TV manga reader now exposes focusable previous/next page
+  controls beside the page selector; in double-page mode they move by spread.
+  The Android TV frontend typecheck, production bundle, and API 31 ARM64
+  instrumentation suite pass. See the
+  [manga remote-navigation run](acceptance/2026-09-28-manga-tv-navigation.md);
+  D-pad operation on a populated manga reader still needs device confirmation.
 - Android TV settings no longer expose desktop process-launch controls for
   MPV/VLC/IINA/MPC-HC. Device playback and external app schemes remain under
   Video Playback and External Player Link; old `media-player` settings links

@@ -11,6 +11,7 @@ import {
     MANGA_READING_MODE_ICONS,
     MANGA_READING_MODE_OPTIONS,
 } from "@/app/(main)/manga/_containers/chapter-reader/chapter-reader-settings"
+import { getAdjacentMangaPageIndex } from "@/app/(main)/manga/_containers/chapter-reader/manga-reader-navigation"
 import { __manga_selectedChapterAtom, MangaReader_SelectedChapter, useHandleChapterPageStatus } from "@/app/(main)/manga/_lib/handle-chapter-reader"
 import {
     __manga_currentPageIndexAtom,
@@ -32,6 +33,7 @@ import { IconButton } from "@/components/ui/button"
 import { cn } from "@/components/ui/core/styling"
 import { Popover } from "@/components/ui/popover"
 import { Select } from "@/components/ui/select"
+import { __isAndroidTV__ } from "@/types/constants"
 import { useSetAtom } from "jotai"
 import { useAtom, useAtomValue } from "jotai/react"
 import React from "react"
@@ -165,6 +167,22 @@ export function MangaReaderBar(props: MangaReaderBarProps) {
      */
     const [currentMapIndex, setCurrentMapIndex] = useAtom(__manga_currentPaginationMapIndexAtom)
     const setScrollSignal = useSetAtom(___manga_scrollSignalAtom)
+    const previousPageIndex = getAdjacentMangaPageIndex({
+        direction: "previous",
+        readingMode,
+        currentPageIndex,
+        currentMapIndex,
+        pageCount: pageContainer?.pages?.length ?? 0,
+        paginationMap,
+    })
+    const nextPageIndex = getAdjacentMangaPageIndex({
+        direction: "next",
+        readingMode,
+        currentPageIndex,
+        currentMapIndex,
+        pageCount: pageContainer?.pages?.length ?? 0,
+        paginationMap,
+    })
     const handlePageChange = React.useCallback((pageIdx: number) => {
         if (readingMode === MangaReadingMode.PAGED) {
             setCurrentPageIndex(pageIdx)
@@ -256,32 +274,52 @@ export function MangaReaderBar(props: MangaReaderBarProps) {
 
                 <div data-manga-reader-bar-page-container className="flex items-center gap-2">
 
-                    {pageContainer && <Popover
-                        trigger={
-                            <Badge
-                                size="lg"
-                                className="w-fit cursor-pointer rounded-[--radius-md] z-[5] flex bg-gray-950 items-center bottom-2 focus-visible:outline-none"
-                                tabIndex={-1}
-                                data-manga-reader-bar-page-container-badge
-                            >
-                                {!!(currentPageIndex + 1) && (
-                                    <p className="">
-                                        {currentPageIndex + 1}{secondPageText}
-                                        <span className="text-[--muted]"> / {pageContainer?.pages?.length}</span>
-                                    </p>
-                                )}
-                            </Badge>
-                        }
-                    >
-                        <Select
-                            data-manga-reader-bar-page-container-select
-                            options={pageContainer.pages?.map((_, index) => ({ label: String(index + 1), value: String(index) })) ?? []}
-                            value={String(currentPageIndex)}
-                            onValueChange={e => {
-                                handlePageChange(Number(e))
-                            }}
-                        />
-                    </Popover>}
+                    {pageContainer && <>
+                        {__isAndroidTV__ && <IconButton
+                            aria-label="Previous manga page"
+                            icon={<LuChevronLeft />}
+                            rounded
+                            intent="gray-outline"
+                            size="md"
+                            disabled={previousPageIndex === undefined}
+                            onClick={() => previousPageIndex !== undefined && handlePageChange(previousPageIndex)}
+                        />}
+                        <Popover
+                            trigger={
+                                <Badge
+                                    size="lg"
+                                    className="w-fit cursor-pointer rounded-[--radius-md] z-[5] flex bg-gray-950 items-center bottom-2 focus-visible:outline-none"
+                                    tabIndex={-1}
+                                    data-manga-reader-bar-page-container-badge
+                                >
+                                    {!!(currentPageIndex + 1) && (
+                                        <p className="">
+                                            {currentPageIndex + 1}{secondPageText}
+                                            <span className="text-[--muted]"> / {pageContainer?.pages?.length}</span>
+                                        </p>
+                                    )}
+                                </Badge>
+                            }
+                        >
+                            <Select
+                                data-manga-reader-bar-page-container-select
+                                options={pageContainer.pages?.map((_, index) => ({ label: String(index + 1), value: String(index) })) ?? []}
+                                value={String(currentPageIndex)}
+                                onValueChange={e => {
+                                    handlePageChange(Number(e))
+                                }}
+                            />
+                        </Popover>
+                        {__isAndroidTV__ && <IconButton
+                            aria-label="Next manga page"
+                            icon={<LuChevronRight />}
+                            rounded
+                            intent="gray-outline"
+                            size="md"
+                            disabled={nextPageIndex === undefined}
+                            onClick={() => nextPageIndex !== undefined && handlePageChange(nextPageIndex)}
+                        />}
+                    </>}
 
                     <div data-manga-reader-bar-info-container className="hidden lg:flex">
                         <Popover
