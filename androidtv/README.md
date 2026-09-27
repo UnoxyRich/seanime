@@ -100,6 +100,9 @@ the output, decodes it with FFmpeg, and checks Media3 frame rendering and seekin
   chunks instead of relying on WebView's unsupported Blob download behavior.
 - The TV build reports its client identity as `androidtv` and keeps the shared
   Seanime routes and web playback UI.
+- Viewport-relative layouts use `dvh` when the WebView supports it and fall
+  back to `vh` on older Android System WebView releases. The startup
+  instrumentation checks the generated `calc()` utility against that fallback.
 - The shared player can hand a stream to an optional Media3 player. It supports
   HLS, remote seek/play/pause controls, embedded and external SRT/VTT/ASS/SSA
   subtitles, audio track selection, playback-position handoff, and web-driven

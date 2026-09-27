@@ -36,12 +36,14 @@ and device model with each result.
   missing from WebView 91. The startup instrumentation probe executes all six
   Array methods and resolves a deferred Promise inside the real WebView. Shared
   settings and data-grid code also use a tested clone fallback when
-  `structuredClone()` is absent. The earlier home run reached the catalogue
-  with visible D-pad focus and no renderer exception; the follow-up build
-  passed instrumentation and focus-restoration checks. See the
+  `structuredClone()` is absent. Viewport sizing uses `dvh` when available and
+  a tested `vh` fallback on older WebViews. The earlier home run reached the
+  catalogue with visible D-pad focus and no renderer exception; the latest
+  build passed the real-WebView viewport assertion and focus-restoration
+  checks. See the
   [WebView compatibility run](acceptance/2026-09-28-webview-91-compatibility.md),
   [home screenshot](acceptance/screenshots/2026-09-28-webview-91-home-after-fix.png),
-  and [follow-up D-pad screenshot](acceptance/screenshots/2026-09-28-structured-clone-dpad-media-player.png).
+  and [latest D-pad screenshot](acceptance/screenshots/2026-09-28-webview-91-dpad-current-build.png).
 - The Go mobile lifecycle test now starts with the app already backgrounded
   and verifies periodic work remains stopped until foreground return. The
   server applies the same suspension policy to Auto Downloader, Auto Scanner,

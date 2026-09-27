@@ -88,3 +88,41 @@ app-arm64-v8a-debug.apk
 app-x86_64-debug.apk
 3e4c82fdf7667ce29f476ee6bc6686c707d4deffb4313860f11dc0691855e529
 ```
+
+## Follow-up: dynamic viewport fallback — 2026-09-28
+
+Source commit: `1d4e3d74` (`codex/android-tv`).
+
+WebView 91 does not support dynamic viewport units (`dvh`). Shared manga,
+streaming, file-selection, log, and drawer layouts now use viewport custom
+properties: modern engines select `dvh` through `@supports`, while older
+engines use the `vh` fallback. The remaining `:has()` selectors only affect
+hover auto-hide, table spacing, and calendar rounding; core controls and
+selection state do not depend on them.
+
+## Verification
+
+- `npm run typecheck` passed as part of the Android TV build.
+- `npm test` passed: 92 tests in 16 files.
+- `ANDROID_HOME=/Users/unoxyrich/Library/Android/sdk ./gradlew :app:connectedDebugAndroidTest`
+  passed: both ABI packages built and all 13 instrumentation tests passed on
+  the API 31 ARM64 TV emulator. The real-WebView startup probe confirms
+  `100dvh` is unsupported there, the fallback is `100vh`, and a generated
+  `calc(var(--viewport-height) - 3rem)` utility computes a positive height.
+- Installed and launched the ARM64 package at 1920 × 1080. The setup page
+  rendered and showed a visible D-pad focus ring.
+- Both APKs passed APK signature verification and `zipalign -c -P 16 4`.
+  `scripts/verify_android_native_alignment.py` confirmed all four native
+  libraries in each APK have 16 KiB ELF/ZIP alignment.
+
+Screenshot: [current build with visible D-pad focus](screenshots/2026-09-28-webview-91-dpad-current-build.png).
+
+## Current debug APK SHA-256
+
+```text
+app-arm64-v8a-debug.apk
+f2f948c992fffe775726a3eedbd1e99c325031698239a86c3ee0d01f5b562d28
+
+app-x86_64-debug.apk
+a734c6720cfc04feace1311c5e9302318397ed45051a97364ead6f3bb45547c0
+```
