@@ -2,6 +2,7 @@ package app.seanime.tv
 
 import android.os.SystemClock
 import android.net.Uri
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -91,6 +92,19 @@ class AndroidTvStartupTest {
                 "Android TV arrow keys did not move focus spatially",
                 evaluateJavascript(scenario, dpadNavigationProbe()) == "true",
             )
+            assertTrue(
+                "Android TV focus fixture did not initialize",
+                evaluateJavascript(scenario, nativeDpadFixture()) == "true",
+            )
+            scenario.onActivity { activity -> findWebView(activity.window.decorView)?.requestFocus() }
+            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            waitUntil("native DPAD_RIGHT focus movement", 3_000) {
+                evaluateJavascript(scenario, "document.activeElement?.id === 'tv-native-focus-right'") == "true"
+            }
+            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            waitUntil("native DPAD_DOWN focus movement", 3_000) {
+                evaluateJavascript(scenario, "document.activeElement?.id === 'tv-native-focus-down'") == "true"
+            }
 
             assertEquals("true", evaluateJavascript(scenario,
                 "history.pushState({}, '', '/#androidtv-restored-page'); true"))
@@ -222,6 +236,21 @@ class AndroidTvStartupTest {
 
             return movedRight && movedDown && sliderKeptItsArrow && couldLeaveSliderVertically &&
                 menuReceivedArrow && !menuArrow.defaultPrevented && focusStayedInDialog;
+        })()"""
+
+    private fun nativeDpadFixture(): String =
+        """(() => {
+            if (!document.documentElement.classList.contains('android-tv')) return false;
+            document.body.innerHTML = '<main><button id="tv-native-focus-start">Start</button><button id="tv-native-focus-right">Right</button><button id="tv-native-focus-down">Down</button></main>';
+            for (const [id, position] of Object.entries({
+                'tv-native-focus-start': 'left:64px;top:64px',
+                'tv-native-focus-right': 'left:224px;top:64px',
+                'tv-native-focus-down': 'left:224px;top:160px',
+            })) {
+                document.getElementById(id).style.cssText = 'position:fixed;width:120px;height:64px;' + position;
+            }
+            document.getElementById('tv-native-focus-start').focus();
+            return document.activeElement?.id === 'tv-native-focus-start';
         })()"""
 
     private fun evaluateJavascript(scenario: ActivityScenario<MainActivity>, script: String): String? {
