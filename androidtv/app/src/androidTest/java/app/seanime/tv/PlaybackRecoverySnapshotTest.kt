@@ -3,6 +3,7 @@ package app.seanime.tv
 import android.os.Bundle
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -47,6 +48,13 @@ class PlaybackRecoverySnapshotTest {
             assertEquals("ja", decodedTracks?.getString("preferredAudioLanguage"))
             assertEquals("en", decodedTracks?.getString("preferredTextLanguage"))
             assertEquals(4, decodedTracks?.getInt("disabledTrackType"))
+
+            val bridgePayload = JSONObject(requireNotNull(restored).toBridgeJson())
+            assertEquals("opaque-checkpoint", bridgePayload.getString("checkpointId"))
+            assertEquals("only the opaque ticket should cross the WebView bridge", 1, bridgePayload.length())
+            assertFalse(bridgePayload.has("mediaUri"))
+            assertFalse(bridgePayload.has("subtitleTracksJson"))
+            assertFalse(bridgePayload.has("trackSelection"))
 
             PlaybackRecoverySnapshot.clear(directory)
             assertNull(PlaybackRecoverySnapshot.read(directory))

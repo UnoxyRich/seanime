@@ -39,6 +39,8 @@ data class PlaybackRecoverySnapshot(
         .put("muted", muted)
         .put("trackSelection", trackSelection)
 
+    fun toBridgeJson(): String = JSONObject().put("checkpointId", checkpointId).toString()
+
     fun withStream(url: String, ticket: String, processSessionId: String) =
         copy(checkpointId = ticket, mediaUri = url, processSessionId = processSessionId)
 

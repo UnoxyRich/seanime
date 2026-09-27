@@ -330,7 +330,7 @@ class MainActivity : Activity() {
     }
 
     internal fun pendingPlaybackRecoveryJson(): String =
-        synchronized(this) { pendingPlaybackRecovery?.toJson()?.toString().orEmpty() }
+        synchronized(this) { pendingPlaybackRecovery?.toBridgeJson().orEmpty() }
 
     internal fun startPlaybackRecovery(checkpointId: String, clientId: String): String {
         val snapshot = synchronized(this) { pendingPlaybackRecovery } ?: return ""
