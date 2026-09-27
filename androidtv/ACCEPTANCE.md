@@ -7,10 +7,11 @@ and device model with each result.
 
 ## Current evidence
 
-- The shared frontend suite passes 87 tests, including playback recovery,
+- The shared frontend suite passes 89 tests, including playback recovery,
   Media3 state/command adaptation, browser HLS handoff, source-refresh pause
   isolation, suppression of late browser playback events, and older-WebView
-  bridge bootstrap, Android stream routing, and shared player mounting.
+  bridge bootstrap, Android stream routing, playlist playback selection, and
+  watch-party player identity.
 - ARM64 and x86_64 debug APKs build; their debug signatures verify.
 - All 10 Android instrumentation tests pass on the API 31 ARM64 TV emulator
   with WebView 91 and 4 KiB pages. They cover server startup/restart,
@@ -21,7 +22,8 @@ and device model with each result.
   decodes it with FFmpeg, and renders/seeks it in Media3 while paused.
 - The four transcoding capability tests and seven playback checkpoint tests
   pass. Physical-device scenarios below still need recorded passing runs.
-- The full Android storage and direct-stream Go package suites pass, including
+- Android storage, direct-stream, playlist, and Nakama Go package tests pass,
+  including
   six new tests for seekable SAF readers, ranges/HEAD/thumbnail requests,
   matching sidecar subtitles, size limits, simulated revoked access and
   restoration, and ordinary filesystem reads. The synthetic adapter tests do
@@ -31,9 +33,10 @@ and device model with each result.
   pass. Runtime operation on a 16 KiB device still needs a separate test run.
 - The earlier emulator disk blocker was resolved using the checksum-verified
   API 31 image and a task-owned sparse data partition. The AVD is available
-  for continued testing. See the [media pipeline run](acceptance/2026-09-26-api31-arm64.md)
-  and [playback routing run](acceptance/2026-09-26-playback-routing.md)
-  for source revisions, APK hashes, environment, and test scope.
+  for continued testing. See the [media pipeline run](acceptance/2026-09-26-api31-arm64.md),
+  [playback routing run](acceptance/2026-09-26-playback-routing.md), and
+  [latest APK run](acceptance/2026-09-27-android-tv-build.md) for source
+  revisions, APK hashes, environment, and test scope.
 
 ## Remaining process-restoration work
 
