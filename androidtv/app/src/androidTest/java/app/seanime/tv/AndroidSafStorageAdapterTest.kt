@@ -160,6 +160,9 @@ class AndroidSafStorageAdapterTest {
         val previousRoots = storagePreferences.getString("roots", "[]")
         val previousJournal = journalPreferences.getString("transactions", "{}")
         val rootPath = AndroidSafStorageAdapter.virtualRoot(treeUri)
+        val disconnectedRootId = "disconnected-usb"
+        val disconnectedRootPath = "/androidtv/$disconnectedRootId"
+        val disconnectedTreeUri = DocumentsContract.buildTreeDocumentUri(TestDocumentsProvider.AUTHORITY, "disconnected")
         storagePreferences.edit().putString(
             "roots",
             JSONArray().put(
@@ -168,6 +171,12 @@ class AndroidSafStorageAdapterTest {
                     .put("uri", treeUri.toString())
                     .put("path", rootPath)
                     .put("name", "Test USB"),
+            ).put(
+                JSONObject()
+                    .put("id", disconnectedRootId)
+                    .put("uri", disconnectedTreeUri.toString())
+                    .put("path", disconnectedRootPath)
+                    .put("name", "Disconnected USB"),
             ).toString(),
         ).commit()
 
@@ -264,6 +273,30 @@ class AndroidSafStorageAdapterTest {
             assertFalse(names.contains(committedBackup))
             assertFalse(names.contains(copyingTemp))
             assertEquals("{}", journalPreferences.getString("transactions", "{}"))
+
+            val disconnectedWriteId = "10000000-0000-4000-8000-000000000005"
+            val disconnectedTemp = ".queued.mkv.seanime-$disconnectedWriteId.part"
+            val disconnectedJournal = JSONObject().put(
+                disconnectedWriteId,
+                writeJournalEntry(
+                    "$disconnectedRootPath/queued.mkv",
+                    disconnectedTemp,
+                    ".queued.mkv.seanime-$disconnectedWriteId.backup",
+                    "writing",
+                ),
+            )
+            journalPreferences.edit().putString("transactions", disconnectedJournal.toString()).commit()
+            val isolatedAdapter = AndroidSafStorageAdapter(targetContext)
+            assertTrue(JSONArray(isolatedAdapter.list(rootPath)).length() > 0)
+            var disconnectedRootBlocked = false
+            try {
+                isolatedAdapter.list(disconnectedRootPath)
+            } catch (_: IOException) {
+                disconnectedRootBlocked = true
+            }
+            assertTrue("A disconnected storage root was not blocked", disconnectedRootBlocked)
+            assertEquals(disconnectedJournal.toString(), journalPreferences.getString("transactions", "{}"))
+            assertTrue("An unavailable root blocked another selected root", JSONArray(isolatedAdapter.list(rootPath)).length() > 0)
 
             val protectedDocument = writeDocument(targetContext, root, "protected.mkv", "preserve")
             val invalidJournal = JSONObject().put(

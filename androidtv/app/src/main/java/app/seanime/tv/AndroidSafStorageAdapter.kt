@@ -22,13 +22,14 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
     private val appContext = context.applicationContext
     private val contentResolver = appContext.contentResolver
     private val pendingWrites = ConcurrentHashMap<String, WriteSession>()
+    private val activeWriteIds = ConcurrentHashMap.newKeySet<String>()
     private val journalPreferences = appContext.getSharedPreferences("android-tv-storage-writes", Context.MODE_PRIVATE)
     private val journalLock = Any()
     private val recoveryLock = Any()
-    @Volatile private var journalRecoveryComplete = false
+    private val recoveredRoots = ConcurrentHashMap.newKeySet<String>()
 
     override fun list(path: String): String {
-        ensureJournalRecovered()
+        ensureJournalRecovered(path)
         val directory = resolve(path)
         if (!directory.isDirectory) throw IOException("Storage path is not a directory")
         val result = JSONArray()
@@ -37,12 +38,12 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
     }
 
     override fun stat(path: String): String {
-        ensureJournalRecovered()
+        ensureJournalRecovered(path)
         return entryJson(resolve(path)).toString()
     }
 
     override fun readAt(path: String, offset: Long, length: Long): String {
-        ensureJournalRecovered()
+        ensureJournalRecovered(path)
         if (offset < 0 || length < 0 || length > MAX_READ_BYTES) {
             throw IOException("Invalid storage read range")
         }
@@ -80,7 +81,7 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
     }
 
     override fun beginWrite(path: String, truncate: Boolean): String {
-        ensureJournalRecovered()
+        ensureJournalRecovered(path)
         val (parent, name) = resolveParent(path)
         if (!parent.isDirectory) throw IOException("Storage parent is not a directory")
         val id = UUID.randomUUID().toString()
@@ -91,11 +92,12 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
             .put("temporaryName", temporaryName)
             .put("backupName", backupName)
             .put("phase", "writing")
-        updateWriteJournal(id, transaction)
+        activeWriteIds.add(id)
 
         var temporary: DocumentFile? = null
         var output: OutputStream? = null
         try {
+            updateWriteJournal(id, transaction)
             val temporaryDocument = parent.createFile("application/octet-stream", temporaryName)
                 ?: throw IOException("Could not create a temporary document")
             temporary = temporaryDocument
@@ -115,6 +117,7 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
             runCatching { output?.close() }
             runCatching { temporary?.delete() }
             clearJournalIfArtifactsAreGone(id, parent, temporaryName, backupName)
+            activeWriteIds.remove(id)
             throw error
         }
     }
@@ -132,6 +135,7 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
             pendingWrites.remove(handle)
             runCatching { session.temporary.delete() }
             clearJournalIfArtifactsAreGone(handle, session.parent, session.temporaryName, session.backupName)
+            activeWriteIds.remove(handle)
             throw error
         }
         try {
@@ -140,10 +144,12 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
             pendingWrites.remove(handle)
             runCatching { session.temporary.delete() }
             clearJournalIfArtifactsAreGone(handle, session.parent, session.temporaryName, session.backupName)
+            activeWriteIds.remove(handle)
             throw error
         }
         pendingWrites.remove(handle)
         clearJournalIfArtifactsAreGone(handle, session.parent, session.temporaryName, session.backupName)
+        activeWriteIds.remove(handle)
     }
 
     override fun cancelWrite(handle: String) {
@@ -151,10 +157,11 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
         runCatching { session.output.close() }
         runCatching { session.temporary.delete() }
         clearJournalIfArtifactsAreGone(handle, session.parent, session.temporaryName, session.backupName)
+        activeWriteIds.remove(handle)
     }
 
     override fun mkdirAll(path: String) {
-        ensureJournalRecovered()
+        ensureJournalRecovered(path)
         val segments = validatedSegments(path)
         var current = rootDocument(segments.first(), requireWrite = true)
         for (segment in segments.drop(1)) {
@@ -169,7 +176,7 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
     }
 
     override fun remove(path: String) {
-        ensureJournalRecovered()
+        ensureJournalRecovered(path)
         val segments = validatedSegments(path)
         if (segments.size < 2) throw IOException("Cannot remove a selected storage root")
         val document = resolve(path, requireWrite = true)
@@ -177,7 +184,7 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
     }
 
     override fun uri(path: String): String {
-        ensureJournalRecovered()
+        ensureJournalRecovered(path)
         return resolve(path).uri.toString()
     }
 
@@ -212,19 +219,20 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
         return directory
     }
 
-    private fun ensureJournalRecovered() {
-        if (journalRecoveryComplete) return
+    private fun ensureJournalRecovered(path: String) {
+        val rootId = validatedSegments(path).first()
+        if (recoveredRoots.contains(rootId)) return
         synchronized(recoveryLock) {
-            if (!journalRecoveryComplete) {
-                if (!recoverAbandonedWrites()) {
+            if (!recoveredRoots.contains(rootId)) {
+                if (!recoverAbandonedWrites(rootId)) {
                     throw IOException("Could not recover a previous Android TV storage write")
                 }
-                journalRecoveryComplete = true
+                recoveredRoots.add(rootId)
             }
         }
     }
 
-    private fun recoverAbandonedWrites(): Boolean = synchronized(journalLock) {
+    private fun recoverAbandonedWrites(rootId: String): Boolean = synchronized(journalLock) {
         val journal = try {
             JSONObject(journalPreferences.getString(WRITE_JOURNAL_KEY, "{}") ?: "{}")
         } catch (_: Exception) {
@@ -238,9 +246,15 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
         while (iterator.hasNext()) {
             val id = iterator.next()
             val transaction = journal.optJSONObject(id)
-            if (pendingWrites.containsKey(id)) {
+            val transactionRootId = transaction?.let { entry ->
+                runCatching { validatedSegments(entry.optString("path")).first() }.getOrNull()
+            }
+            if (transaction == null || transactionRootId == null) {
                 remaining.put(id, journal.opt(id) ?: JSONObject.NULL)
-            } else if (transaction == null || !runCatching { recoverAbandonedWrite(id, transaction) }.getOrDefault(false)) {
+                unresolved = true
+            } else if (transactionRootId != rootId || activeWriteIds.contains(id) || pendingWrites.containsKey(id)) {
+                remaining.put(id, journal.opt(id) ?: JSONObject.NULL)
+            } else if (!runCatching { recoverAbandonedWrite(id, transaction) }.getOrDefault(false)) {
                 remaining.put(id, journal.opt(id) ?: JSONObject.NULL)
                 unresolved = true
             }
@@ -331,7 +345,7 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
         val artifactsGone = runCatching {
             parent.findFile(temporaryName) == null && parent.findFile(backupName) == null
         }.getOrDefault(false)
-        if (!artifactsGone || !removeWriteJournal(id)) journalRecoveryComplete = false
+        if (!artifactsGone || !removeWriteJournal(id)) recoveredRoots.clear()
     }
 
     private fun readWriteJournal(): JSONObject = try {
