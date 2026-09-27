@@ -3,6 +3,7 @@ package mobile
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -19,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/rs/zerolog"
 )
 
 //go:embed all:web
@@ -26,6 +29,7 @@ var webFS embed.FS
 
 type serverInstance struct {
 	done           chan struct{}
+	dataDir        string
 	app            *core.App
 	httpServer     *http.Server
 	stopJobs       context.CancelFunc
@@ -92,7 +96,7 @@ func StartServer(dataDir string, cacheDir string, port int) {
 		serverLifecycle.Unlock()
 		return
 	}
-	instance := &serverInstance{done: make(chan struct{})}
+	instance := &serverInstance{done: make(chan struct{}), dataDir: dataDir}
 	serverLifecycle.instance = instance
 	serverLifecycle.status = "starting"
 	serverLifecycle.lastErr = ""
@@ -215,12 +219,7 @@ func SetAppInForeground(foreground bool) {
 	if app.MangaDownloader != nil {
 		app.MangaDownloader.ResumeChapterDownloadQueueFromBackground()
 	}
-	if len(instance.pausedTorrents) > 0 && app.TorrentClientRepository != nil {
-		if err := app.TorrentClientRepository.ResumeTorrents(instance.pausedTorrents); err != nil {
-			app.Logger.Warn().Err(err).Msg("mobile: Could not resume background-paused torrent downloads")
-		}
-	}
-	instance.pausedTorrents = nil
+	resumePausedTorrents(instance, app)
 	jobsCtx, cancelJobs := context.WithCancel(context.Background())
 	serverLifecycle.Lock()
 	if instance.stopRequest.Load() {
@@ -249,18 +248,101 @@ func suspendAppBackgroundWork(instance *serverInstance, app *core.App) {
 	torrents, err := app.TorrentClientRepository.GetList(&torrent_client.GetListOptions{Sort: "queue"})
 	if err != nil {
 		app.Logger.Warn().Err(err).Msg("mobile: Could not inspect torrent downloads before backgrounding")
+		persistPausedTorrents(instance, app.Logger)
 		return
 	}
+	var newlyPaused []string
 	for _, item := range torrents {
 		if item.Status == torrent_client.TorrentStatusDownloading || item.Status == torrent_client.TorrentStatusQueued {
-			instance.pausedTorrents = append(instance.pausedTorrents, item.Hash)
+			newlyPaused = append(newlyPaused, item.Hash)
 		}
 	}
-	if len(instance.pausedTorrents) > 0 {
-		if err := app.TorrentClientRepository.PauseTorrents(instance.pausedTorrents); err != nil {
+	newlyPaused = uniqueTorrentHashes(newlyPaused)
+	instance.pausedTorrents = uniqueTorrentHashes(append(instance.pausedTorrents, newlyPaused...))
+	persistPausedTorrents(instance, app.Logger)
+	if len(newlyPaused) > 0 {
+		if err := app.TorrentClientRepository.PauseTorrents(newlyPaused); err != nil {
 			app.Logger.Warn().Err(err).Msg("mobile: Could not pause active torrent downloads")
 		}
 	}
+}
+
+const pausedTorrentStateFilename = "android-tv-paused-torrents.json"
+
+func pausedTorrentStatePath(dataDir string) string {
+	return filepath.Join(dataDir, pausedTorrentStateFilename)
+}
+
+func loadPausedTorrents(dataDir string) ([]string, error) {
+	data, err := os.ReadFile(pausedTorrentStatePath(dataDir))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var hashes []string
+	if err := json.Unmarshal(data, &hashes); err != nil {
+		return nil, err
+	}
+	return uniqueTorrentHashes(hashes), nil
+}
+
+func persistPausedTorrents(instance *serverInstance, logger *zerolog.Logger) {
+	if instance.dataDir == "" || len(instance.pausedTorrents) == 0 {
+		return
+	}
+	data, err := json.Marshal(uniqueTorrentHashes(instance.pausedTorrents))
+	if err != nil {
+		logger.Warn().Err(err).Msg("mobile: Could not encode paused torrent recovery state")
+		return
+	}
+	if err := os.MkdirAll(instance.dataDir, 0700); err != nil {
+		logger.Warn().Err(err).Msg("mobile: Could not create torrent recovery state directory")
+		return
+	}
+	path := pausedTorrentStatePath(instance.dataDir)
+	tempPath := path + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0600); err != nil {
+		logger.Warn().Err(err).Msg("mobile: Could not save paused torrent recovery state")
+		return
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		_ = os.Remove(tempPath)
+		logger.Warn().Err(err).Msg("mobile: Could not commit paused torrent recovery state")
+	}
+}
+
+func resumePausedTorrents(instance *serverInstance, app *core.App) {
+	if app.TorrentClientRepository == nil || len(instance.pausedTorrents) == 0 {
+		return
+	}
+	hashes := uniqueTorrentHashes(instance.pausedTorrents)
+	if err := app.TorrentClientRepository.ResumeTorrents(hashes); err != nil {
+		app.Logger.Warn().Err(err).Msg("mobile: Could not resume background-paused torrent downloads")
+		return
+	}
+	instance.pausedTorrents = nil
+	if err := os.Remove(pausedTorrentStatePath(instance.dataDir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		app.Logger.Warn().Err(err).Msg("mobile: Could not clear resumed torrent recovery state")
+	}
+}
+
+func uniqueTorrentHashes(hashes []string) []string {
+	seen := make(map[string]struct{}, len(hashes))
+	unique := make([]string, 0, len(hashes))
+	for _, hash := range hashes {
+		hash = strings.TrimSpace(hash)
+		if hash == "" {
+			continue
+		}
+		if _, ok := seen[hash]; ok {
+			continue
+		}
+		seen[hash] = struct{}{}
+		unique = append(unique, hash)
+	}
+	return unique
 }
 
 func startServer(instance *serverInstance, dataDir string, cacheDir string, port int) {
@@ -343,6 +425,12 @@ func startServer(instance *serverInstance, dataDir string, cacheDir string, port
 	}
 	app = core.NewApp(&core.ConfigOptions{Flags: flags}, nil)
 	app.InitLogging(false)
+	pausedTorrents, err := loadPausedTorrents(dataDir)
+	if err != nil {
+		app.Logger.Warn().Err(err).Msg("mobile: Could not load paused torrent recovery state")
+	} else {
+		instance.pausedTorrents = pausedTorrents
+	}
 	echoApp := core.NewEchoApp(app, &webFS)
 	handlers.InitRoutes(app, echoApp)
 
@@ -371,6 +459,9 @@ func startServer(instance *serverInstance, dataDir string, cacheDir string, port
 		suspendAppBackgroundWork(instance, app)
 	} else if app.MangaDownloader != nil {
 		app.MangaDownloader.ResumeInterruptedQueue()
+	}
+	if !startedInBackground {
+		resumePausedTorrents(instance, app)
 	}
 	instance.backgroundMu.Unlock()
 

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rs/zerolog"
 )
 
 func TestServerStartStopRestartServesEmbeddedWeb(t *testing.T) {
@@ -108,6 +110,47 @@ func TestSetAppInForegroundDuringStartupOnlyRecordsDesiredState(t *testing.T) {
 	if serverLifecycle.foreground || !serverLifecycle.foregroundSet {
 		t.Fatalf("foreground update was not retained: foreground=%t foregroundSet=%t", serverLifecycle.foreground, serverLifecycle.foregroundSet)
 	}
+}
+
+func TestPausedTorrentRecoveryStateSurvivesServerRestart(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	logger := zerolog.Nop()
+	paused := &serverInstance{
+		dataDir:        dataDir,
+		pausedTorrents: []string{" hash-a ", "hash-b", "hash-a", ""},
+	}
+	persistPausedTorrents(paused, &logger)
+
+	restored, err := loadPausedTorrents(dataDir)
+	if err != nil {
+		t.Fatalf("load paused torrent recovery state: %v", err)
+	}
+	if len(restored) != 2 || restored[0] != "hash-a" || restored[1] != "hash-b" {
+		t.Fatalf("unexpected restored torrent hashes: %v", restored)
+	}
+
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	port := unusedLocalPort(t)
+	SetAppInForeground(false)
+	t.Cleanup(func() {
+		StopServer()
+		SetAppInForeground(true)
+	})
+	StartServer(dataDir, cacheDir, port)
+	if !WaitForServer(60_000) {
+		t.Fatalf("server did not become ready (status=%s, error=%s)", ServerStatus(), ServerError())
+	}
+	serverLifecycle.Lock()
+	instance := serverLifecycle.instance
+	got := append([]string(nil), instance.pausedTorrents...)
+	serverLifecycle.Unlock()
+	if len(got) != 2 || got[0] != "hash-a" || got[1] != "hash-b" {
+		t.Fatalf("server startup did not restore paused torrent intent: %v", got)
+	}
+
+	StopServer()
+	waitForServerStatus(t, "stopped")
+	SetAppInForeground(true)
 }
 
 func unusedLocalPort(t *testing.T) int {
