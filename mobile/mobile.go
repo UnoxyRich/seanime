@@ -202,32 +202,7 @@ func SetAppInForeground(foreground bool) {
 		if stopJobs != nil {
 			stopJobs()
 		}
-		if app.AutoDownloader != nil {
-			app.AutoDownloader.SetSuspended(true)
-		}
-		if app.AutoScanner != nil {
-			app.AutoScanner.SetSuspended(true)
-		}
-		if app.MangaDownloader != nil {
-			app.MangaDownloader.StopChapterDownloadQueue()
-		}
-		if app.TorrentClientRepository != nil {
-			torrents, err := app.TorrentClientRepository.GetList(&torrent_client.GetListOptions{Sort: "queue"})
-			if err == nil {
-				for _, item := range torrents {
-					if item.Status == torrent_client.TorrentStatusDownloading || item.Status == torrent_client.TorrentStatusQueued {
-						instance.pausedTorrents = append(instance.pausedTorrents, item.Hash)
-					}
-				}
-				if len(instance.pausedTorrents) > 0 {
-					if err := app.TorrentClientRepository.PauseTorrents(instance.pausedTorrents); err != nil {
-						app.Logger.Warn().Err(err).Msg("mobile: Could not pause active torrent downloads")
-					}
-				}
-			} else {
-				app.Logger.Warn().Err(err).Msg("mobile: Could not inspect torrent downloads before backgrounding")
-			}
-		}
+		suspendAppBackgroundWork(instance, app)
 		return
 	}
 
@@ -256,6 +231,36 @@ func SetAppInForeground(foreground bool) {
 	instance.stopJobs = cancelJobs
 	serverLifecycle.Unlock()
 	cron.RunJobs(jobsCtx, app)
+}
+
+func suspendAppBackgroundWork(instance *serverInstance, app *core.App) {
+	if app.AutoDownloader != nil {
+		app.AutoDownloader.SetSuspended(true)
+	}
+	if app.AutoScanner != nil {
+		app.AutoScanner.SetSuspended(true)
+	}
+	if app.MangaDownloader != nil {
+		app.MangaDownloader.StopChapterDownloadQueue()
+	}
+	if app.TorrentClientRepository == nil {
+		return
+	}
+	torrents, err := app.TorrentClientRepository.GetList(&torrent_client.GetListOptions{Sort: "queue"})
+	if err != nil {
+		app.Logger.Warn().Err(err).Msg("mobile: Could not inspect torrent downloads before backgrounding")
+		return
+	}
+	for _, item := range torrents {
+		if item.Status == torrent_client.TorrentStatusDownloading || item.Status == torrent_client.TorrentStatusQueued {
+			instance.pausedTorrents = append(instance.pausedTorrents, item.Hash)
+		}
+	}
+	if len(instance.pausedTorrents) > 0 {
+		if err := app.TorrentClientRepository.PauseTorrents(instance.pausedTorrents); err != nil {
+			app.Logger.Warn().Err(err).Msg("mobile: Could not pause active torrent downloads")
+		}
+	}
 }
 
 func startServer(instance *serverInstance, dataDir string, cacheDir string, port int) {
@@ -348,17 +353,24 @@ func startServer(instance *serverInstance, dataDir string, cacheDir string, port
 	}
 	httpServer = &http.Server{Handler: echoApp}
 
+	instance.backgroundMu.Lock()
 	serverLifecycle.Lock()
 	if serverLifecycle.instance != instance || instance.stopRequest.Load() {
 		serverLifecycle.Unlock()
+		instance.backgroundMu.Unlock()
 		_ = listener.Close()
 		return
 	}
 	instance.app = app
 	instance.httpServer = httpServer
 	instance.inBackground = !serverLifecycle.foreground
+	startedInBackground := instance.inBackground
 	serverLifecycle.status = "ready"
 	serverLifecycle.Unlock()
+	if startedInBackground {
+		suspendAppBackgroundWork(instance, app)
+	}
+	instance.backgroundMu.Unlock()
 
 	_ = startBackgroundJobs(instance, app)
 

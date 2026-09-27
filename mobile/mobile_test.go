@@ -18,23 +18,31 @@ func TestServerStartStopRestartServesEmbeddedWeb(t *testing.T) {
 		cacheDir := filepath.Join(t.TempDir(), "cache")
 		port := unusedLocalPort(t)
 
-		StartServer(dataDir, cacheDir, port)
 		SetAppInForeground(false)
+		StartServer(dataDir, cacheDir, port)
 		if !WaitForServer(60_000) {
 			t.Fatalf("server did not become ready (status=%s, error=%s)", ServerStatus(), ServerError())
 		}
 		serverLifecycle.Lock()
 		startedInBackground := !serverLifecycle.foreground && serverLifecycle.instance.inBackground
+		backgroundJobsStopped := serverLifecycle.instance.stopJobs == nil
 		serverLifecycle.Unlock()
 		if !startedInBackground {
 			t.Fatal("server did not honor the background state received while starting")
 		}
+		if !backgroundJobsStopped {
+			t.Fatal("server started periodic jobs while backgrounded")
+		}
 		SetAppInForeground(true)
 		serverLifecycle.Lock()
 		resumedInForeground := serverLifecycle.foreground && !serverLifecycle.instance.inBackground
+		backgroundJobsResumed := serverLifecycle.instance.stopJobs != nil
 		serverLifecycle.Unlock()
 		if !resumedInForeground {
 			t.Fatal("server did not resume foreground work")
+		}
+		if !backgroundJobsResumed {
+			t.Fatal("server did not restart periodic jobs after foregrounding")
 		}
 
 		for _, directory := range []string{dataDir, cacheDir} {
@@ -65,6 +73,40 @@ func TestServerStartStopRestartServesEmbeddedWeb(t *testing.T) {
 
 		StopServer()
 		waitForServerStatus(t, "stopped")
+	}
+}
+
+func TestSetAppInForegroundDuringStartupOnlyRecordsDesiredState(t *testing.T) {
+	serverLifecycle.Lock()
+	previousInstance := serverLifecycle.instance
+	previousStatus := serverLifecycle.status
+	previousError := serverLifecycle.lastErr
+	previousForeground := serverLifecycle.foreground
+	previousForegroundSet := serverLifecycle.foregroundSet
+	serverLifecycle.instance = &serverInstance{done: make(chan struct{})}
+	serverLifecycle.status = "starting"
+	serverLifecycle.lastErr = ""
+	serverLifecycle.foreground = true
+	serverLifecycle.foregroundSet = false
+	serverLifecycle.Unlock()
+	t.Cleanup(func() {
+		serverLifecycle.Lock()
+		serverLifecycle.instance = previousInstance
+		serverLifecycle.status = previousStatus
+		serverLifecycle.lastErr = previousError
+		serverLifecycle.foreground = previousForeground
+		serverLifecycle.foregroundSet = previousForegroundSet
+		serverLifecycle.Unlock()
+	})
+
+	SetAppInForeground(false)
+	serverLifecycle.Lock()
+	defer serverLifecycle.Unlock()
+	if serverLifecycle.status != "starting" {
+		t.Fatalf("foreground update changed startup status to %q", serverLifecycle.status)
+	}
+	if serverLifecycle.foreground || !serverLifecycle.foregroundSet {
+		t.Fatalf("foreground update was not retained: foreground=%t foregroundSet=%t", serverLifecycle.foreground, serverLifecycle.foregroundSet)
 	}
 }
 
