@@ -114,6 +114,9 @@ func NewEpisode(opts *NewEpisodeOptions) *Episode {
 			}
 			entryEp.MetadataIssue = "forced_remapping"
 		}
+		// Keep the parsed AniDB episode even when metadata lookup fails. Playback
+		// resume uses this stable episode identity to reopen a local file.
+		entryEp.AniDBEpisode = aniDBEp
 
 		// Get the Animap episode
 		foundAnimapEpisode := false
@@ -311,6 +314,7 @@ func NewSimpleEpisode(opts *NewSimpleEpisodeOptions) *Episode {
 	if opts.LocalFile != nil {
 
 		entryEp.IsDownloaded = true
+		entryEp.AniDBEpisode = opts.LocalFile.Metadata.AniDBEpisode
 		entryEp.FileMetadata = opts.LocalFile.GetMetadata()
 		entryEp.Type = opts.LocalFile.GetType()
 		entryEp.LocalFile = opts.LocalFile
