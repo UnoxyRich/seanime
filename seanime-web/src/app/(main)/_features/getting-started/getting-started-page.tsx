@@ -18,7 +18,7 @@ import {
     gettingStartedSchema,
     useDefaultSettingsPaths,
 } from "@/lib/server/settings"
-import { __isDesktop__, __isElectronDesktop__ } from "@/types/constants"
+import { __isAndroidTV__, __isDesktop__, __isElectronDesktop__ } from "@/types/constants"
 import { AnimatePresence, motion } from "motion/react"
 import React from "react"
 import { useFormContext, useWatch } from "react-hook-form"
@@ -123,6 +123,16 @@ const STEPS = [
 ]
 
 function StepIndicator({ currentStep, totalSteps, onStepClick }: { currentStep: number; totalSteps: number; onStepClick: (step: number) => void }) {
+    const firstStepRef = React.useRef<HTMLButtonElement>(null)
+
+    React.useEffect(() => {
+        if (!__isAndroidTV__) return
+        const frame = window.requestAnimationFrame(() => {
+            firstStepRef.current?.focus({ preventScroll: true })
+        })
+        return () => window.cancelAnimationFrame(frame)
+    }, [])
+
     return (
         <div className="mb-12">
             <div className="flex items-center justify-center mb-6">
@@ -159,6 +169,7 @@ function StepIndicator({ currentStep, totalSteps, onStepClick }: { currentStep: 
                     <button
                         type="button"
                         key={step.id}
+                        ref={i === 0 ? firstStepRef : undefined}
                         onClick={() => onStepClick(i)}
                         aria-label={`${step.title}, step ${i + 1} of ${totalSteps}`}
                         aria-current={i === currentStep ? "step" : undefined}
@@ -303,10 +314,28 @@ function PlayerStep({ form, status }: { form: any, status: Status }) {
 
                 <h2 className="text-3xl font-bold">{__isDesktop__ ? "External " : ""}Media Player</h2>
                 <p className="text-[--muted] text-sm max-w-lg mx-auto">
-                    Configure your preferred external media player for watching anime and tracking progress automatically.
+                    {__isAndroidTV__
+                        ? "Seanime TV uses its built-in player for watching anime and tracking progress."
+                        : "Configure your preferred external media player for watching anime and tracking progress automatically."}
                 </p>
             </motion.div>
 
+            {__isAndroidTV__ ? (
+                <StepCard className="max-w-2xl mx-auto">
+                    <motion.div variants={itemVariants} className="space-y-4">
+                        <div className="flex items-center space-x-3">
+                            <LuMonitorPlay className="w-6 h-6 text-green-500" />
+                            <h3 className="text-xl font-semibold">Built-in Android TV Player</h3>
+                        </div>
+                        <p className="text-sm text-[--muted]">
+                            Seanime TV plays video inside the app. Use your remote to seek, choose audio and subtitles, and control playback without installing a desktop player.
+                        </p>
+                        <p className="text-sm text-[--muted]">
+                            Playback and subtitle options are available from the player controls and Settings.
+                        </p>
+                    </motion.div>
+                </StepCard>
+            ) : (
             <StepCard className="max-w-2xl mx-auto">
                 <motion.div variants={itemVariants} className="space-y-6">
                     <Field.Select
@@ -427,6 +456,7 @@ function PlayerStep({ form, status }: { form: any, status: Status }) {
                     </AnimatePresence>
                 </motion.div>
             </StepCard>
+            )}
         </motion.div>
     )
 }
