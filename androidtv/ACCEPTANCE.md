@@ -67,6 +67,10 @@ and device model with each result.
 - The freshly installed ARM64 debug APK launched its embedded first-run setup;
   an injected D-pad Right moved the visible focus ring to the next player card.
   See the [visible launch check](acceptance/2026-09-28-visible-launch-smoke.md).
+- The emulator image lacks a usable system folder-picker activity. The native
+  fallback dialog appears, D-pad dismisses it, and focus returns to the USB
+  folder control. Selecting a real folder still requires a TV system picker;
+  see the [picker smoke check](acceptance/2026-09-28-saf-picker-visible-smoke.md).
 - The first-run setup now opens with a visible D-pad focus target, describes
   the built-in Android TV player, and configures qBittorrent/Transmission as
   network services without desktop executable paths. See the
