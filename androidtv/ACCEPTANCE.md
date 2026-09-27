@@ -42,6 +42,12 @@ and device model with each result.
   the built-in Android TV player, and configures qBittorrent/Transmission as
   network services without desktop executable paths. See the
   [onboarding run](acceptance/2026-09-28-onboarding-tv.md).
+- Android TV settings no longer expose desktop process-launch controls for
+  MPV/VLC/IINA/MPC-HC. Device playback and external app schemes remain under
+  Video Playback and External Player Link; old `media-player` settings links
+  route to the TV playback controls. The TV web build, shared frontend suite,
+  Android package build, and instrumentation suite passed for this revision.
+  See the [settings platform run](acceptance/2026-09-28-settings-platform.md).
 - The four transcoding capability tests and seven playback checkpoint tests
   pass. Physical-device scenarios below still need recorded passing runs.
 - Android storage, direct-stream, playlist, and Nakama Go package tests pass,
