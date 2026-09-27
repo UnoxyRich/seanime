@@ -73,6 +73,7 @@ class NativePlayerActivity : Activity() {
     private var playbackCheckpointId = ""
     private var playbackCheckpointUrl = ""
     private var checkpointGeneration = 0
+    @Volatile private var playbackRecoveryDismissed = false
     private val checkpointExecutor = Executors.newSingleThreadExecutor { task -> Thread(task, "Seanime TV playback checkpoint") }
     private val subtitleCacheFiles = mutableListOf<File>()
     private val progressHandler = Handler(Looper.getMainLooper())
@@ -241,7 +242,7 @@ class NativePlayerActivity : Activity() {
                 lastPositionMs = exoPlayer.currentPosition
                 if (playbackState == Player.STATE_ENDED && !completed) {
                     completed = true
-                    PlaybackRecoverySnapshot.clear(filesDir)
+                    clearPlaybackRecovery()
                 }
             }
 
@@ -271,6 +272,7 @@ class NativePlayerActivity : Activity() {
         // A token/URL refresh of the current episode preserves the decoder's
         // position and pause state even if the web adapter is being replaced.
         val preservePosition = startPositionMs < 0
+        if (mediaUri != uri) playbackRecoveryDismissed = false
         val position = if (preservePosition) player?.currentPosition ?: lastPositionMs else startPositionMs.coerceAtLeast(0)
         val playWhenReady = if (preservePosition) player?.playWhenReady ?: resumePlayWhenReady else true
         mediaUri = uri
@@ -325,7 +327,7 @@ class NativePlayerActivity : Activity() {
 
     private fun recoverySnapshot(): PlaybackRecoverySnapshot? {
         val uri = mediaUri ?: return null
-        if (playbackCheckpointId.isBlank() || completed || uri.path != "/api/v1/directstream/stream") return null
+        if (playbackRecoveryDismissed || playbackCheckpointId.isBlank() || completed || uri.path != "/api/v1/directstream/stream") return null
         val current = player
         return PlaybackRecoverySnapshot(
             checkpointId = playbackCheckpointId,
@@ -348,10 +350,26 @@ class NativePlayerActivity : Activity() {
     }
 
     private fun persistPlaybackRecovery() {
+        if (playbackRecoveryDismissed) return
         val snapshot = recoverySnapshot() ?: return
         runCatching {
-            checkpointExecutor.execute { PlaybackRecoverySnapshot.write(filesDir, snapshot) }
+            checkpointExecutor.execute {
+                if (!playbackRecoveryDismissed) PlaybackRecoverySnapshot.write(filesDir, snapshot)
+            }
         }.onFailure { Log.w("SeanimeTV", "Could not queue the playback recovery snapshot", it) }
+    }
+
+    private fun clearPlaybackRecovery() {
+        playbackRecoveryDismissed = true
+        checkpointGeneration += 1
+        runCatching {
+            // Serialize deletion after any in-flight snapshot write. Later writes
+            // check the dismissal flag and cannot recreate the checkpoint.
+            checkpointExecutor.execute { PlaybackRecoverySnapshot.clear(filesDir) }
+        }.onFailure {
+            PlaybackRecoverySnapshot.clear(filesDir)
+            Log.w("SeanimeTV", "Could not queue playback recovery cleanup", it)
+        }
     }
 
     private fun capturePlaybackSource(uri: Uri) {
@@ -397,7 +415,7 @@ class NativePlayerActivity : Activity() {
     }
 
     private fun returnFromPlayer() {
-        PlaybackRecoverySnapshot.clear(filesDir)
+        clearPlaybackRecovery()
         finish()
     }
 
@@ -674,7 +692,7 @@ class NativePlayerActivity : Activity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            PlaybackRecoverySnapshot.clear(filesDir)
+            clearPlaybackRecovery()
             finish()
             return true
         }

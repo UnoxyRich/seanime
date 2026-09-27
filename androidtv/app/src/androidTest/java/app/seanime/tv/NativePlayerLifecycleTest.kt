@@ -18,6 +18,7 @@ import java.nio.ByteOrder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,6 +26,48 @@ import org.junit.runner.RunWith
 @OptIn(UnstableApi::class)
 @RunWith(AndroidJUnit4::class)
 class NativePlayerLifecycleTest {
+    @Test
+    fun dismissingPlaybackDoesNotRecreateItsRecoverySnapshotOnStop() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val snapshot = PlaybackRecoverySnapshot(
+            checkpointId = "dismissed-playback-test",
+            mediaUri = "http://127.0.0.1:43211/api/v1/directstream/stream?id=dismissed-playback-test",
+            processSessionId = (context.applicationContext as SeanimeTvApplication).processSessionId,
+            title = "Dismissed playback",
+            subtitleTracksJson = "[]",
+            subtitleStyleJson = "{}",
+            positionMs = 1_000,
+            playWhenReady = false,
+            completed = false,
+            speed = 1f,
+            pitch = 1f,
+            volume = 1f,
+            muted = false,
+            trackSelection = "",
+        )
+        PlaybackRecoverySnapshot.clear(context.filesDir)
+        PlaybackRecoverySnapshot.write(context.filesDir, snapshot)
+        val scenario = ActivityScenario.launch<NativePlayerActivity>(
+            NativePlayerActivity.recoveryIntent(context, snapshot),
+        )
+        try {
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            val deadline = SystemClock.elapsedRealtime() + 10_000
+            while (scenario.state != Lifecycle.State.DESTROYED && SystemClock.elapsedRealtime() < deadline) {
+                SystemClock.sleep(50)
+            }
+            assertEquals(Lifecycle.State.DESTROYED, scenario.state)
+            // Allow the player's single-threaded checkpoint writer to finish
+            // the stop callback that used to recreate the cleared snapshot.
+            SystemClock.sleep(500)
+            assertNull("explicitly dismissed playback must not be restored later", PlaybackRecoverySnapshot.read(context.filesDir))
+        } finally {
+            scenario.close()
+            PlaybackRecoverySnapshot.clear(context.filesDir)
+        }
+    }
+
     @Test
     fun failedSourceCanRetryWithRemoteAndKeepPausedPosition() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
