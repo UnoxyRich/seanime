@@ -6,6 +6,10 @@
 - Installed the generated ARM64 debug APK with `adb install -r` and launched
   `app.seanime.tv/.MainActivity` successfully. The foreground activity was
   `MainActivity`; the app process was alive after launch.
+- Forwarded the app's loopback server temporarily to the host. The embedded
+  `/` route returned HTTP 200 (1,156 bytes), and its main JavaScript and CSS
+  assets returned HTTP 200 (208,552 and 498,231 bytes). The temporary ADB
+  forward was removed after the check.
 - The embedded first-run setup rendered on the emulator. Injecting
   `KEYCODE_DPAD_RIGHT` moved the visible focus ring from “Local Anime Library”
   to “Media Player”. The captured screen is
