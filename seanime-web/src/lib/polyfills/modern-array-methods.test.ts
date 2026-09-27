@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { installModernArrayMethods, installModernPromiseMethods } from "./modern-array-methods"
+import { installModernArrayMethods, installModernObjectMethods, installModernPromiseMethods } from "./modern-array-methods"
 
 describe("modern array methods on legacy WebView", () => {
     it("provides missing methods and keeps non-mutating operations non-mutating", () => {
@@ -46,6 +46,32 @@ describe("modern array methods on legacy WebView", () => {
             Reflect.deleteProperty(Promise, "withResolvers")
             if (descriptor) Object.defineProperty(Promise, "withResolvers", descriptor)
             else installModernPromiseMethods()
+        }
+    })
+})
+
+describe("modern Object methods on legacy WebView", () => {
+    it("provides Object.hasOwn with native own-property semantics", () => {
+        const descriptor = Object.getOwnPropertyDescriptor(Object, "hasOwn")
+
+        try {
+            Reflect.deleteProperty(Object, "hasOwn")
+            installModernObjectMethods()
+
+            const prototype = { inherited: true }
+            const record = Object.create(prototype) as Record<PropertyKey, unknown>
+            const symbol = Symbol("own")
+            Object.defineProperty(record, "__proto__", { value: "own", enumerable: true })
+            Object.defineProperty(record, symbol, { value: 42, enumerable: true })
+
+            expect(Object.hasOwn(record, "inherited")).toBe(false)
+            expect(Object.hasOwn(record, "__proto__")).toBe(true)
+            expect(Object.hasOwn(record, symbol)).toBe(true)
+            expect(() => Reflect.apply(Object.hasOwn, Object, [null, "key"])).toThrow(TypeError)
+        } finally {
+            Reflect.deleteProperty(Object, "hasOwn")
+            if (descriptor) Object.defineProperty(Object, "hasOwn", descriptor)
+            else installModernObjectMethods()
         }
     })
 })

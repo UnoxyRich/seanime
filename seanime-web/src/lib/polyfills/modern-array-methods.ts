@@ -1,6 +1,19 @@
 type CompareFn<T> = (left: T, right: T) => number
 type Predicate<T> = (value: T, index: number, array: readonly T[]) => unknown
 
+/** Add modern Object methods missing from older Android System WebView builds. */
+export function installModernObjectMethods() {
+    if (typeof Object.hasOwn !== "function") {
+        Object.defineProperty(Object, "hasOwn", {
+            configurable: true,
+            writable: true,
+            value: function (object: unknown, propertyKey: PropertyKey): boolean {
+                return Object.prototype.hasOwnProperty.call(object, propertyKey)
+            },
+        })
+    }
+}
+
 /** Add modern array methods missing from older Android System WebView builds. */
 export function installModernArrayMethods() {
     if (typeof Array.prototype.at !== "function") {
@@ -102,3 +115,4 @@ export function installModernPromiseMethods() {
 
 installModernArrayMethods()
 installModernPromiseMethods()
+installModernObjectMethods()

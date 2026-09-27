@@ -85,8 +85,9 @@ class AndroidTvStartupTest {
             waitUntil("embedded Seanime UI and authenticated bridge", 30_000) {
                 evaluateJavascript(
                     scenario,
-                    "document.readyState === 'complete' && document.title === 'Seanime' && " +
+                        "document.readyState === 'complete' && document.title === 'Seanime' && " +
                         "document.getElementById('root') !== null && " +
+                        "Object.hasOwn({ own: true }, 'own') && !Object.hasOwn(Object.create({ inherited: true }), 'inherited') && " +
                         "(() => { const viewport = getComputedStyle(document.documentElement).getPropertyValue('--viewport-height').trim(); " +
                         "const probe = document.createElement('div'); probe.className = 'h-[calc(var(--viewport-height)_-_3rem)]'; " +
                         "document.body.appendChild(probe); const height = parseFloat(getComputedStyle(probe).height); probe.remove(); " +
