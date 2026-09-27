@@ -14,7 +14,7 @@ and device model with each result.
   structured-clone fallback for older WebViews, Android stream routing,
   playlist playback selection, and watch-party player identity.
 - ARM64 and x86_64 debug APKs build and pass APK signature verification.
-- All 20 Android instrumentation tests pass on the API 31 ARM64 TV emulator
+- All 21 Android instrumentation tests pass on the API 31 ARM64 TV emulator
   with WebView 91.0.4472.114 and 4 KiB pages. They cover server
   startup/restart, bridge access, injected Android D-pad key events through the
   focused WebView, spatial focus controls, a test document
@@ -29,11 +29,12 @@ and device model with each result.
   SAF write-journal recovery also covers interrupted writes, replacement
   rollback, committed replacement preservation, incomplete fallback cleanup,
   isolation of an unavailable root, and calls through the Go directory API to
-  the registered SAF adapter. A targeted regression now also forces a
+  the registered SAF adapter. A targeted regression also forces a
   fallback copy to fail while the provider refuses deletion; the adapter keeps
   the journal and blocks root access until cleanup succeeds. All five SAF
   adapter instrumentation tests pass on the API 31 ARM64 TV emulator. See the
-  [write recovery run](acceptance/2026-09-28-saf-write-recovery.md).
+  [write recovery run](acceptance/2026-09-28-saf-write-recovery.md) and the
+  [partial destination recovery run](acceptance/2026-09-28-saf-partial-destination-recovery.md).
   The media test encodes H.264 with the bundled
   CPU encoder, checks it with ffprobe, decodes it with FFmpeg, and renders/seeks
   it in Media3 while paused. The startup test opens and dismisses the native
@@ -129,7 +130,7 @@ and device model with each result.
 - The latest playback lifecycle run confirms that explicit Back dismissal
   serializes checkpoint deletion after any in-flight write, stop/destroy cannot
   recreate the dismissed snapshot, and a fresh MainActivity discovers a ticket
-  persisted by an earlier process. All 20 Android instrumentation tests
+  persisted by an earlier process. All 21 Android instrumentation tests
   passed on the ARM64 TV emulator; current APK hashes and build limitations are
   recorded in the [dismissal recovery run](acceptance/2026-09-28-playback-dismissal-recovery.md).
 - An end-to-end Android force-stop and cold relaunch restored a URL-backed

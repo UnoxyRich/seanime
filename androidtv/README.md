@@ -123,9 +123,10 @@ the output, decodes it with FFmpeg, and checks Media3 frame rendering and seekin
   Go app data and saves an opaque checkpoint ID in the activity state. Local,
   torrent, debrid, URL and Nakama source selections can be reopened through the
   Go binding for a new WebView client. The cold-process restoration path is
-  implemented, but a force-stop during real playback followed by a successful
-  restored session has not yet been verified end to end; see the acceptance
-  matrix.
+  implemented. An API 31 ARM64 TV emulator run force-stopped the app during
+  active URL playback and restored the session after relaunch; authenticated
+  torrent/debrid, Nakama reconnection, real USB storage and playlist continuity
+  still need their own end-to-end runs. See the acceptance matrix.
 - Native playback errors show focused remote controls to retry the source or
   return to the web player. Retrying retains the position, speed, volume and
   pause state; failures do not advance the playlist.
