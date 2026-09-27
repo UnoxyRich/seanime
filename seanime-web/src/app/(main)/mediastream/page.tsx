@@ -325,10 +325,10 @@ function MediastreamPage() {
             <Skeleton className="h-12" />
         </div>
         <div className="grid 2xl:grid-cols-[1fr,450px] gap-4 xl:gap-4">
-            <div className="w-full min-h-[70dvh] relative">
+            <div className="w-full min-h-[var(--viewport-height-70)] relative">
                 <Skeleton className="h-full w-full absolute" />
             </div>
-            <Skeleton className="hidden 2xl:block relative h-[78dvh] overflow-y-auto pr-4 pt-0" />
+            <Skeleton className="hidden 2xl:block relative h-[var(--viewport-height-78)] overflow-y-auto pr-4 pt-0" />
         </div>
     </div>
 
@@ -542,7 +542,7 @@ function MediastreamPlaybackInfo({
                     }
                     contentClass="max-w-3xl"
                 >
-                    <pre className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] whitespace-pre-wrap p-2 rounded-[--radius-md] bg-gray-900 text-xs text-white">
+                    <pre className="overflow-x-auto overflow-y-auto max-h-[calc(var(--viewport-height)_-_300px)] whitespace-pre-wrap p-2 rounded-[--radius-md] bg-gray-900 text-xs text-white">
                         {JSON.stringify(mediaContainer, null, 2)}
                     </pre>
                 </Modal>

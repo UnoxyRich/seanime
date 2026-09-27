@@ -87,6 +87,10 @@ class AndroidTvStartupTest {
                     scenario,
                     "document.readyState === 'complete' && document.title === 'Seanime' && " +
                         "document.getElementById('root') !== null && " +
+                        "(() => { const viewport = getComputedStyle(document.documentElement).getPropertyValue('--viewport-height').trim(); " +
+                        "const probe = document.createElement('div'); probe.className = 'h-[calc(var(--viewport-height)_-_3rem)]'; " +
+                        "document.body.appendChild(probe); const height = parseFloat(getComputedStyle(probe).height); probe.remove(); " +
+                        "return !CSS.supports('height', '100dvh') && viewport === '100vh' && height > 0; })() && " +
                         "(() => { const values = [3, 1, 2]; const deferred = Promise.withResolvers(); deferred.resolve(42); return " +
                         "values.at(-1) === 2 && values.findLast(value => value % 2 === 1) === 1 && " +
                         "values.findLastIndex(value => value % 2 === 1) === 1 && values.toSorted((a, b) => a - b).join(',') === '1,2,3' && " +

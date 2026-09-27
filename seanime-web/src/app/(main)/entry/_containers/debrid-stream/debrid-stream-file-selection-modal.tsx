@@ -147,7 +147,7 @@ export function DebridStreamFileSelectionModal(props: DebridStreamFileSelectionM
                     /> : (
                         <AppLayoutStack className="mt-4">
 
-                            <ScrollArea viewportRef={scrollRef} className="h-[75dvh] overflow-y-auto p-4 border rounded-[--radius-md]">
+                            <ScrollArea viewportRef={scrollRef} className="h-[var(--viewport-height-75)] overflow-y-auto p-4 border rounded-[--radius-md]">
                                 <FileTreeSelector
                                     filePreviews={previews || []}
                                     selectedValue={selectedFileId}

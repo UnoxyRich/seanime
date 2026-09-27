@@ -289,9 +289,9 @@ export function VideoCoreInlineLayout(props: VideoCoreInlineLayoutProps) {
                     data-vc-element="inline-layout-episode-list-container"
                     className={cn(
                         "2xl:max-w-[450px] w-full relative 2xl:sticky overflow-y-auto pt-0",
-                        theaterMode ? "2xl:max-w-full h-[75dvh]" : "h-[75dvh] 2xl:h-auto",
+                        theaterMode ? "2xl:max-w-full h-[var(--viewport-height-75)]" : "h-[var(--viewport-height-75)] 2xl:h-auto",
                     )}
-                    style={!theaterMode ? { height: "var(--player-height, 75dvh)" } as React.CSSProperties : undefined}
+                    style={!theaterMode ? { height: "var(--player-height, var(--viewport-height-75))" } as React.CSSProperties : undefined}
                 >
                     <div data-vc-element="inline-layout-episode-list-body" className="space-y-3 px-4 pb-2 pt-0 -mx-2">
                         {episodeList}
@@ -301,11 +301,11 @@ export function VideoCoreInlineLayout(props: VideoCoreInlineLayoutProps) {
                 data-vc-element="inline-layout-loading-container"
                 className="grid 2xl:grid-cols-[1fr,450px] gap-4 xl:gap-4"
             >
-                <div className="w-full min-h-[70dvh] relative">
+                <div className="w-full min-h-[var(--viewport-height-70)] relative">
                     <Skeleton className="h-full w-full absolute" />
                 </div>
 
-                <Skeleton className="hidden 2xl:block relative h-[78dvh] overflow-y-auto pr-4 pt-0" />
+                <Skeleton className="hidden 2xl:block relative h-[var(--viewport-height-78)] overflow-y-auto pr-4 pt-0" />
 
             </div>}
         </div>

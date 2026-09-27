@@ -85,7 +85,7 @@ export const TorrentPreviewList = React.memo((
             <ScrollAreaBox
                 className={cn(
                     "bg-gray-950/60",
-                    searchAcrossProviders ? "h-[calc(100dvh_-_30rem)]" : "h-[calc(100dvh_-_26rem)]",
+                    searchAcrossProviders ? "h-[calc(var(--viewport-height)_-_30rem)]" : "h-[calc(var(--viewport-height)_-_26rem)]",
                 )}
             >
                 <TorrentList>

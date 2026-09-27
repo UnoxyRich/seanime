@@ -168,7 +168,7 @@ export function MangaVerticalReader({ pageContainer }: MangaVerticalReaderProps)
         <div
             data-chapter-vertical-reader-container
             className={cn(
-                "max-h-[calc(100dvh-3rem)] overflow-hidden relative focus-visible:outline-none",
+                "max-h-[calc(var(--viewport-height)_-_3rem)] overflow-hidden relative focus-visible:outline-none",
                 hiddenBar && "h-full max-h-full",
             )} tabIndex={-1}
             onClick={() => {
@@ -180,9 +180,9 @@ export function MangaVerticalReader({ pageContainer }: MangaVerticalReaderProps)
             <div
                 data-chapter-vertical-reader-inner-container
                 className={cn(
-                    "w-full h-[calc(100dvh-3rem)] overflow-y-auto px-4 select-none relative focus-visible:outline-none",
+                    "w-full h-[calc(var(--viewport-height)_-_3rem)] overflow-y-auto px-4 select-none relative focus-visible:outline-none",
                     pageZoom !== 1 ? "overflow-x-auto" : "overflow-x-hidden",
-                    hiddenBar && "h-dvh",
+                    hiddenBar && "h-[var(--viewport-height)]",
                     pageGap && "space-y-4",
                     isMobile() && "hide-scrollbar",
                 )}
@@ -213,7 +213,7 @@ export function MangaVerticalReader({ pageContainer }: MangaVerticalReaderProps)
                         }}
                         containerClass={cn(
                             "mx-auto scroll-div min-h-[200px] relative focus-visible:outline-none",
-                            pageFit === MangaPageFit.CONTAIN && "max-w-full h-[calc(100dvh-60px)]",
+                            pageFit === MangaPageFit.CONTAIN && "max-w-full h-[calc(var(--viewport-height)_-_60px)]",
                             pageFit === MangaPageFit.TRUE_SIZE && "max-w-full",
                             pageFit === MangaPageFit.COVER && "max-w-full",
                         )}

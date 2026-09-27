@@ -445,8 +445,8 @@ export function ChapterReaderDrawer(props: ChapterDrawerProps) {
             <div
                 data-chapter-reader-drawer-content
                 className={cn(
-                    "max-h-[calc(100dvh-3rem)] h-full overflow-hidden",
-                    hiddenBar && "max-h-dvh",
+                    "max-h-[calc(var(--viewport-height)_-_3rem)] h-full overflow-hidden",
+                    hiddenBar && "max-h-[var(--viewport-height)]",
                 )} tabIndex={-1}
             >
                 <MangaReaderActionDisplay />

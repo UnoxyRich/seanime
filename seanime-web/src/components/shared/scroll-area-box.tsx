@@ -5,7 +5,7 @@ import React from "react"
 export function ScrollAreaBox({ listClass, className, children, ...rest }: ScrollAreaProps & { listClass?: string }) {
     return <ScrollArea
         className={cn(
-            "h-[calc(100dvh_-_25rem)] min-h-52 relative border rounded-[--radius]",
+            "h-[calc(var(--viewport-height)_-_25rem)] min-h-52 relative border rounded-[--radius]",
             className,
         )} {...rest}>
         <div

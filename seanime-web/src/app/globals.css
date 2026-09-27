@@ -7,6 +7,13 @@
         --media-cue-backdrop: blur(0px);
         --media-captions-padding: 0%;
         --video-captions-offset: 0px;
+        --viewport-height: 100vh;
+        --viewport-height-80: 80vh;
+        --viewport-height-78: 78vh;
+        --viewport-height-75: 75vh;
+        --viewport-height-70: 70vh;
+        --viewport-height-60: 60vh;
+        --viewport-height-50: 50vh;
         /*--brand-color-50: #f2f0ff;*/
         /*--brand-color-100: #eeebff;*/
         /*--brand-color-200: #d4d0ff;*/
@@ -165,6 +172,18 @@
         --subtle: rgba(255, 255, 255, 0.06);
         --subtle-highlight: rgba(255, 255, 255, 0.08);
 
+    }
+}
+
+@supports (height: 100dvh) {
+    :root {
+        --viewport-height: 100dvh;
+        --viewport-height-80: 80dvh;
+        --viewport-height-78: 78dvh;
+        --viewport-height-75: 75dvh;
+        --viewport-height-70: 70dvh;
+        --viewport-height-60: 60dvh;
+        --viewport-height-50: 50dvh;
     }
 }
 

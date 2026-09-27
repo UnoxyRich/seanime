@@ -163,8 +163,8 @@ export function MangaHorizontalReader({ pageContainer }: MangaHorizontalReaderPr
         <div
             data-chapter-horizontal-reader-container
             className={cn(
-                "h-[calc(100dvh-3rem)] w-full px-4 select-none relative focus-visible:outline-none",
-                hiddenBar && "h-dvh max-h-full",
+                "h-[calc(var(--viewport-height)_-_3rem)] w-full px-4 select-none relative focus-visible:outline-none",
+                hiddenBar && "h-[var(--viewport-height)] max-h-full",
                 pageZoom !== 1 ? "overflow-auto" : cn(
                     "overflow-x-hidden",
                     (pageFit === MangaPageFit.COVER || pageFit === MangaPageFit.TRUE_SIZE || pageFit === MangaPageFit.LARGER)
@@ -204,8 +204,8 @@ export function MangaHorizontalReader({ pageContainer }: MangaHorizontalReaderPr
                             handlePageLoad(index)
                         }}
                         containerClass={cn(
-                            "w-full h-[calc(100dvh-3rem)] scroll-div min-h-[200px] relative page",
-                            hiddenBar && "h-dvh max-h-full",
+                            "w-full h-[calc(var(--viewport-height)_-_3rem)] scroll-div min-h-[200px] relative page",
+                            hiddenBar && "h-[var(--viewport-height)] max-h-full",
                             "focus-visible:outline-none",
                             !currentPages?.includes(index) ? "hidden" : "displayed",
                             // Double Page, gap

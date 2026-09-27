@@ -76,8 +76,8 @@ export const DrawerAnatomy = defineStyleAnatomy({
             { size: "xl", side: "left", className: "sm:max-w-5xl" },
             { size: "xl", side: "right", className: "sm:max-w-5xl" },
             /**/
-            { size: "full", side: "top", className: "h-dvh" },
-            { size: "full", side: "bottom", className: "h-dvh" },
+            { size: "full", side: "top", className: "h-[var(--viewport-height)]" },
+            { size: "full", side: "bottom", className: "h-[var(--viewport-height)]" },
         ],
     }),
     close: cva([
@@ -244,7 +244,7 @@ export function Drawer(props: DrawerProps) {
                             __isDesktop__
                             && !mangaReader
                             && (side === "left" || side === "right")
-                        ) ? "calc(100dvh - 50px)" : undefined,
+                        ) ? "calc(var(--viewport-height) - 50px)" : undefined,
                     }}
                     onOpenAutoFocus={onOpenAutoFocus}
                     onCloseAutoFocus={onCloseAutoFocus}

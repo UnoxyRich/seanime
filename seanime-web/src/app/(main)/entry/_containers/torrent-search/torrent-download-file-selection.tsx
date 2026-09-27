@@ -175,7 +175,7 @@ export function TorrentDownloadFileSelection({ entry }: { entry: Anime_Entry }) 
 
                             <ScrollArea
                                 viewportRef={scrollRef}
-                                className="h-[60dvh] lg:h-[50dvh] overflow-y-auto p-4 border rounded-[--radius-md]"
+                                className="h-[var(--viewport-height-60)] lg:h-[var(--viewport-height-50)] overflow-y-auto p-4 border rounded-[--radius-md]"
                             >
                                 <FileTreeMultiSelector
                                     filePreviews={filePreviews}

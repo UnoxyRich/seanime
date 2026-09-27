@@ -552,7 +552,7 @@ export function RuleFormFields(props: RuleFormFieldsProps) {
                 <p className="text-[--muted] text-sm">
                     Check the server logs for more details.
                 </p>
-                <pre className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] whitespace-pre-wrap p-2 rounded-[--radius-md] bg-gray-900">
+                <pre className="overflow-x-auto overflow-y-auto max-h-[calc(var(--viewport-height)_-_300px)] whitespace-pre-wrap p-2 rounded-[--radius-md] bg-gray-900">
                     {JSON.stringify(simulationResults, null, 2)}
                 </pre>
             </Modal>
