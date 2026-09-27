@@ -1,6 +1,7 @@
 package util
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,7 +15,15 @@ import (
 type ImageProxy struct{}
 
 func (ip *ImageProxy) GetImage(url string, headers map[string]string) ([]byte, string, error) {
+	return ip.GetImageWithContext(context.Background(), url, headers)
+}
+
+func (ip *ImageProxy) GetImageWithContext(ctx context.Context, url string, headers map[string]string) ([]byte, string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	request := req.C().DisableAutoReadResponse().NewRequest()
+	request.SetContext(ctx)
 
 	for key, value := range headers {
 		request.SetHeader(key, value)

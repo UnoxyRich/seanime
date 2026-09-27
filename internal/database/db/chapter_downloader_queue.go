@@ -47,6 +47,19 @@ func (db *Database) DequeueChapterDownloadQueueItem() (*models.ChapterDownloadQu
 	return &res, nil
 }
 
+func (db *Database) DequeueChapterDownloadQueueItemByID(provider string, mediaID int, chapterID string) (*models.ChapterDownloadQueueItem, error) {
+	var item models.ChapterDownloadQueueItem
+	err := db.gormdb.Where("provider = ? AND media_id = ? AND chapter_id = ?", provider, mediaID, chapterID).First(&item).Error
+	if err != nil {
+		return nil, err
+	}
+	if err = db.gormdb.Delete(&item).Error; err != nil {
+		db.Logger.Error().Err(err).Msg("db: Failed to dequeue chapter download queue item")
+		return nil, err
+	}
+	return &item, nil
+}
+
 func (db *Database) InsertChapterDownloadQueueItem(item *models.ChapterDownloadQueueItem) error {
 
 	// Check if the item already exists
@@ -102,7 +115,7 @@ func (db *Database) GetMediaQueuedChapters(mediaId int) ([]*models.ChapterDownlo
 
 func (db *Database) ClearAllChapterDownloadQueueItems() error {
 	err := db.gormdb.
-		Where("status = ? OR status = ? OR status = ?", "not_started", "downloading", "errored").
+		Where("status = ? OR status = ? OR status = ? OR status = ?", "not_started", "downloading", "errored", "background_paused").
 		Delete(&models.ChapterDownloadQueueItem{}).
 		Error
 	if err != nil {
@@ -125,10 +138,21 @@ func (db *Database) ResetErroredChapterDownloadQueueItems() error {
 
 func (db *Database) ResetDownloadingChapterDownloadQueueItems() error {
 	err := db.gormdb.Model(&models.ChapterDownloadQueueItem{}).
-		Where("status = ?", "downloading").
+		Where("status = ? OR status = ?", "downloading", "background_paused").
 		Update("status", "not_started").Error
 	if err != nil {
-		db.Logger.Error().Err(err).Msg("db: Failed to reset downloading chapter download queue items")
+		db.Logger.Error().Err(err).Msg("db: Failed to reset interrupted chapter download queue items")
+		return err
+	}
+	return nil
+}
+
+func (db *Database) PauseChapterDownloadQueueItemsForBackground() error {
+	err := db.gormdb.Model(&models.ChapterDownloadQueueItem{}).
+		Where("status = ? OR status = ?", "not_started", "downloading").
+		Update("status", "background_paused").Error
+	if err != nil {
+		db.Logger.Error().Err(err).Msg("db: Failed to persist paused manga downloads")
 		return err
 	}
 	return nil

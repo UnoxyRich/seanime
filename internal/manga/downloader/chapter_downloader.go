@@ -2,6 +2,7 @@ package chapter_downloader
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/rs/zerolog"
@@ -44,7 +46,6 @@ type (
 		// cancelChannel is used to cancel some or all downloads.
 		cancelChannels      map[DownloadID]chan struct{}
 		queue               *Queue
-		cancelCh            chan struct{}   // Close to cancel the download process
 		runCh               chan *QueueInfo // Receives a signal to download the next item
 		chapterDownloadedCh chan DownloadID // Sends a signal when a chapter has been downloaded
 	}
@@ -157,33 +158,18 @@ func (cd *Downloader) DeleteChapter(id DownloadID) error {
 }
 
 // Run starts the downloader if it's not already running.
-func (cd *Downloader) Run() {
-	cd.mu.Lock()
-	defer cd.mu.Unlock()
-
+func (cd *Downloader) Run() bool {
 	cd.logger.Debug().Msg("chapter downloader: Starting queue")
-
-	cd.cancelCh = make(chan struct{})
-
-	cd.queue.Run()
+	return cd.queue.Run()
 }
 
 // Stop cancels the download process and stops the queue from running.
 func (cd *Downloader) Stop() {
-	cd.mu.Lock()
-	defer cd.mu.Unlock()
-
-	defer func() {
-		if r := recover(); r != nil {
-			cd.logger.Error().Msgf("chapter downloader: cancelCh is already closed")
-		}
-	}()
-
-	cd.cancelCh = make(chan struct{})
-
-	close(cd.cancelCh) // Cancel download process
-
 	cd.queue.Stop()
+}
+
+func (cd *Downloader) PauseForBackground() bool {
+	return cd.queue.PauseForBackground()
 }
 
 // run downloads the chapter based on the QueueInfo provided.
@@ -195,8 +181,24 @@ func (cd *Downloader) run(queueInfo *QueueInfo) {
 		cd.logger.Error().Msg("chapter downloader: Panic in 'run'")
 	})
 
+	// Keep the existing inter-chapter pacing without holding the queue lock.
+	// Cancellation lets Android pause background work immediately.
+	if queueInfo.ctx != nil {
+		timer := time.NewTimer(5 * time.Second)
+		select {
+		case <-queueInfo.ctx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+
 	// Download chapter images
 	if err := cd.downloadChapterImages(queueInfo); err != nil {
+		queueInfo.Status = QueueStatusErrored
+		cd.queue.HasCompleted(queueInfo)
+		return
+	}
+	if queueInfo.paused {
 		return
 	}
 
@@ -224,7 +226,11 @@ func (cd *Downloader) downloadChapterImages(queueInfo *QueueInfo) (err error) {
 
 	cd.logger.Debug().Msgf("chapter downloader: Downloading chapter %s images to %s", queueInfo.ChapterId, destination)
 
-	registry := make(Registry)
+	ctx := queueInfo.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	registry := loadDownloadProgress(destination, queueInfo.Pages)
 
 	// calculateBatchSize calculates the batch size based on the number of URLs.
 	calculateBatchSize := func(numURLs int) int {
@@ -244,6 +250,9 @@ func (cd *Downloader) downloadChapterImages(queueInfo *QueueInfo) (err error) {
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, batchSize) // Semaphore to control concurrency
 	for _, page := range queueInfo.Pages {
+		if _, alreadyDownloaded := registry[page.Index]; alreadyDownloaded {
+			continue
+		}
 		semaphore <- struct{}{} // Acquire semaphore
 		wg.Add(1)
 		go func(page *hibikemanga.ChapterPage, registry *Registry) {
@@ -252,18 +261,28 @@ func (cd *Downloader) downloadChapterImages(queueInfo *QueueInfo) (err error) {
 				wg.Done()
 			}()
 			select {
-			case <-cd.cancelCh:
-				//cd.logger.Warn().Msg("chapter downloader: Download goroutine canceled")
+			case <-ctx.Done():
 				return
 			default:
-				cd.downloadPage(page, destination, registry)
+				cd.downloadPage(ctx, page, destination, registry)
 			}
 		}(page, &registry)
 	}
 	wg.Wait()
 
-	// Write the registry
-	_ = registry.save(queueInfo, destination, cd.logger)
+	if ctx.Err() != nil && !registry.containsAll(queueInfo.Pages) {
+		if err := registry.saveProgress(destination); err != nil {
+			queueInfo.Status = QueueStatusErrored
+			cd.queue.HasCompleted(queueInfo)
+			return err
+		}
+		cd.queue.HasPaused(queueInfo)
+		return nil
+	}
+
+	if err := registry.save(queueInfo, destination, cd.logger); err != nil && queueInfo.Status != QueueStatusErrored {
+		queueInfo.Status = QueueStatusErrored
+	}
 
 	cd.queue.HasCompleted(queueInfo)
 
@@ -280,7 +299,7 @@ func (cd *Downloader) downloadChapterImages(queueInfo *QueueInfo) (err error) {
 
 // downloadPage downloads a single page from the URL and saves it to the destination directory.
 // It also updates the Registry with the page information.
-func (cd *Downloader) downloadPage(page *hibikemanga.ChapterPage, destination string, registry *Registry) {
+func (cd *Downloader) downloadPage(ctx context.Context, page *hibikemanga.ChapterPage, destination string, registry *Registry) {
 
 	defer util.HandlePanicInModuleThen("manga/downloader/downloadImage", func() {
 	})
@@ -289,9 +308,11 @@ func (cd *Downloader) downloadPage(page *hibikemanga.ChapterPage, destination st
 
 	imgID := fmt.Sprintf("%02d", page.Index+1)
 
-	buf, err := manga_providers.GetImageByProxy(page.URL, page.Headers)
+	buf, err := manga_providers.GetImageByProxyWithContext(ctx, page.URL, page.Headers)
 	if err != nil {
-		cd.logger.Error().Err(err).Msgf("chapter downloader: Failed to get image from URL %s", page.URL)
+		if ctx.Err() == nil {
+			cd.logger.Error().Err(err).Msgf("chapter downloader: Failed to get image from URL %s", page.URL)
+		}
 		return
 	}
 
@@ -345,15 +366,7 @@ func (r *Registry) save(queueInfo *QueueInfo, destination string, logger *zerolo
 	})
 
 	// Verify all images have been downloaded
-	allDownloaded := true
-	for _, page := range queueInfo.Pages {
-		if _, ok := (*r)[page.Index]; !ok {
-			allDownloaded = false
-			break
-		}
-	}
-
-	if !allDownloaded {
+	if !r.containsAll(queueInfo.Pages) {
 		// Clean up downloaded images
 		logger.Error().Msg("chapter downloader: Not all images have been downloaded, aborting")
 		queueInfo.Status = QueueStatusErrored
@@ -374,8 +387,64 @@ func (r *Registry) save(queueInfo *QueueInfo, destination string, logger *zerolo
 	if err != nil {
 		return err
 	}
+	_ = os.Remove(downloadProgressPath(destination))
 
 	return
+}
+
+func (r Registry) containsAll(pages []*hibikemanga.ChapterPage) bool {
+	for _, page := range pages {
+		if _, ok := r[page.Index]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func loadDownloadProgress(destination string, pages []*hibikemanga.ChapterPage) Registry {
+	registry := make(Registry)
+	data, err := os.ReadFile(downloadProgressPath(destination))
+	if err != nil || json.Unmarshal(data, &registry) != nil {
+		return registry
+	}
+
+	expectedURLs := make(map[int]string, len(pages))
+	for _, page := range pages {
+		expectedURLs[page.Index] = page.URL
+	}
+	for index, pageInfo := range registry {
+		if pageInfo.Index != index || pageInfo.OriginalURL != expectedURLs[index] || pageInfo.Size <= 0 ||
+			pageInfo.Filename == "" || filepath.Base(pageInfo.Filename) != pageInfo.Filename {
+			delete(registry, index)
+			continue
+		}
+		fileInfo, statErr := os.Stat(filepath.Join(destination, pageInfo.Filename))
+		if statErr != nil || !fileInfo.Mode().IsRegular() || fileInfo.Size() != pageInfo.Size {
+			delete(registry, index)
+		}
+	}
+	return registry
+}
+
+func (r Registry) saveProgress(destination string) error {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	path := downloadProgressPath(destination)
+	tempPath := path + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		_ = os.Remove(tempPath)
+		return err
+	}
+	return nil
+}
+
+func downloadProgressPath(destination string) string {
+	return filepath.Join(destination, "download-progress.json")
 }
 
 func (cd *Downloader) getChapterDownloadDir(downloadId DownloadID) string {

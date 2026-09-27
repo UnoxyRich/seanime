@@ -31,9 +31,12 @@ type (
 		mediaMap   *MediaMap // Refreshed on start and after each download
 		mediaMapMu sync.RWMutex
 
-		chapterDownloadedCh chan chapter_downloader.DownloadID
-		readingDownloadDir  bool
-		isOfflineRef        *util.Ref[bool]
+		chapterDownloadedCh    chan chapter_downloader.DownloadID
+		readingDownloadDir     bool
+		isOfflineRef           *util.Ref[bool]
+		resumeInterruptedQueue bool
+		backgroundPausedQueue  bool
+		queueResumeMu          sync.Mutex
 	}
 
 	// MediaMap is created after reading the download directory.
@@ -81,16 +84,29 @@ type (
 func NewDownloader(opts *NewDownloaderOptions) *Downloader {
 	_ = os.MkdirAll(opts.DownloadDir, os.ModePerm)
 	filecacher, _ := filecache.NewCacher(opts.DownloadDir)
+	resumeInterruptedQueue := false
+	if items, err := opts.Database.GetChapterDownloadQueue(); err == nil {
+		for _, item := range items {
+			if item.Status == string(chapter_downloader.QueueStatusDownloading) || item.Status == string(chapter_downloader.QueueStatusBackgroundPaused) {
+				resumeInterruptedQueue = true
+				break
+			}
+		}
+	}
+	if err := opts.Database.ResetDownloadingChapterDownloadQueueItems(); err != nil {
+		opts.Logger.Error().Err(err).Msg("manga: Could not recover interrupted chapter downloads")
+	}
 
 	d := &Downloader{
-		logger:         opts.Logger,
-		wsEventManager: opts.WSEventManager,
-		database:       opts.Database,
-		downloadDir:    opts.DownloadDir,
-		repository:     opts.Repository,
-		mediaMap:       new(MediaMap),
-		filecacher:     filecacher,
-		isOfflineRef:   opts.IsOfflineRef,
+		logger:                 opts.Logger,
+		wsEventManager:         opts.WSEventManager,
+		database:               opts.Database,
+		downloadDir:            opts.DownloadDir,
+		repository:             opts.Repository,
+		mediaMap:               new(MediaMap),
+		filecacher:             filecacher,
+		isOfflineRef:           opts.IsOfflineRef,
+		resumeInterruptedQueue: resumeInterruptedQueue,
 	}
 
 	d.chapterDownloader = chapter_downloader.NewDownloader(&chapter_downloader.NewDownloaderOptions{
@@ -271,12 +287,44 @@ func (d *Downloader) GetMediaDownloads(mediaId int, cached bool) (ret MediaDownl
 	return d.mediaMap.getMediaDownload(mediaId, d.database)
 }
 
-func (d *Downloader) RunChapterDownloadQueue() {
-	d.chapterDownloader.Run()
+func (d *Downloader) RunChapterDownloadQueue() bool {
+	return d.chapterDownloader.Run()
+}
+
+// ResumeInterruptedQueue restarts items that were downloading when the prior
+// server process stopped. Call after the app has confirmed it is foregrounded.
+func (d *Downloader) ResumeInterruptedQueue() {
+	d.queueResumeMu.Lock()
+	defer d.queueResumeMu.Unlock()
+	if !d.resumeInterruptedQueue {
+		return
+	}
+	if d.chapterDownloader.Run() {
+		d.resumeInterruptedQueue = false
+	}
+}
+
+func (d *Downloader) PauseChapterDownloadQueueForBackground() {
+	d.queueResumeMu.Lock()
+	defer d.queueResumeMu.Unlock()
+	if d.chapterDownloader.PauseForBackground() {
+		d.backgroundPausedQueue = true
+	}
+}
+
+func (d *Downloader) ResumeChapterDownloadQueueFromBackground() {
+	d.queueResumeMu.Lock()
+	defer d.queueResumeMu.Unlock()
+	if !d.backgroundPausedQueue && !d.resumeInterruptedQueue {
+		return
+	}
+	if d.chapterDownloader.Run() {
+		d.backgroundPausedQueue = false
+		d.resumeInterruptedQueue = false
+	}
 }
 
 func (d *Downloader) StopChapterDownloadQueue() {
-	_ = d.database.ResetDownloadingChapterDownloadQueueItems()
 	d.chapterDownloader.Stop()
 }
 

@@ -213,7 +213,7 @@ func SetAppInForeground(foreground bool) {
 		app.AutoScanner.SetSuspended(false)
 	}
 	if app.MangaDownloader != nil {
-		app.MangaDownloader.RunChapterDownloadQueue()
+		app.MangaDownloader.ResumeChapterDownloadQueueFromBackground()
 	}
 	if len(instance.pausedTorrents) > 0 && app.TorrentClientRepository != nil {
 		if err := app.TorrentClientRepository.ResumeTorrents(instance.pausedTorrents); err != nil {
@@ -241,7 +241,7 @@ func suspendAppBackgroundWork(instance *serverInstance, app *core.App) {
 		app.AutoScanner.SetSuspended(true)
 	}
 	if app.MangaDownloader != nil {
-		app.MangaDownloader.StopChapterDownloadQueue()
+		app.MangaDownloader.PauseChapterDownloadQueueForBackground()
 	}
 	if app.TorrentClientRepository == nil {
 		return
@@ -369,6 +369,8 @@ func startServer(instance *serverInstance, dataDir string, cacheDir string, port
 	serverLifecycle.Unlock()
 	if startedInBackground {
 		suspendAppBackgroundWork(instance, app)
+	} else if app.MangaDownloader != nil {
+		app.MangaDownloader.ResumeInterruptedQueue()
 	}
 	instance.backgroundMu.Unlock()
 

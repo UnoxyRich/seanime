@@ -1,6 +1,9 @@
 package chapter_downloader
 
 import (
+	"context"
+	"sync"
+
 	"github.com/goccy/go-json"
 	"github.com/rs/zerolog"
 	"seanime/internal/database/db"
@@ -8,27 +11,29 @@ import (
 	"seanime/internal/events"
 	hibikemanga "seanime/internal/extension/hibike/manga"
 	"seanime/internal/util"
-	"sync"
-	"time"
 )
 
 const (
-	QueueStatusNotStarted  QueueStatus = "not_started"
-	QueueStatusDownloading QueueStatus = "downloading"
-	QueueStatusErrored     QueueStatus = "errored"
+	QueueStatusNotStarted       QueueStatus = "not_started"
+	QueueStatusDownloading      QueueStatus = "downloading"
+	QueueStatusErrored          QueueStatus = "errored"
+	QueueStatusBackgroundPaused QueueStatus = "background_paused"
 )
 
 type (
 	// Queue is used to manage the download queue.
 	// If feeds the downloader with the next item in the queue.
 	Queue struct {
-		logger         *zerolog.Logger
-		mu             sync.Mutex
-		db             *db.Database
-		current        *QueueInfo
-		runCh          chan *QueueInfo // Channel to tell downloader to run the next item
-		active         bool
-		wsEventManager events.WSEventManagerInterface
+		logger           *zerolog.Logger
+		mu               sync.Mutex
+		db               *db.Database
+		current          *QueueInfo
+		runCh            chan *QueueInfo // Channel to tell downloader to run the next item
+		active           bool
+		backgroundPaused bool
+		ctx              context.Context
+		cancel           context.CancelFunc
+		wsEventManager   events.WSEventManagerInterface
 	}
 
 	QueueStatus string
@@ -39,6 +44,8 @@ type (
 		Pages          []*hibikemanga.ChapterPage
 		DownloadedUrls []string
 		Status         QueueStatus
+		ctx            context.Context
+		paused         bool
 	}
 )
 
@@ -82,8 +89,7 @@ func (q *Queue) Add(id DownloadID, pages []*hibikemanga.ChapterPage, runNext boo
 	q.wsEventManager.SendEvent(events.ChapterDownloadQueueUpdated, nil)
 
 	if runNext && q.active {
-		// Tells queue to run next if possible
-		go q.runNext()
+		q.runNext()
 	}
 
 	return nil
@@ -92,6 +98,9 @@ func (q *Queue) Add(id DownloadID, pages []*hibikemanga.ChapterPage, runNext boo
 func (q *Queue) HasCompleted(queueInfo *QueueInfo) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if !q.isCurrent(queueInfo) {
+		return
+	}
 
 	if queueInfo.Status == QueueStatusErrored {
 		q.logger.Warn().Msgf("chapter downloader: Errored %s", queueInfo.DownloadID.ChapterId)
@@ -100,10 +109,10 @@ func (q *Queue) HasCompleted(queueInfo *QueueInfo) {
 	} else {
 		q.logger.Debug().Msgf("chapter downloader: Dequeueing %s", queueInfo.DownloadID.ChapterId)
 		// Dequeue the item from the database.
-		_, err := q.db.DequeueChapterDownloadQueueItem()
+		_, err := q.db.DequeueChapterDownloadQueueItemByID(queueInfo.DownloadID.Provider, queueInfo.DownloadID.MediaId, queueInfo.DownloadID.ChapterId)
 		if err != nil {
 			q.logger.Error().Err(err).Msgf("Failed to dequeue chapter download queue item for id %v", queueInfo.DownloadID)
-			return
+			_ = q.db.UpdateChapterDownloadQueueItemStatus(queueInfo.DownloadID.Provider, queueInfo.DownloadID.MediaId, queueInfo.DownloadID.ChapterId, string(QueueStatusNotStarted))
 		}
 	}
 
@@ -119,37 +128,93 @@ func (q *Queue) HasCompleted(queueInfo *QueueInfo) {
 	}
 }
 
+// HasPaused retains the current queue item after its in-flight work is canceled.
+func (q *Queue) HasPaused(queueInfo *QueueInfo) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.isCurrent(queueInfo) {
+		return
+	}
+
+	status := QueueStatusNotStarted
+	if q.backgroundPaused && !q.active {
+		status = QueueStatusBackgroundPaused
+	}
+	_ = q.db.UpdateChapterDownloadQueueItemStatus(queueInfo.DownloadID.Provider, queueInfo.DownloadID.MediaId, queueInfo.DownloadID.ChapterId, string(status))
+	queueInfo.paused = true
+	q.current = nil
+	q.wsEventManager.SendEvent(events.ChapterDownloadQueueUpdated, nil)
+	if q.active {
+		q.runNext()
+	}
+}
+
 // Run activates the queue and invokes runNext
-func (q *Queue) Run() {
+func (q *Queue) Run() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	if !q.active {
 		q.logger.Debug().Msg("chapter downloader: Starting queue")
+		if err := q.db.ResetDownloadingChapterDownloadQueueItems(); err != nil {
+			q.logger.Error().Err(err).Msg("chapter downloader: Could not reset interrupted queue items")
+			return false
+		}
+		q.backgroundPaused = false
+		q.ctx, q.cancel = context.WithCancel(context.Background())
 	}
 
 	q.active = true
 
 	// Tells queue to run next if possible
 	q.runNext()
+	return true
 }
 
 // Stop deactivates the queue
 func (q *Queue) Stop() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	q.stopLocked(false)
+}
 
+func (q *Queue) PauseForBackground() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	wasActive := q.active
+	if wasActive {
+		q.backgroundPaused = true
+		if err := q.db.PauseChapterDownloadQueueItemsForBackground(); err != nil {
+			q.logger.Error().Err(err).Msg("chapter downloader: Could not save manga queue state for backgrounding")
+		}
+	}
+	q.stopLocked(true)
+	return wasActive
+}
+
+func (q *Queue) stopLocked(background bool) {
 	if q.active {
 		q.logger.Debug().Msg("chapter downloader: Stopping queue")
 	}
 
 	q.active = false
+	if q.cancel != nil {
+		q.cancel()
+		q.cancel = nil
+		q.ctx = nil
+	}
+	if q.current != nil && !background {
+		_ = q.db.UpdateChapterDownloadQueueItemStatus(q.current.DownloadID.Provider, q.current.DownloadID.MediaId, q.current.DownloadID.ChapterId, string(QueueStatusNotStarted))
+	}
 }
 
 // runNext runs the next item in the queue.
 //   - Checks if there is a current item, if so, it returns.
 //   - If nothing is running, it gets the next item (QueueInfo) from the database, sets it as current and sends it to the downloader.
 func (q *Queue) runNext() {
+	if !q.active || q.current != nil {
+		return
+	}
 
 	q.logger.Debug().Msg("chapter downloader: Processing next item in queue")
 
@@ -163,50 +228,52 @@ func (q *Queue) runNext() {
 		return
 	}
 
-	q.logger.Debug().Msg("chapter downloader: Checking next item in queue")
+	for {
+		q.logger.Debug().Msg("chapter downloader: Checking next item in queue")
 
-	// Get next item from the database.
-	next, _ := q.db.GetNextChapterDownloadQueueItem()
-	if next == nil {
-		q.logger.Debug().Msg("chapter downloader: No next item in queue")
+		// Get next item from the database.
+		next, _ := q.db.GetNextChapterDownloadQueueItem()
+		if next == nil {
+			q.logger.Debug().Msg("chapter downloader: No next item in queue")
+			return
+		}
+
+		id := DownloadID{
+			Provider:      next.Provider,
+			MediaId:       next.MediaID,
+			ChapterId:     next.ChapterID,
+			ChapterNumber: next.ChapterNumber,
+		}
+
+		q.logger.Debug().Msgf("chapter downloader: Preparing next item in queue: %s", id.ChapterId)
+
+		var pages []*hibikemanga.ChapterPage
+		if err := json.Unmarshal(next.PageData, &pages); err != nil {
+			q.logger.Error().Err(err).Msgf("Failed to unmarshal pages for id %v", id)
+			if statusErr := q.db.UpdateChapterDownloadQueueItemStatus(id.Provider, id.MediaId, id.ChapterId, string(QueueStatusErrored)); statusErr != nil {
+				q.logger.Error().Err(statusErr).Msgf("Failed to mark malformed chapter queue item errored: %s", id.ChapterId)
+				return
+			}
+			q.wsEventManager.SendEvent(events.ChapterDownloadQueueUpdated, nil)
+			continue
+		}
+
+		_ = q.db.UpdateChapterDownloadQueueItemStatus(id.Provider, id.MediaId, id.ChapterId, string(QueueStatusDownloading))
+		q.current = &QueueInfo{
+			DownloadID:     id,
+			Pages:          pages,
+			DownloadedUrls: make([]string, 0),
+			Status:         QueueStatusDownloading,
+			ctx:            q.ctx,
+		}
+		q.wsEventManager.SendEvent(events.ChapterDownloadQueueUpdated, nil)
+
+		q.logger.Info().Msgf("chapter downloader: Running next item in queue: %s", id.ChapterId)
+
+		// Tell Downloader to run.
+		q.runCh <- q.current
 		return
 	}
-
-	id := DownloadID{
-		Provider:      next.Provider,
-		MediaId:       next.MediaID,
-		ChapterId:     next.ChapterID,
-		ChapterNumber: next.ChapterNumber,
-	}
-
-	q.logger.Debug().Msgf("chapter downloader: Preparing next item in queue: %s", id.ChapterId)
-
-	q.wsEventManager.SendEvent(events.ChapterDownloadQueueUpdated, nil)
-	// Update status
-	_ = q.db.UpdateChapterDownloadQueueItemStatus(id.Provider, id.MediaId, id.ChapterId, string(QueueStatusDownloading))
-
-	// Set the current item.
-	q.current = &QueueInfo{
-		DownloadID:     id,
-		DownloadedUrls: make([]string, 0),
-		Status:         QueueStatusDownloading,
-	}
-
-	// Unmarshal the page data.
-	err := json.Unmarshal(next.PageData, &q.current.Pages)
-	if err != nil {
-		q.logger.Error().Err(err).Msgf("Failed to unmarshal pages for id %v", id)
-		_ = q.db.UpdateChapterDownloadQueueItemStatus(id.Provider, id.MediaId, id.ChapterId, string(QueueStatusNotStarted))
-		return
-	}
-
-	// TODO: This is a temporary fix to prevent the downloader from running too fast.
-	time.Sleep(5 * time.Second)
-
-	q.logger.Info().Msgf("chapter downloader: Running next item in queue: %s", id.ChapterId)
-
-	// Tell Downloader to run
-	q.runCh <- q.current
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -220,4 +287,11 @@ func (q *Queue) GetCurrent() (qi *QueueInfo, ok bool) {
 	}
 
 	return q.current, true
+}
+
+func (q *Queue) isCurrent(queueInfo *QueueInfo) bool {
+	return queueInfo != nil && q.current != nil &&
+		q.current.DownloadID.Provider == queueInfo.DownloadID.Provider &&
+		q.current.DownloadID.MediaId == queueInfo.DownloadID.MediaId &&
+		q.current.DownloadID.ChapterId == queueInfo.DownloadID.ChapterId
 }
