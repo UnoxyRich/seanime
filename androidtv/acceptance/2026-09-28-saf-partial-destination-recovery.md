@@ -27,9 +27,10 @@ recovery, removes the partial document, and clears the journal.
 - Both ABI APKs passed `scripts/verify_android_native_alignment.py`; all four
   native libraries in each APK meet the 16 KiB ELF/ZIP alignment check.
 - x86_64 runtime coverage remains open. SDK Manager could not prepare an
-  Android 12 x86_64 system image because the host ran out of disk space; it
-  removed the incomplete package. The x86_64 APK was built and statically
-  checked, but was not run on an x86_64 device.
+  Android 12 x86_64 system image because the host ran out of disk space. This
+  still failed after cleaning Gradle intermediates to make 3.4 GiB available;
+  SDK Manager removed the incomplete package. The x86_64 APK was built and
+  statically checked, but was not run on an x86_64 device.
 
 This exercises the adapter contract through an in-memory Android document
 provider. It does not establish cleanup behavior for a physical USB provider.
