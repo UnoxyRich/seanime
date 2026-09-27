@@ -50,7 +50,8 @@ Run the Android host smoke test on an Android TV emulator or device with:
 
 The instrumentation suite checks embedded UI loading, top-level bridge
 authorization, sandboxed iframe isolation, D-pad movement through controls,
-menus, sliders, dialogs, and server shutdown/restart. It also exercises
+menus, sliders, dialogs, external-player intent handoff and return focus, and
+server shutdown/restart. It also exercises
 selected SAF tree grants, directory creation, ranged reads, chunked writes and
 replacement, listing, and deletion through a debug-only in-memory document
 provider. The `Android TV

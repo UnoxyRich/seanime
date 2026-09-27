@@ -14,9 +14,10 @@ and device model with each result.
   structured-clone fallback for older WebViews, Android stream routing,
   playlist playback selection, and watch-party player identity.
 - ARM64 and x86_64 debug APKs build and pass APK signature verification.
-- All 21 Android instrumentation tests pass on the API 31 ARM64 TV emulator
+- All 22 Android instrumentation tests pass on the API 31 ARM64 TV emulator
   with WebView 91.0.4472.114 and 4 KiB pages. They cover server
-  startup/restart, bridge access, injected Android D-pad key events through the
+  startup/restart, bridge access, external-player scheme dispatch and focus
+  return, injected Android D-pad key events through the
   focused WebView, spatial focus controls, a test document
   provider, native-player lifecycle/commands, missing-source recovery, WebView
   route restoration, callback intent delivery, persisted decoder/track state,
@@ -44,7 +45,9 @@ and device model with each result.
   focus restoration details are recorded in the
   [focus restoration run](acceptance/2026-09-28-focus-restoration.md). The
   update installer path and system-consent handoff are covered in the
-  [update installer run](acceptance/2026-09-28-update-installer.md).
+  [update installer run](acceptance/2026-09-28-update-installer.md). The
+  external-player intent handoff and focus return are recorded in the
+  [external-player run](acceptance/2026-09-28-external-player-handoff.md).
 - Remote text input is covered on the emulator: injected letter keys reach a
   focused WebView field and D-pad movement does not steal its focus. The OAuth
   WebView now requests resize behavior for the TV keyboard; its window mode is
@@ -130,7 +133,7 @@ and device model with each result.
 - The latest playback lifecycle run confirms that explicit Back dismissal
   serializes checkpoint deletion after any in-flight write, stop/destroy cannot
   recreate the dismissed snapshot, and a fresh MainActivity discovers a ticket
-  persisted by an earlier process. All 21 Android instrumentation tests
+  persisted by an earlier process. All 22 Android instrumentation tests
   passed on the ARM64 TV emulator; current APK hashes and build limitations are
   recorded in the [dismissal recovery run](acceptance/2026-09-28-playback-dismissal-recovery.md).
 - An end-to-end Android force-stop and cold relaunch restored a URL-backed
