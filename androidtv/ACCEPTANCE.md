@@ -14,14 +14,15 @@ and device model with each result.
   structured-clone fallback for older WebViews, Android stream routing,
   playlist playback selection, and watch-party player identity.
 - ARM64 and x86_64 debug APKs build and pass APK signature verification.
-- All 19 Android instrumentation tests pass on the API 31 ARM64 TV emulator
+- All 20 Android instrumentation tests pass on the API 31 ARM64 TV emulator
   with WebView 91.0.4472.114 and 4 KiB pages. They cover server
   startup/restart, bridge access, injected Android D-pad key events through the
   focused WebView, spatial focus controls, a test document
   provider, native-player lifecycle/commands, missing-source recovery, WebView
   route restoration, callback intent delivery, persisted decoder/track state,
   an opaque-ticket-only recovery bridge response, dismissed playback
-  checkpoint cleanup, and the bundled media tools.
+  checkpoint cleanup, fresh-Activity discovery of a persisted recovery ticket,
+  and the bundled media tools.
   The document-provider tests also release and restore a persisted permission
   and verify that the adapter denies access while the grant is revoked. See the
   [storage grant run](acceptance/2026-09-28-storage-grant.md).
@@ -123,8 +124,9 @@ and device model with each result.
   source revisions, APK hashes, environment, and test scope.
 
 - The latest playback lifecycle run confirms that explicit Back dismissal
-  serializes checkpoint deletion after any in-flight write, and stop/destroy
-  cannot recreate the dismissed snapshot. All 19 Android instrumentation tests
+  serializes checkpoint deletion after any in-flight write, stop/destroy cannot
+  recreate the dismissed snapshot, and a fresh MainActivity discovers a ticket
+  persisted by an earlier process. All 20 Android instrumentation tests
   passed on the ARM64 TV emulator; current APK hashes and build limitations are
   recorded in the [dismissal recovery run](acceptance/2026-09-28-playback-dismissal-recovery.md).
 

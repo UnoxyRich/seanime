@@ -1,6 +1,7 @@
 # Android TV playback dismissal recovery run — 2026-09-28
 
-Source commit: `a7f48805` (`codex/android-tv`).
+Application source commit: `a7f48805` (`codex/android-tv`).
+Cold-launch instrumentation: `1ca2c8aa`.
 
 ## Results
 
@@ -11,7 +12,12 @@ Source commit: `a7f48805` (`codex/android-tv`).
 - Recovery writes and clears now share one serial executor. Dismissing or
   completing playback invalidates pending source-capture callbacks and queued
   snapshot writes. Starting a different media item re-enables checkpointing.
-- `:app:connectedDebugAndroidTest`: **19 passed, 0 failed, 0 skipped** on the
+- Added a fresh-MainActivity instrumentation case that seeds a ticket with an
+  earlier process ID, launches the host without a recovery intent, and verifies
+  the persisted ticket is discovered while only its opaque ID reaches the
+  bridge. This exercises launch-time discovery but does not kill the Android
+  process.
+- `:app:connectedDebugAndroidTest`: **20 passed, 0 failed, 0 skipped** on the
   API 31 ARM64 TV emulator (Android 12, 1920 × 1080, WebView 91.0.4472.114).
   The run compiled both Android Kotlin source sets and executed the full
   instrumentation suite.
