@@ -70,6 +70,12 @@ and device model with each result.
   the API 31 ARM64 TV emulator. See the
   [manga background/resume run](acceptance/2026-09-28-background-manga-resume.md)
   for APK hashes and verification details.
+- Torrent hashes Seanime pauses are now atomically stored in app data and
+  reloaded by a fresh server instance. Foreground return retries the resume
+  request and retains recovery state on failure. The mobile lifecycle test,
+  ARM64/x86_64 binding build, and all 18 Android instrumentation tests pass;
+  a configured live torrent service still needs a device run. See the
+  [torrent resume run](acceptance/2026-09-28-torrent-resume-intent.md).
 - A visible host-GPU emulator run at 1920 × 1080 verified remote navigation to
   the USB-folder control and restoration of its purple focus ring after native
   dialog dismissal. See the captured
