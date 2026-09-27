@@ -1,6 +1,7 @@
-# Android TV focus restoration run — 2026-09-28
+# Android TV launcher and focus restoration run — 2026-09-28
 
-Source commit: `e6a8b723` (`codex/android-tv`).
+Android application source commit: `e6a8b723` (`codex/android-tv`).
+Instrumentation test source commit: `c03566f9`.
 
 ## Environment
 
@@ -12,11 +13,14 @@ Source commit: `e6a8b723` (`codex/android-tv`).
 
 ## Results
 
-- `:app:connectedDebugAndroidTest`: **11 passed, 0 failed**. The startup test
+- `:app:connectedDebugAndroidTest`: **12 passed, 0 failed**. The startup test
   creates a focused WebView control, invokes the native Android storage-picker
   path, dismisses the TV image's fallback dialog with Back, and checks that the
   same control is active again with the Android TV 3 px outline and visible
   focus ring. It also verifies the activity loses and regains window focus.
+- The package-manager test confirms the app is discoverable from the Leanback
+  launcher, resolves to `MainActivity`, has an icon and TV banner, requires the
+  Leanback feature, and declares touchscreen support optional.
 - Manual D-pad acceptance rendered the actual first-run Seanime screen, moved
   focus to “Choose library folder on USB,” opened the native fallback dialog,
   and returned to the same button with its purple focus ring visible. The
@@ -31,7 +35,10 @@ Source commit: `e6a8b723` (`codex/android-tv`).
   both with v1/v2 using the Android debug certificate. All four native
   libraries in each APK passed the 16 KiB ELF/ZIP alignment verifier.
 - Physical Android TV, USB-provider operations, x86_64 runtime, 4K devices,
-  and authenticated live playback sources remain unverified.
+  and authenticated live playback sources remain unverified. The host had only
+  1.7 GiB free and no x86_64 TV image installed. The available API 36 image
+  archive is about 990 MB and contains an 8.6 GB logical `system.img`; I left it
+  uninstalled to avoid exhausting local storage.
 
 ## APK SHA-256
 

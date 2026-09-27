@@ -13,7 +13,7 @@ and device model with each result.
   bridge bootstrap, Android stream routing, playlist playback selection, and
   watch-party player identity.
 - ARM64 and x86_64 debug APKs build and pass APK signature verification.
-- All 11 Android instrumentation tests pass on the API 31 ARM64 TV emulator
+- All 12 Android instrumentation tests pass on the API 31 ARM64 TV emulator
   with WebView 91.0.4472.114 and 4 KiB pages. They cover server
   startup/restart, bridge access, injected Android D-pad key events through the
   focused WebView, spatial focus controls, a test document
@@ -23,8 +23,9 @@ and device model with each result.
   The media test encodes H.264 with the bundled
   CPU encoder, checks it with ffprobe, decodes it with FFmpeg, and renders/seeks
   it in Media3 while paused. The startup test also opens and dismisses the
-  native storage fallback dialog and verifies restored focus styling. Latest
-  run details are recorded in
+  native storage fallback dialog and verifies restored focus styling. Another
+  test verifies Leanback launcher discovery, icon/banner metadata, and optional
+  touchscreen declaration. Latest run details are recorded in
   [focus restoration run](acceptance/2026-09-28-focus-restoration.md).
 - A visible host-GPU emulator run at 1920 × 1080 verified remote navigation to
   the USB-folder control and restoration of its purple focus ring after native
