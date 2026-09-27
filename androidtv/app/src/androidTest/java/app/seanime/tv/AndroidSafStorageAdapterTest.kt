@@ -6,9 +6,13 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Base64
 import androidx.documentfile.provider.DocumentFile
+import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
+import app.seanime.tv.gomobile.mobile.Mobile
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -333,8 +337,87 @@ class AndroidSafStorageAdapterTest {
         }
     }
 
+    @Test
+    fun goDirectorySelectorUsesThePersistedSafAdapter() {
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        TestDocumentsProvider.reset(targetContext)
+
+        val treeUri = DocumentsContract.buildTreeDocumentUri(TestDocumentsProvider.AUTHORITY, "root")
+        val readWriteFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val grantFlags = readWriteFlags or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+            Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        TestDocumentsProvider.grantTree(targetContext, treeUri, grantFlags)
+        targetContext.contentResolver.takePersistableUriPermission(treeUri, readWriteFlags)
+
+        val storagePreferences = targetContext.getSharedPreferences("android-tv-storage", Context.MODE_PRIVATE)
+        val journalPreferences = targetContext.getSharedPreferences("android-tv-storage-writes", Context.MODE_PRIVATE)
+        val previousRoots = storagePreferences.getString("roots", "[]")
+        val previousJournal = journalPreferences.getString("transactions", "{}")
+        val rootPath = AndroidSafStorageAdapter.virtualRoot(treeUri)
+        storagePreferences.edit().putString(
+            "roots",
+            JSONArray().put(
+                JSONObject()
+                    .put("id", AndroidSafStorageAdapter.storageId(treeUri))
+                    .put("uri", treeUri.toString())
+                    .put("path", rootPath)
+                    .put("name", "Test USB"),
+            ).toString(),
+        ).commit()
+        journalPreferences.edit().putString("transactions", "{}").commit()
+
+        var scenario: ActivityScenario<MainActivity>? = null
+        try {
+            val root = DocumentFile.fromTreeUri(targetContext, treeUri)
+                ?: throw AssertionError("Could not open test storage root")
+            val anime = root.createDirectory("Anime")
+                ?: throw AssertionError("Could not create Anime directory")
+            anime.createDirectory("Season 1")
+                ?: throw AssertionError("Could not create Season 1 directory")
+
+            Mobile.setAndroidStorageAdapter(AndroidSafStorageAdapter(targetContext))
+            scenario = ActivityScenario.launch(MainActivity::class.java)
+            assertTrue("Seanime server did not start", Mobile.waitForServer(60_000))
+
+            val rootResponse = postDirectorySelector(rootPath)
+            assertEquals(200, rootResponse.first)
+            assertTrue("Go API did not list the SAF Anime directory: ${rootResponse.second}", rootResponse.second.contains("Anime"))
+
+            val animeResponse = postDirectorySelector("$rootPath/Anime")
+            assertEquals(200, animeResponse.first)
+            assertTrue("Go API did not list the SAF Season 1 directory: ${animeResponse.second}", animeResponse.second.contains("Season 1"))
+        } finally {
+            scenario?.close()
+            Mobile.stopServer()
+            storagePreferences.edit().putString("roots", previousRoots).commit()
+            journalPreferences.edit().putString("transactions", previousJournal).commit()
+            runCatching { targetContext.contentResolver.releasePersistableUriPermission(treeUri, readWriteFlags) }
+            targetContext.revokeUriPermission(treeUri, readWriteFlags)
+            TestDocumentsProvider.reset(targetContext)
+        }
+    }
+
     private fun encode(value: String): String = Base64.encodeToString(value.toByteArray(), Base64.NO_WRAP)
     private fun decode(value: String): String = String(Base64.decode(value, Base64.NO_WRAP))
+
+    private fun postDirectorySelector(input: String): Pair<Int, String> {
+        val connection = URL("http://127.0.0.1:43211/api/v1/directory-selector")
+            .openConnection() as HttpURLConnection
+        connection.requestMethod = "POST"
+        connection.connectTimeout = 5_000
+        connection.readTimeout = 10_000
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json")
+        connection.outputStream.use { output ->
+            output.write(JSONObject().put("input", input).toString().toByteArray())
+        }
+        val status = connection.responseCode
+        val body = (if (status < 400) connection.inputStream else connection.errorStream)
+            .bufferedReader()
+            .use { it.readText() }
+        connection.disconnect()
+        return status to body
+    }
 
     private fun writeDocument(context: Context, parent: DocumentFile, name: String, content: String): DocumentFile {
         val document = parent.createFile("application/octet-stream", name)
