@@ -140,7 +140,7 @@ export default function Page() {
     React.useEffect(() => {
         const initialTab = searchParams.get("tab")
         if (initialTab) {
-            setTab(initialTab)
+            setTab(__isAndroidTV__ && initialTab === "media-player" ? "playback" : initialTab)
             setTimeout(() => {
                 // Remove search param
                 if (searchParams.has("tab")) {
@@ -216,10 +216,10 @@ export default function Page() {
                                         className="group"
                                     ><LuCirclePlay className="text-base mr-2 transition-transform duration-200" /> Video Playback</TabsTrigger>
 
-                                    <TabsTrigger
+                                    {!__isAndroidTV__ && <TabsTrigger
                                         value="media-player"
                                         className="group"
-                                    ><LuMonitorPlay className="text-base mr-2 transition-transform duration-200" /> Desktop Media Player</TabsTrigger>
+                                    ><LuMonitorPlay className="text-base mr-2 transition-transform duration-200" /> Desktop Media Player</TabsTrigger>}
                                     <TabsTrigger
                                         value="external-player-link"
                                         className="group"
@@ -800,9 +800,9 @@ export default function Page() {
 
                                     </TabsContent>
 
-                                    <TabsContent value="media-player" className={tabContentClass}>
+                                    {!__isAndroidTV__ && <TabsContent value="media-player" className={tabContentClass}>
                                         <MediaplayerSettings isPending={isPending} />
-                                    </TabsContent>
+                                    </TabsContent>}
 
 
                                     <TabsContent value="external-player-link" className={tabContentClass}>
