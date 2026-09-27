@@ -8,6 +8,7 @@ import android.util.Base64
 import androidx.documentfile.provider.DocumentFile
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.FileNotFoundException
+import java.io.IOException
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -174,6 +175,28 @@ class AndroidSafStorageAdapterTest {
             val root = DocumentFile.fromTreeUri(targetContext, treeUri)
                 ?: throw AssertionError("Could not open test storage root")
             val journal = JSONObject()
+            val writer = AndroidSafStorageAdapter(targetContext)
+
+            val cancelledPath = "$rootPath/cancelled.mkv"
+            val cancelledWrite = writer.beginWrite(cancelledPath, true)
+            writer.writeChunk(cancelledWrite, encode("cancelled"))
+            writer.cancelWrite(cancelledWrite)
+            assertFalse(root.listFiles().any { it.name == ".cancelled.mkv.seanime-$cancelledWrite.part" })
+            assertEquals("{}", journalPreferences.getString("transactions", "{}"))
+
+            assertNotNull("Could not create the destination directory for failure coverage", root.createDirectory("blocked.mkv"))
+            val failedWrite = writer.beginWrite("$rootPath/blocked.mkv", true)
+            writer.writeChunk(failedWrite, encode("must not replace a directory"))
+            var failedAsExpected = false
+            try {
+                writer.finishWrite(failedWrite)
+            } catch (_: IOException) {
+                failedAsExpected = true
+            }
+            assertTrue("A write replaced a destination directory", failedAsExpected)
+            assertTrue(root.findFile("blocked.mkv")?.isDirectory == true)
+            assertFalse(root.listFiles().any { it.name?.contains("blocked.mkv.seanime-") == true })
+            assertEquals("{}", journalPreferences.getString("transactions", "{}"))
 
             val orphanId = "10000000-0000-4000-8000-000000000001"
             val orphanTemp = ".orphan.mkv.seanime-$orphanId.part"
@@ -241,6 +264,33 @@ class AndroidSafStorageAdapterTest {
             assertFalse(names.contains(committedBackup))
             assertFalse(names.contains(copyingTemp))
             assertEquals("{}", journalPreferences.getString("transactions", "{}"))
+
+            val protectedDocument = writeDocument(targetContext, root, "protected.mkv", "preserve")
+            val invalidJournal = JSONObject().put(
+                "not-a-transaction-id",
+                writeJournalEntry(
+                    "$rootPath/protected.mkv",
+                    ".protected.mkv.seanime-invalid.part",
+                    ".protected.mkv.seanime-invalid.backup",
+                    "writing",
+                ),
+            )
+            journalPreferences.edit().putString("transactions", invalidJournal.toString()).commit()
+            val corruptJournalAdapter = AndroidSafStorageAdapter(targetContext)
+            var refusedUnsafeAccess = false
+            try {
+                corruptJournalAdapter.stat("$rootPath/protected.mkv")
+            } catch (_: IOException) {
+                refusedUnsafeAccess = true
+            }
+            assertTrue("Storage access continued with an invalid write journal", refusedUnsafeAccess)
+            assertEquals(invalidJournal.toString(), journalPreferences.getString("transactions", "{}"))
+            val protectedBytes = targetContext.contentResolver.openInputStream(protectedDocument.uri)
+                ?.use { String(it.readBytes()) }
+            assertEquals("preserve", protectedBytes)
+
+            journalPreferences.edit().putString("transactions", "{}").commit()
+            assertEquals(8L, JSONObject(corruptJournalAdapter.stat("$rootPath/protected.mkv")).getLong("size"))
         } finally {
             storagePreferences.edit().putString("roots", previousRoots).commit()
             journalPreferences.edit().putString("transactions", previousJournal).commit()
