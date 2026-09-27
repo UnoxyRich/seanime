@@ -87,6 +87,11 @@ class AndroidTvStartupTest {
                     scenario,
                     "document.readyState === 'complete' && document.title === 'Seanime' && " +
                         "document.getElementById('root') !== null && " +
+                        "(() => { const values = [3, 1, 2]; const deferred = Promise.withResolvers(); deferred.resolve(42); return " +
+                        "values.at(-1) === 2 && values.findLast(value => value % 2 === 1) === 1 && " +
+                        "values.findLastIndex(value => value % 2 === 1) === 1 && values.toSorted((a, b) => a - b).join(',') === '1,2,3' && " +
+                        "values.toReversed().join(',') === '2,1,3' && values.toSpliced(1, 1, 4).join(',') === '3,4,2' && " +
+                        "values.join(',') === '3,1,2' && deferred.promise instanceof Promise && typeof deferred.resolve === 'function'; })() && " +
                         "window.AndroidTV?.serverStatus() === 'ready' && " +
                         "window.AndroidTVNativeBridge?.serverStatus('invalid-token') === ''",
                     ) == "true"

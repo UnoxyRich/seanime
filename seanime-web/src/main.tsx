@@ -1,3 +1,4 @@
+import "@/lib/polyfills/modern-array-methods"
 import { useIsSimulatedUser } from "@/app/(main)/_hooks/use-server-status"
 import { requestAndroidTVBridgeToken } from "@/lib/android-tv-bootstrap"
 import { ClientProviders, queryClient, store } from "@/app/client-providers"
