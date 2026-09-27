@@ -38,6 +38,10 @@ and device model with each result.
   the USB-folder control and restoration of its purple focus ring after native
   dialog dismissal. See the captured
   [focus restoration screenshot](acceptance/screenshots/2026-09-28-api31-arm64-dpad-focus-restored.png).
+- The first-run setup now opens with a visible D-pad focus target, describes
+  the built-in Android TV player, and configures qBittorrent/Transmission as
+  network services without desktop executable paths. See the
+  [onboarding run](acceptance/2026-09-28-onboarding-tv.md).
 - The four transcoding capability tests and seven playback checkpoint tests
   pass. Physical-device scenarios below still need recorded passing runs.
 - Android storage, direct-stream, playlist, and Nakama Go package tests pass,
