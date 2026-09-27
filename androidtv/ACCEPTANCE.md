@@ -29,7 +29,10 @@ and device model with each result.
   SAF write-journal recovery also covers interrupted writes, replacement
   rollback, committed replacement preservation, incomplete fallback cleanup,
   isolation of an unavailable root, and calls through the Go directory API to
-  the registered SAF adapter. See the
+  the registered SAF adapter. A targeted regression now also forces a
+  fallback copy to fail while the provider refuses deletion; the adapter keeps
+  the journal and blocks root access until cleanup succeeds. All five SAF
+  adapter instrumentation tests pass on the API 31 ARM64 TV emulator. See the
   [write recovery run](acceptance/2026-09-28-saf-write-recovery.md).
   The media test encodes H.264 with the bundled
   CPU encoder, checks it with ffprobe, decodes it with FFmpeg, and renders/seeks

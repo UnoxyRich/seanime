@@ -148,6 +148,81 @@ class AndroidSafStorageAdapterTest {
     }
 
     @Test
+    fun failedFallbackCleanupKeepsJournalUntilPartialDestinationIsRemoved() {
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        TestDocumentsProvider.reset(targetContext)
+
+        val treeUri = DocumentsContract.buildTreeDocumentUri(TestDocumentsProvider.AUTHORITY, "root")
+        val readWriteFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val grantFlags = readWriteFlags or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+            Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        TestDocumentsProvider.grantTree(targetContext, treeUri, grantFlags)
+        targetContext.contentResolver.takePersistableUriPermission(treeUri, readWriteFlags)
+
+        val storagePreferences = targetContext.getSharedPreferences("android-tv-storage", Context.MODE_PRIVATE)
+        val journalPreferences = targetContext.getSharedPreferences("android-tv-storage-writes", Context.MODE_PRIVATE)
+        val previousRoots = storagePreferences.getString("roots", "[]")
+        val previousJournal = journalPreferences.getString("transactions", "{}")
+        val rootPath = AndroidSafStorageAdapter.virtualRoot(treeUri)
+        storagePreferences.edit().putString(
+            "roots",
+            JSONArray().put(
+                JSONObject()
+                    .put("id", AndroidSafStorageAdapter.storageId(treeUri))
+                    .put("uri", treeUri.toString())
+                    .put("path", rootPath)
+                    .put("name", "Test USB"),
+            ).toString(),
+        ).commit()
+        journalPreferences.edit().putString("transactions", "{}").commit()
+
+        try {
+            val root = DocumentFile.fromTreeUri(targetContext, treeUri)
+                ?: throw AssertionError("Could not open test storage root")
+            val destinationName = "partial.mkv"
+            val adapter = AndroidSafStorageAdapter(targetContext)
+            val handle = adapter.beginWrite("$rootPath/$destinationName", true)
+            adapter.writeChunk(handle, encode("new video data"))
+
+            TestDocumentsProvider.setRenameUnavailable(true)
+            TestDocumentsProvider.setWriteFailureName(destinationName)
+            TestDocumentsProvider.setDeleteDeniedName(destinationName)
+            var writeFailed = false
+            try {
+                adapter.finishWrite(handle)
+            } catch (_: IOException) {
+                writeFailed = true
+            }
+            assertTrue("Injected fallback copy failure was not reported", writeFailed)
+            assertNotNull("The provider should retain the undeletable partial file", root.findFile(destinationName))
+            assertTrue(
+                "The recovery journal was cleared while its partial destination remained",
+                journalPreferences.getString("transactions", "{}") != "{}",
+            )
+
+            val recoveryAdapter = AndroidSafStorageAdapter(targetContext)
+            var unsafeRootAccessAllowed = false
+            try {
+                recoveryAdapter.stat("$rootPath/$destinationName")
+                unsafeRootAccessAllowed = true
+            } catch (_: IOException) {
+                // The root remains blocked while the provider refuses cleanup.
+            }
+            assertFalse("The adapter exposed an unresolved partial destination", unsafeRootAccessAllowed)
+
+            TestDocumentsProvider.setDeleteDeniedName(null)
+            assertEquals(0, JSONArray(recoveryAdapter.list(rootPath)).length())
+            assertEquals("{}", journalPreferences.getString("transactions", "{}"))
+        } finally {
+            TestDocumentsProvider.reset(targetContext)
+            storagePreferences.edit().putString("roots", previousRoots).commit()
+            journalPreferences.edit().putString("transactions", previousJournal).commit()
+            runCatching { targetContext.contentResolver.releasePersistableUriPermission(treeUri, readWriteFlags) }
+            targetContext.revokeUriPermission(treeUri, readWriteFlags)
+        }
+    }
+
+    @Test
     fun abandonedWritesAreRecoveredWithoutLosingCommittedOrOriginalFiles() {
         val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
         TestDocumentsProvider.reset(targetContext)

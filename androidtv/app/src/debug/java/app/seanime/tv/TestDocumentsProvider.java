@@ -42,6 +42,9 @@ public final class TestDocumentsProvider extends DocumentsProvider {
             Document.COLUMN_LAST_MODIFIED,
             Document.COLUMN_FLAGS,
     };
+    private static volatile boolean renameUnavailable;
+    private static volatile String failWriteName;
+    private static volatile String denyDeleteName;
     private static MemoryDocument root = new MemoryDocument(ROOT_ID, null, true);
 
     @Override
@@ -118,6 +121,7 @@ public final class TestDocumentsProvider extends DocumentsProvider {
         if (document.directory) throw new FileNotFoundException("Cannot open a directory");
         if ("r".equals(mode)) return openForRead(document);
         if ("w".equals(mode) || "wt".equals(mode) || "wa".equals(mode) || "rw".equals(mode) || "rwt".equals(mode)) {
+            if (document.name.equals(failWriteName)) throw new FileNotFoundException("Injected write failure");
             return openForWrite(document, mode);
         }
         throw new IllegalArgumentException("Unsupported document mode: " + mode);
@@ -139,6 +143,7 @@ public final class TestDocumentsProvider extends DocumentsProvider {
 
     @Override
     public String renameDocument(String documentId, String displayName) throws FileNotFoundException {
+        if (renameUnavailable) throw new FileNotFoundException("Injected rename failure");
         validateName(displayName);
         MemoryDocument document = findDocument(documentId);
         awaitWrites(document);
@@ -157,6 +162,7 @@ public final class TestDocumentsProvider extends DocumentsProvider {
     @Override
     public void deleteDocument(String documentId) throws FileNotFoundException {
         MemoryDocument document = findDocument(documentId);
+        if (document.name.equals(denyDeleteName)) throw new IllegalStateException("Injected delete failure");
         MemoryDocument parent = document.parent;
         if (parent == null) throw new IllegalStateException("Cannot delete the root document");
         awaitWrites(document);
@@ -343,6 +349,21 @@ public final class TestDocumentsProvider extends DocumentsProvider {
         synchronized (LOCK) {
             root = new MemoryDocument(ROOT_ID, null, true);
         }
+        renameUnavailable = false;
+        failWriteName = null;
+        denyDeleteName = null;
+    }
+
+    public static void setRenameUnavailable(boolean unavailable) {
+        renameUnavailable = unavailable;
+    }
+
+    public static void setWriteFailureName(String name) {
+        failWriteName = name;
+    }
+
+    public static void setDeleteDeniedName(String name) {
+        denyDeleteName = name;
     }
 
     public static void grantTree(Context context, Uri treeUri, int flags) {

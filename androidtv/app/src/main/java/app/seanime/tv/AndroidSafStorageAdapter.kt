@@ -282,7 +282,14 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
         val backup = parent.findFile(backupName)
         var destination = parent.findFile(destinationName)
 
-        if (phase == "copying" && destinationUri.isNotBlank() && destination != null) {
+        if (phase == "creating" && destinationUri.isBlank() && destination != null) {
+            // The provider created the final name before its URI was durably
+            // journaled. We cannot safely tell whether this is our partial
+            // file or a concurrent user file, so keep the transaction blocked.
+            return false
+        }
+
+        if (phase in setOf("creating", "copying") && destinationUri.isNotBlank() && destination != null) {
             if (destination.uri.toString() != destinationUri || !destination.delete()) return false
             destination = null
         }
@@ -343,7 +350,16 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
         backupName: String,
     ) {
         val artifactsGone = runCatching {
-            parent.findFile(temporaryName) == null && parent.findFile(backupName) == null
+            val transaction = readWriteJournal().optJSONObject(id)
+            val phase = transaction?.optString("phase").orEmpty()
+            val destinationName = transaction?.optString("path")
+                ?.takeIf(String::isNotBlank)
+                ?.let { validatedSegments(it).last() }
+            val destinationRemainsUnresolved = phase in setOf("creating", "copying") &&
+                destinationName?.let(parent::findFile) != null
+            parent.findFile(temporaryName) == null &&
+                parent.findFile(backupName) == null &&
+                !destinationRemainsUnresolved
         }.getOrDefault(false)
         if (!artifactsGone || !removeWriteJournal(id)) recoveredRoots.clear()
     }
