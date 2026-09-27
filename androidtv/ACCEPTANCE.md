@@ -7,11 +7,11 @@ and device model with each result.
 
 ## Current evidence
 
-- The shared frontend suite passes 89 tests, including playback recovery,
+- The shared frontend suite passes 91 tests in 15 files, including playback recovery,
   Media3 state/command adaptation, browser HLS handoff, source-refresh pause
   isolation, suppression of late browser playback events, and older-WebView
-  bridge bootstrap, Android stream routing, playlist playback selection, and
-  watch-party player identity.
+  bridge bootstrap and runtime polyfills for modern Array/Promise APIs, Android
+  stream routing, playlist playback selection, and watch-party player identity.
 - ARM64 and x86_64 debug APKs build and pass APK signature verification.
 - All 13 Android instrumentation tests pass on the API 31 ARM64 TV emulator
   with WebView 91.0.4472.114 and 4 KiB pages. They cover server
@@ -31,6 +31,12 @@ and device model with each result.
   discovery, icon/banner metadata, and optional touchscreen declaration. Latest
   run details are recorded in
   [focus restoration run](acceptance/2026-09-28-focus-restoration.md).
+- Android TV now supplies the ES2023 Array methods and `Promise.withResolvers`
+  missing from WebView 91. The startup instrumentation probe executes all six
+  Array methods and resolves a deferred Promise inside the real WebView. Manual
+  D-pad setup reaches the home screen with visible focus and no renderer
+  exception. See the [WebView compatibility run](acceptance/2026-09-28-webview-91-compatibility.md)
+  and [home screenshot](acceptance/screenshots/2026-09-28-webview-91-home-after-fix.png).
 - The Go mobile lifecycle test now starts with the app already backgrounded
   and verifies periodic work remains stopped until foreground return. The
   server applies the same suspension policy to Auto Downloader, Auto Scanner,
