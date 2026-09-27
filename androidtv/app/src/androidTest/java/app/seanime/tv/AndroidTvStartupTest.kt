@@ -65,8 +65,44 @@ class AndroidTvStartupTest {
                         "document.getElementById('root') !== null && " +
                         "window.AndroidTV?.serverStatus() === 'ready' && " +
                         "window.AndroidTVNativeBridge?.serverStatus('invalid-token') === ''",
-                ) == "true"
+                    ) == "true"
             }
+
+            assertEquals(
+                "could not set up the native activity focus target",
+                "true",
+                evaluateJavascript(scenario, nativeDpadFixture()),
+            )
+            assertEquals(
+                "native Android TV storage bridge was unavailable",
+                "true",
+                evaluateJavascript(
+                    scenario,
+                    """(() => {
+                        if (!window.AndroidTV?.requestMediaFolder) return false;
+                        window.AndroidTV.requestMediaFolder('library-main');
+                        return true;
+                    })()""",
+                ),
+            )
+            waitUntil("native storage UI to take window focus", 10_000) { !hasWindowFocus(scenario) }
+            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            waitUntil("WebView activity to regain window focus", 10_000) { hasWindowFocus(scenario) }
+            waitUntil("WebView to restore its focus target after native UI", 5_000) {
+                evaluateJavascript(scenario, "document.activeElement?.id === 'tv-native-focus-start'") == "true"
+            }
+            val restoredFocusStyle = evaluateJavascript(
+                scenario,
+                "JSON.stringify({id:document.activeElement?.id,marker:document.activeElement?.getAttribute('data-android-tv-focus-restored'),outline:getComputedStyle(document.activeElement).outlineStyle,outlineWidth:getComputedStyle(document.activeElement).outlineWidth,shadow:getComputedStyle(document.activeElement).boxShadow})",
+            )
+            assertEquals(
+                "restored remote focus should keep a visible ring: $restoredFocusStyle",
+                "true",
+                evaluateJavascript(
+                    scenario,
+                    "document.activeElement?.getAttribute('data-android-tv-focus-restored') === 'true' && getComputedStyle(document.activeElement).outlineStyle === 'solid' && getComputedStyle(document.activeElement).outlineWidth === '3px'",
+                ),
+            )
 
             startSandboxedFrameBridgeProbe(scenario)
             waitUntil("sandboxed iframe bridge isolation", 10_000) {
@@ -269,6 +305,12 @@ class AndroidTvStartupTest {
             }
         }
         assertTrue("WebView script evaluation timed out", completed.await(10, TimeUnit.SECONDS))
+        return result.get()
+    }
+
+    private fun hasWindowFocus(scenario: ActivityScenario<MainActivity>): Boolean {
+        val result = AtomicReference(false)
+        scenario.onActivity { activity -> result.set(activity.hasWindowFocus()) }
         return result.get()
     }
 

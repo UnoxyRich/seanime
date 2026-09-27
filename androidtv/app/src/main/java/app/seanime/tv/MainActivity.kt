@@ -886,6 +886,19 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus || !::webView.isInitialized || isFinishing || isDestroyed) return
+        webView.post {
+            if (!isFinishing && !isDestroyed && webView.isAttachedToWindow) {
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new Event('seanime-tv-native-focus-restored'))",
+                    null,
+                )
+            }
+        }
+    }
+
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         downloadDocuments.keys.toList().forEach(::cancelDownload)

@@ -172,8 +172,47 @@ function AndroidTVInputSupport() {
             )).filter(isVisible)
         }
 
+        let lastFocusedElement: HTMLElement | null = null
+        let windowFocusWasLost = false
+
+        const onFocusIn = (event: FocusEvent) => {
+            const target = event.target
+            if (!(target instanceof HTMLElement) || target === document.body || target === document.documentElement || !isVisible(target)) return
+            if (lastFocusedElement !== target) {
+                lastFocusedElement?.removeAttribute("data-android-tv-focus-restored")
+            }
+            lastFocusedElement = target
+        }
+
+        const restoreLastFocusedElement = () => {
+            const target = lastFocusedElement
+            if (!target?.isConnected || !isVisible(target)) return
+            target.setAttribute("data-android-tv-focus-restored", "true")
+            target.focus({ preventScroll: true })
+            target.scrollIntoView({ block: "nearest", inline: "nearest" })
+        }
+
+        const onWindowBlur = () => {
+            windowFocusWasLost = true
+        }
+
+        const onWindowFocus = () => {
+            if (!windowFocusWasLost) return
+            windowFocusWasLost = false
+            window.requestAnimationFrame(restoreLastFocusedElement)
+        }
+
+        const onNativeWindowFocusRestored = () => {
+            windowFocusWasLost = false
+            window.requestAnimationFrame(restoreLastFocusedElement)
+        }
+
         const onKeyDown = (event: KeyboardEvent) => {
             if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return
+            if (windowFocusWasLost) {
+                windowFocusWasLost = false
+                restoreLastFocusedElement()
+            }
             const active = document.activeElement
             const activeElement = active instanceof Element ? active : null
             const slider = activeElement?.closest('[role="slider"]')
@@ -233,9 +272,17 @@ function AndroidTVInputSupport() {
         }
 
         document.addEventListener("keydown", onKeyDown, true)
+        document.addEventListener("focusin", onFocusIn, true)
+        window.addEventListener("blur", onWindowBlur)
+        window.addEventListener("focus", onWindowFocus)
+        window.addEventListener("seanime-tv-native-focus-restored", onNativeWindowFocusRestored)
         return () => {
             document.documentElement.classList.remove("android-tv")
             document.removeEventListener("keydown", onKeyDown, true)
+            document.removeEventListener("focusin", onFocusIn, true)
+            window.removeEventListener("blur", onWindowBlur)
+            window.removeEventListener("focus", onWindowFocus)
+            window.removeEventListener("seanime-tv-native-focus-restored", onNativeWindowFocusRestored)
         }
     }, [])
 

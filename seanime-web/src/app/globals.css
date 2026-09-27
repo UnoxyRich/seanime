@@ -1254,6 +1254,12 @@ html.android-tv [tabindex]:focus-visible {
     box-shadow: 0 0 0 2px rgba(7, 7, 7, 0.95), 0 0 0 5px rgba(159, 146, 255, 0.9);
 }
 
+html.android-tv [data-android-tv-focus-restored="true"] {
+    outline: 3px solid rgb(var(--color-brand-300)) !important;
+    outline-offset: 3px !important;
+    box-shadow: 0 0 0 2px rgba(7, 7, 7, 0.95), 0 0 0 5px rgba(159, 146, 255, 0.9) !important;
+}
+
 html.android-tv :is(button, a[href], [role="button"], input, select, textarea) {
     scroll-margin-block: 6vh;
 }
