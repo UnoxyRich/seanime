@@ -22,8 +22,14 @@ and device model with each result.
   an opaque-ticket-only recovery bridge response, and the bundled media tools.
   The media test encodes H.264 with the bundled
   CPU encoder, checks it with ffprobe, decodes it with FFmpeg, and renders/seeks
-  it in Media3 while paused. The latest run is recorded in
-  [playback recovery run](acceptance/2026-09-27-playback-recovery.md).
+  it in Media3 while paused. The startup test also opens and dismisses the
+  native storage fallback dialog and verifies restored focus styling. Latest
+  run details are recorded in
+  [focus restoration run](acceptance/2026-09-28-focus-restoration.md).
+- A visible host-GPU emulator run at 1920 × 1080 verified remote navigation to
+  the USB-folder control and restoration of its purple focus ring after native
+  dialog dismissal. See the captured
+  [focus restoration screenshot](acceptance/screenshots/2026-09-28-api31-arm64-dpad-focus-restored.png).
 - The four transcoding capability tests and seven playback checkpoint tests
   pass. Physical-device scenarios below still need recorded passing runs.
 - Android storage, direct-stream, playlist, and Nakama Go package tests pass,

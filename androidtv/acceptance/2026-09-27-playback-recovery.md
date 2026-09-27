@@ -30,10 +30,12 @@ results below were built from that commit.
   exercise a real authenticated stream provider, so end-to-end cold-process
   restoration remains a required device scenario.
 - Visible-launch attempts installed the ARM64 APK and `am start` accepted the
-  MainActivity launch, but screenshot capture stalled. The default emulator
-  fell back to software GLES with about 2 GiB host memory available; a retry
-  with a 1536 MiB guest and SwiftShader also returned no screenshot. No visual,
-  focus-navigation, or safe-area acceptance result was captured, so the
+  MainActivity launch, but screenshot capture was unusable. The default
+  emulator fell back to software GLES with about 2 GiB host memory available;
+  ADB screenshot capture stalled. A retry with a 1536 MiB guest and SwiftShader
+  let the instrumentation screenshot API return a 1920 × 1080 all-black frame
+  (one sampled color, zero bright samples) while the DOM reported ready. No
+  visual, focus styling, or safe-area acceptance result was captured, so the
   emulator was stopped.
 
 ## APK SHA-256
