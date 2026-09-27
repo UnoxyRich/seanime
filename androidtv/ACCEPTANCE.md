@@ -14,7 +14,7 @@ and device model with each result.
   structured-clone fallback for older WebViews, Android stream routing,
   playlist playback selection, and watch-party player identity.
 - ARM64 and x86_64 debug APKs build and pass APK signature verification.
-- All 13 Android instrumentation tests pass on the API 31 ARM64 TV emulator
+- All 15 Android instrumentation tests pass on the API 31 ARM64 TV emulator
   with WebView 91.0.4472.114 and 4 KiB pages. They cover server
   startup/restart, bridge access, injected Android D-pad key events through the
   focused WebView, spatial focus controls, a test document
@@ -32,6 +32,11 @@ and device model with each result.
   discovery, icon/banner metadata, and optional touchscreen declaration. Latest
   run details are recorded in
   [focus restoration run](acceptance/2026-09-28-focus-restoration.md).
+- Remote text input is covered on the emulator: injected letter keys reach a
+  focused WebView field and D-pad movement does not steal its focus. The OAuth
+  WebView now requests resize behavior for the TV keyboard; its window mode is
+  checked by instrumentation. See the
+  [TV keyboard run](acceptance/2026-09-28-tv-keyboard.md).
 - Android TV now supplies `Object.hasOwn`, the ES2023 Array methods and
   `Promise.withResolvers` missing from WebView 91. The startup instrumentation
   probe checks own-property behavior, executes all six Array methods, and

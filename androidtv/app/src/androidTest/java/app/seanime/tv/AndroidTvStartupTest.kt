@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.WebView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -26,6 +27,55 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AndroidTvStartupTest {
+    @Test
+    fun oauthWebViewResizesForTheTvKeyboard() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val scenario = ActivityScenario.launch<AuthWebViewActivity>(
+            AuthWebViewActivity.intent(context, Uri.parse("http://127.0.0.1:1/oauth-input-fixture")),
+        )
+        try {
+            scenario.onActivity { activity ->
+                val adjustMode = activity.window.attributes.softInputMode and
+                    WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST
+                assertEquals(
+                    "OAuth text fields must stay visible above the TV keyboard",
+                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+                    adjustMode,
+                )
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun mainWebViewKeepsRemoteTextEntryFocused() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        try {
+            assertTrue("Seanime server did not start", waitForServerStatus("ready", 60_000))
+            waitUntil("embedded UI to load for text entry", 30_000) {
+                evaluateJavascript(scenario, "document.readyState === 'complete' && document.documentElement.classList.contains('android-tv')") == "true"
+            }
+            assertEquals("TV text input fixture did not focus", "true", evaluateJavascript(scenario,
+                "(() => { document.body.innerHTML = '<main><input id=tv-search aria-label=Search><button id=tv-search-result>Result</button></main>'; const input=document.getElementById('tv-search'); input.focus(); return document.activeElement === input; })()"))
+
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_A)
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_B)
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+
+            assertEquals(
+                "D-pad navigation moved focus out of the text field or lost typed input",
+                "true",
+                evaluateJavascript(scenario,
+                    "document.activeElement?.id === 'tv-search' && document.getElementById('tv-search').value === 'ab'"),
+            )
+        } finally {
+            scenario.close()
+        }
+        assertTrue("Seanime server did not stop after text-entry test", waitForServerStatus("stopped", 20_000))
+    }
+
     @Test
     fun packageIsDiscoverableAsAnAndroidTvLauncherApp() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

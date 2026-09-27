@@ -90,6 +90,8 @@ the output, decodes it with FFmpeg, and checks Media3 frame rendering and seekin
   while retaining SVE2 acceleration when both capabilities are available.
 - OAuth and external web destinations stay inside an Android WebView. OAuth
   redirects to Seanime's local callback are returned to the app's main WebView.
+  Both the main and OAuth activities request window resizing for the Android TV
+  on-screen keyboard.
 - Before React mounts, the Android TV web build supplies missing `Object.hasOwn`,
   modern Array methods, and `Promise.withResolvers` for older System WebView
   releases.
