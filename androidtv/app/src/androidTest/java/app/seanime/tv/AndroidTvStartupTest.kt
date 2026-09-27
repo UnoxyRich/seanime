@@ -3,6 +3,8 @@ package app.seanime.tv
 import android.content.pm.FeatureInfo
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
@@ -22,6 +24,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeFalse
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -46,6 +50,49 @@ class AndroidTvStartupTest {
         } finally {
             scenario.close()
         }
+    }
+
+    @Test
+    fun updateInstallerRestrictsApkPathsAndRequestsUnknownSourceConsent() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assumeTrue("Unknown-source consent flow requires Android 8 or newer", Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+        assumeFalse("Test expects update installs to require user consent", context.packageManager.canRequestPackageInstalls())
+
+        val preferences = context.getSharedPreferences("android-tv-updates", android.content.Context.MODE_PRIVATE)
+        val previousPendingPath = preferences.getString("pending-install-path", null)
+        val updateDirectory = File(context.filesDir, "seanime/updates").apply { mkdirs() }
+        val validCachedApk = File(updateDirectory, "consent-flow.apk").apply { writeBytes(byteArrayOf(0x50, 0x4b, 0x03, 0x04)) }
+        val externalApk = File(context.cacheDir, "untrusted-update.apk").apply { writeBytes(byteArrayOf(0x50, 0x4b, 0x03, 0x04)) }
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            assertTrue("Seanime server did not start", waitForServerStatus("ready", 60_000))
+            scenario.onActivity { it.installUpdate(externalApk.absolutePath) }
+            assertEquals("Update installer accepted an APK outside its cache", previousPendingPath,
+                preferences.getString("pending-install-path", null))
+
+            scenario.onActivity { it.installUpdate(validCachedApk.absolutePath) }
+            assertEquals(validCachedApk.canonicalPath, preferences.getString("pending-install-path", null))
+            waitUntil("Android's install-source settings to take focus", 10_000) {
+                !hasWindowFocus(scenario)
+            }
+            pressBackFromSystemUi()
+            waitUntil("main activity to regain focus after install-source settings", 10_000) {
+                hasWindowFocus(scenario)
+            }
+            assertEquals("Pending update should remain available until install permission is granted", validCachedApk.canonicalPath,
+                preferences.getString("pending-install-path", null))
+        } finally {
+            if (!hasWindowFocus(scenario)) {
+                pressBackFromSystemUi()
+            }
+            scenario.close()
+            Mobile.stopServer()
+            preferences.edit().putString("pending-install-path", previousPendingPath).commit()
+            validCachedApk.delete()
+            updateDirectory.delete()
+            externalApk.delete()
+        }
+        assertTrue("server did not stop after update-installer test", waitForServerStatus("stopped", 20_000))
     }
 
     @Test
@@ -416,6 +463,12 @@ class AndroidTvStartupTest {
         val result = AtomicReference(false)
         scenario.onActivity { activity -> result.set(activity.hasWindowFocus()) }
         return result.get()
+    }
+
+    private fun pressBackFromSystemUi() {
+        val result = InstrumentationRegistry.getInstrumentation().uiAutomation
+            .executeShellCommand("input keyevent ${KeyEvent.KEYCODE_BACK}")
+        ParcelFileDescriptor.AutoCloseInputStream(result).bufferedReader().use { it.readText() }
     }
 
     private fun findWebView(view: View): WebView? = when (view) {

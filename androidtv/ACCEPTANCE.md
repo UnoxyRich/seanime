@@ -14,7 +14,7 @@ and device model with each result.
   structured-clone fallback for older WebViews, Android stream routing,
   playlist playback selection, and watch-party player identity.
 - ARM64 and x86_64 debug APKs build and pass APK signature verification.
-- All 17 Android instrumentation tests pass on the API 31 ARM64 TV emulator
+- All 18 Android instrumentation tests pass on the API 31 ARM64 TV emulator
   with WebView 91.0.4472.114 and 4 KiB pages. They cover server
   startup/restart, bridge access, injected Android D-pad key events through the
   focused WebView, spatial focus controls, a test document
@@ -35,8 +35,10 @@ and device model with each result.
   storage fallback dialog, returns from the native player Activity, and checks
   restored focus styling in both cases. Another test verifies Leanback launcher
   discovery, icon/banner metadata, and optional touchscreen declaration. Latest
-  run details are recorded in
-  [focus restoration run](acceptance/2026-09-28-focus-restoration.md).
+  focus restoration details are recorded in the
+  [focus restoration run](acceptance/2026-09-28-focus-restoration.md). The
+  update installer path and system-consent handoff are covered in the
+  [update installer run](acceptance/2026-09-28-update-installer.md).
 - Remote text input is covered on the emulator: injected letter keys reach a
   focused WebView field and D-pad movement does not steal its focus. The OAuth
   WebView now requests resize behavior for the TV keyboard; its window mode is
