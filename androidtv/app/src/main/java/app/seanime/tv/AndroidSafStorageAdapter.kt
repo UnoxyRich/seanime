@@ -22,8 +22,13 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
     private val appContext = context.applicationContext
     private val contentResolver = appContext.contentResolver
     private val pendingWrites = ConcurrentHashMap<String, WriteSession>()
+    private val journalPreferences = appContext.getSharedPreferences("android-tv-storage-writes", Context.MODE_PRIVATE)
+    private val journalLock = Any()
+    private val recoveryLock = Any()
+    @Volatile private var journalRecoveryComplete = false
 
     override fun list(path: String): String {
+        ensureJournalRecovered()
         val directory = resolve(path)
         if (!directory.isDirectory) throw IOException("Storage path is not a directory")
         val result = JSONArray()
@@ -31,9 +36,13 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
         return result.toString()
     }
 
-    override fun stat(path: String): String = entryJson(resolve(path)).toString()
+    override fun stat(path: String): String {
+        ensureJournalRecovered()
+        return entryJson(resolve(path)).toString()
+    }
 
     override fun readAt(path: String, offset: Long, length: Long): String {
+        ensureJournalRecovered()
         if (offset < 0 || length < 0 || length > MAX_READ_BYTES) {
             throw IOException("Invalid storage read range")
         }
@@ -71,33 +80,43 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
     }
 
     override fun beginWrite(path: String, truncate: Boolean): String {
+        ensureJournalRecovered()
         val (parent, name) = resolveParent(path)
         if (!parent.isDirectory) throw IOException("Storage parent is not a directory")
         val id = UUID.randomUUID().toString()
         val temporaryName = ".${name}.seanime-$id.part"
         val backupName = ".${name}.seanime-$id.backup"
-        val temporary = parent.createFile("application/octet-stream", temporaryName)
-            ?: throw IOException("Could not create a temporary document")
-        val output = contentResolver.openOutputStream(temporary.uri, "wt")
-            ?: run {
-                temporary.delete()
-                throw IOException("Could not open document for writing")
-            }
-        if (!truncate) {
-            val existing = parent.findFile(name)
-            if (existing?.isFile == true) {
-                try {
-                    contentResolver.openInputStream(existing.uri)?.use { input -> input.copyTo(output) }
+        val transaction = JSONObject()
+            .put("path", path)
+            .put("temporaryName", temporaryName)
+            .put("backupName", backupName)
+            .put("phase", "writing")
+        updateWriteJournal(id, transaction)
+
+        var temporary: DocumentFile? = null
+        var output: OutputStream? = null
+        try {
+            val temporaryDocument = parent.createFile("application/octet-stream", temporaryName)
+                ?: throw IOException("Could not create a temporary document")
+            temporary = temporaryDocument
+            val writeOutput = contentResolver.openOutputStream(temporaryDocument.uri, "wt")
+                ?: throw IOException("Could not open document for writing")
+            output = writeOutput
+            if (!truncate) {
+                val existing = parent.findFile(name)
+                if (existing?.isFile == true) {
+                    contentResolver.openInputStream(existing.uri)?.use { input -> input.copyTo(writeOutput) }
                         ?: throw FileNotFoundException("Could not read existing document")
-                } catch (error: Exception) {
-                    runCatching { output.close() }
-                    temporary.delete()
-                    throw error
                 }
             }
+            pendingWrites[id] = WriteSession(parent, temporaryDocument, name, temporaryName, backupName, writeOutput)
+            return id
+        } catch (error: Exception) {
+            runCatching { output?.close() }
+            runCatching { temporary?.delete() }
+            clearJournalIfArtifactsAreGone(id, parent, temporaryName, backupName)
+            throw error
         }
-        pendingWrites[id] = WriteSession(parent, temporary, name, backupName, output)
-        return id
     }
 
     override fun writeChunk(handle: String, data: String) {
@@ -106,28 +125,36 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
     }
 
     override fun finishWrite(handle: String) {
-        val session = pendingWrites.remove(handle) ?: throw IOException("Unknown storage write handle")
+        val session = pendingWrites[handle] ?: throw IOException("Unknown storage write handle")
         try {
             session.output.close()
         } catch (error: Exception) {
-            session.temporary.delete()
+            pendingWrites.remove(handle)
+            runCatching { session.temporary.delete() }
+            clearJournalIfArtifactsAreGone(handle, session.parent, session.temporaryName, session.backupName)
             throw error
         }
         try {
-            finishWriteSafely(session)
+            finishWriteSafely(handle, session)
         } catch (error: Exception) {
-            session.temporary.delete()
+            pendingWrites.remove(handle)
+            runCatching { session.temporary.delete() }
+            clearJournalIfArtifactsAreGone(handle, session.parent, session.temporaryName, session.backupName)
             throw error
         }
+        pendingWrites.remove(handle)
+        clearJournalIfArtifactsAreGone(handle, session.parent, session.temporaryName, session.backupName)
     }
 
     override fun cancelWrite(handle: String) {
         val session = pendingWrites.remove(handle) ?: return
         runCatching { session.output.close() }
-        session.temporary.delete()
+        runCatching { session.temporary.delete() }
+        clearJournalIfArtifactsAreGone(handle, session.parent, session.temporaryName, session.backupName)
     }
 
     override fun mkdirAll(path: String) {
+        ensureJournalRecovered()
         val segments = validatedSegments(path)
         var current = rootDocument(segments.first(), requireWrite = true)
         for (segment in segments.drop(1)) {
@@ -142,13 +169,17 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
     }
 
     override fun remove(path: String) {
+        ensureJournalRecovered()
         val segments = validatedSegments(path)
         if (segments.size < 2) throw IOException("Cannot remove a selected storage root")
         val document = resolve(path, requireWrite = true)
         if (!document.delete()) throw IOException("Could not delete document")
     }
 
-    override fun uri(path: String): String = resolve(path).uri.toString()
+    override fun uri(path: String): String {
+        ensureJournalRecovered()
+        return resolve(path).uri.toString()
+    }
 
     private fun resolve(path: String, requireWrite: Boolean = false): DocumentFile {
         val segments = validatedSegments(path)
@@ -171,10 +202,149 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
         return parent to name
     }
 
-    private fun finishWriteSafely(session: WriteSession) {
+    private fun resolveDirectory(path: String, requireWrite: Boolean): DocumentFile {
+        val segments = validatedSegments(path)
+        var directory = rootDocument(segments.first(), requireWrite)
+        for (segment in segments.drop(1)) {
+            directory = directory.findFile(segment)?.takeIf { it.isDirectory }
+                ?: throw FileNotFoundException("Storage parent directory not found")
+        }
+        return directory
+    }
+
+    private fun ensureJournalRecovered() {
+        if (journalRecoveryComplete) return
+        synchronized(recoveryLock) {
+            if (!journalRecoveryComplete) {
+                if (!recoverAbandonedWrites()) {
+                    throw IOException("Could not recover a previous Android TV storage write")
+                }
+                journalRecoveryComplete = true
+            }
+        }
+    }
+
+    private fun recoverAbandonedWrites(): Boolean = synchronized(journalLock) {
+        val journal = try {
+            JSONObject(journalPreferences.getString(WRITE_JOURNAL_KEY, "{}") ?: "{}")
+        } catch (_: Exception) {
+            return@synchronized false
+        }
+        if (journal.length() == 0) return@synchronized true
+
+        val remaining = JSONObject()
+        var unresolved = false
+        val iterator = journal.keys()
+        while (iterator.hasNext()) {
+            val id = iterator.next()
+            val transaction = journal.optJSONObject(id)
+            if (pendingWrites.containsKey(id)) {
+                remaining.put(id, journal.opt(id) ?: JSONObject.NULL)
+            } else if (transaction == null || !runCatching { recoverAbandonedWrite(id, transaction) }.getOrDefault(false)) {
+                remaining.put(id, journal.opt(id) ?: JSONObject.NULL)
+                unresolved = true
+            }
+        }
+        val persisted = journalPreferences.edit().putString(WRITE_JOURNAL_KEY, remaining.toString()).commit()
+        persisted && !unresolved
+    }
+
+    private fun recoverAbandonedWrite(id: String, transaction: JSONObject): Boolean {
+        runCatching { UUID.fromString(id) }.getOrElse { return false }
+        val path = transaction.optString("path")
+        val segments = validatedSegments(path)
+        if (segments.size < 2) return false
+        val destinationName = segments.last()
+        val temporaryName = ".${destinationName}.seanime-$id.part"
+        val backupName = ".${destinationName}.seanime-$id.backup"
+        if (transaction.optString("temporaryName") != temporaryName ||
+            transaction.optString("backupName") != backupName) return false
+
+        val parentPath = path.substringBeforeLast('/')
+        val parent = resolveDirectory(parentPath, requireWrite = true)
+        val phase = transaction.optString("phase", "writing")
+        val destinationUri = transaction.optString("destinationUri")
+        val temporary = parent.findFile(temporaryName)
+        val backup = parent.findFile(backupName)
+        var destination = parent.findFile(destinationName)
+
+        if (phase == "copying" && destinationUri.isNotBlank() && destination != null) {
+            if (destination.uri.toString() != destinationUri || !destination.delete()) return false
+            destination = null
+        }
+
+        if (backup != null) {
+            if (destination == null) {
+                if (!backup.renameTo(destinationName)) return false
+            } else if (temporary == null) {
+                if (!backup.delete()) return false
+            } else {
+                return false
+            }
+        }
+
+        if (temporary != null) {
+            if (!temporary.delete()) return false
+        }
+
+        // A final rename that completed before process death leaves the destination intact.
+        return true
+    }
+
+    private fun updateWriteJournal(id: String, transaction: JSONObject) {
+        synchronized(journalLock) {
+            val journal = readWriteJournal()
+            journal.put(id, JSONObject(transaction.toString()))
+            if (!journalPreferences.edit().putString(WRITE_JOURNAL_KEY, journal.toString()).commit()) {
+                throw IOException("Could not persist Android TV storage write journal")
+            }
+        }
+    }
+
+    private fun updateWritePhase(id: String, phase: String, destinationUri: String? = null) {
+        synchronized(journalLock) {
+            val journal = readWriteJournal()
+            val transaction = journal.optJSONObject(id)
+                ?: throw IOException("Android TV storage write journal entry is missing")
+            transaction.put("phase", phase)
+            if (destinationUri != null) transaction.put("destinationUri", destinationUri)
+            if (!journalPreferences.edit().putString(WRITE_JOURNAL_KEY, journal.toString()).commit()) {
+                throw IOException("Could not update Android TV storage write journal")
+            }
+        }
+    }
+
+    private fun removeWriteJournal(id: String): Boolean = runCatching {
+        synchronized(journalLock) {
+            val journal = readWriteJournal()
+            journal.remove(id)
+            journalPreferences.edit().putString(WRITE_JOURNAL_KEY, journal.toString()).commit()
+        }
+    }.getOrDefault(false)
+
+    private fun clearJournalIfArtifactsAreGone(
+        id: String,
+        parent: DocumentFile,
+        temporaryName: String,
+        backupName: String,
+    ) {
+        val artifactsGone = runCatching {
+            parent.findFile(temporaryName) == null && parent.findFile(backupName) == null
+        }.getOrDefault(false)
+        if (!artifactsGone || !removeWriteJournal(id)) journalRecoveryComplete = false
+    }
+
+    private fun readWriteJournal(): JSONObject = try {
+        JSONObject(journalPreferences.getString(WRITE_JOURNAL_KEY, "{}") ?: "{}")
+    } catch (error: Exception) {
+        throw IOException("Android TV storage write journal is unreadable", error)
+    }
+
+    private fun finishWriteSafely(handle: String, session: WriteSession) {
         val existing = session.parent.findFile(session.destinationName)
         if (existing != null) {
             if (existing.isDirectory) throw IOException("A directory already exists at the destination")
+            updateWritePhase(handle, "replacing")
             if (!existing.renameTo(session.backupName)) {
                 throw IOException("Storage provider cannot safely replace the existing document")
             }
@@ -187,6 +357,7 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
                 }
                 throw IOException("Could not finalize the new document; the existing document was restored")
             }
+            runCatching { updateWritePhase(handle, "complete") }
             session.parent.findFile(session.backupName)?.delete()
             return
         }
@@ -199,17 +370,20 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
             session.temporary.delete()
             throw IOException("Storage provider could not safely finalize the document")
         }
+        updateWritePhase(handle, "creating")
         val created = session.parent.createFile(session.temporary.type ?: "application/octet-stream", session.destinationName)
             ?: run {
                 session.temporary.delete()
                 throw IOException("Storage provider cannot create the destination document")
             }
         try {
+            updateWritePhase(handle, "copying", created.uri.toString())
             val input = contentResolver.openInputStream(session.temporary.uri)
                 ?: throw FileNotFoundException("Could not read the temporary document")
             val output = contentResolver.openOutputStream(created.uri, "wt")
                 ?: throw IOException("Could not open the destination document for writing")
             input.use { source -> output.use { destination -> source.copyTo(destination) } }
+            updateWritePhase(handle, "complete", created.uri.toString())
         } catch (error: Exception) {
             created.delete()
             session.temporary.delete()
@@ -283,6 +457,7 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
         val parent: DocumentFile,
         val temporary: DocumentFile,
         val destinationName: String,
+        val temporaryName: String,
         val backupName: String,
         val output: OutputStream,
     )
@@ -290,6 +465,7 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
     companion object {
         private const val PATH_PREFIX = "/androidtv/"
         private const val MAX_READ_BYTES = 256L * 1024
+        private const val WRITE_JOURNAL_KEY = "transactions"
 
         fun storageId(uri: Uri): String = MessageDigest.getInstance("SHA-256")
             .digest(uri.toString().toByteArray(Charsets.UTF_8))
