@@ -11,6 +11,12 @@ Source commit: `d1feca88` (`codex/android-tv`).
   Go server against the same data directory, reloads the row from SQLite,
   restores playback for a new WebView client ID, and reads the expected fixture
   bytes from the reopened stream.
+- `TestHTTPPlaybackResumeReopensURLAndNakamaSourcesAfterServerRestart` passed
+  for both URL and Nakama streams. Each case captures a source checkpoint,
+  stops and restarts the Go server, restores playback under a new WebView client
+  ID, and verifies bytes from a fresh ranged HTTP request. The Nakama case also
+  verifies the restored request forwards its saved host credential. The complete
+  `go test ./mobile -count=1` run passes with both integration tests.
 - `go test ./internal/library/anime -run '^TestLocalEpisodeConstructorsRetainAniDBIdentityWithoutMetadata$' -count=1`:
   passed. Both full and simple local episode constructors preserve the parsed
   AniDB episode identifier when remote metadata is unavailable.
@@ -41,9 +47,9 @@ app-x86_64-debug.apk
 
 ## Scope limits
 
-The restart test stops and starts the Go server in one host test process. It
-does not force-stop Android, recreate the Activity and WebView from a saved
-native-player snapshot, or decode real media from a codec-valid video. The
-Android instrumentation suite covers other app flows; it does not simulate an
-OS force-stop while native playback is active. Physical cold-process recovery
-and hardware playback remain device acceptance gates.
+The restart tests stop and start the Go server in one host test process and use
+small local/HTTP fixtures. They do not force-stop Android, recreate the Activity
+and WebView from a saved native-player snapshot, or decode real media from a
+codec-valid video. The Android instrumentation suite covers other app flows; it
+does not simulate an OS force-stop while native playback is active. Physical
+cold-process recovery and hardware playback remain device acceptance gates.

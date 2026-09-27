@@ -143,11 +143,14 @@ grants, Nakama room reconnection, and playlist continuity also need device
 verification; passing snapshot and source-identity tests alone does not prove
 those live flows.
 
-A host integration test now also reloads a persisted local library row after a
-Go server restart, restores the checkpoint under a new WebView client ID, and
-reads local media fixture bytes through the reopened stream. It does not
-exercise Android process death or the native player. See the
-[local playback restart run](acceptance/2026-09-28-local-playback-server-restart.md).
+A host integration test reloads a persisted local library row after a Go server
+restart, restores the local checkpoint under a new WebView client ID, and reads
+fixture bytes through the reopened stream. Its companion test does the same for
+HTTP URL and Nakama sources, checks that restoration makes a fresh remote range
+request, and verifies that a restored Nakama stream forwards its saved host
+credential. Both pass in `go test ./mobile -count=1`. These tests do not exercise
+Android process death, a real USB device, or native media decoding. See the
+[playback restart run](acceptance/2026-09-28-local-playback-server-restart.md).
 
 ## Feature scenarios
 
