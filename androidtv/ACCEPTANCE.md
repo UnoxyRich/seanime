@@ -129,6 +129,14 @@ and device model with each result.
   persisted by an earlier process. All 20 Android instrumentation tests
   passed on the ARM64 TV emulator; current APK hashes and build limitations are
   recorded in the [dismissal recovery run](acceptance/2026-09-28-playback-dismissal-recovery.md).
+- An end-to-end Android force-stop and cold relaunch restored a URL-backed
+  playback checkpoint on the API 31 ARM64 TV emulator. The native player
+  fetched and decoded a seekable H.264 fixture, resumed beyond the seeded
+  10-second position, and persisted a fresh checkpoint. The test completed
+  first-run setup by D-pad and verified the main WebView, server, and player
+  surfaces. See the [force-stop recovery run](acceptance/2026-09-28-force-stop-playback-recovery.md)
+  and screenshots of the [active player](acceptance/screenshots/2026-09-28-api31-force-stop-player-active.png)
+  and [restored player](acceptance/screenshots/2026-09-28-api31-force-stop-player-restored.png).
 
 ## Process-death playback restoration
 
@@ -145,12 +153,11 @@ checkpoint ID.
 
 Go tests cover checkpoint reload/replacement, source identity checks and ticket
 rotation. The Android instrumentation suite covers durable snapshot roundtrip
-and track-preference serialization. A force-stop while a real source is
-playing, followed by successful cold-launch restoration, has **not** been
-exercised end to end. Authenticated torrent/debrid providers, revoked USB
-grants, Nakama room reconnection, and playlist continuity also need device
-verification; passing snapshot and source-identity tests alone does not prove
-those live flows.
+and track-preference serialization. An end-to-end force-stop and cold launch
+has now passed on the API 31 ARM64 emulator for an HTTP URL source using a
+seekable H.264 fixture. This does not establish recovery for physical storage,
+authenticated torrent/debrid providers, Nakama room reconnection, or playlist
+continuity; those live flows still need device verification.
 
 A host integration test reloads a persisted local library row after a Go server
 restart, restores the local checkpoint under a new WebView client ID, and reads
