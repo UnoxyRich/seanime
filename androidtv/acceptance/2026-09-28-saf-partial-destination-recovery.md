@@ -5,9 +5,9 @@
   ARM64, 1920 × 1080, 4 KiB pages
 - WebView: `com.google.android.webview` 91.0.4472.114
 - Tested APK: `app-arm64-v8a-debug.apk`
-- SHA-256: `10e4af0bd2e389f2bd495c26bba4efc6491c9b283c07d5afd0c6f6e272662849`
+- SHA-256: `2381b8c8b6ef2cad7c2eb4f2d31e5f3921a61371c0e29635aae293c00493a7f8`
 - Packaged x86_64 APK SHA-256:
-  `7416d485699dce0af25135bc893fe75803c0c42b98f1747b4b18f14ad87708b0`
+  `4cefaf09a164a2271564f97541fbcab5ee9cb740cbfb40be6686ff02721b9137`
 
 ## Scenario
 
@@ -19,10 +19,11 @@ recovery, removes the partial document, and clears the journal.
 
 ## Verification
 
-- `:app:assembleDebug :app:compileDebugAndroidTestKotlin` passed.
+- A clean `:app:assembleDebug :app:compileDebugAndroidTestKotlin` passed with
+  frontend typecheck/build and Go binding generation enabled.
 - The targeted `AndroidSafStorageAdapterTest` run passed all five tests.
-- The complete `:app:connectedDebugAndroidTest` run passed all 21 tests with
-  zero skips and zero failures.
+- The complete `:app:connectedDebugAndroidTest` run on the rebuilt ARM64 APK
+  passed all 21 tests with zero skips and zero failures.
 - `go test ./mobile -count=1` passed.
 - Both ABI APKs passed `scripts/verify_android_native_alignment.py`; all four
   native libraries in each APK meet the 16 KiB ELF/ZIP alignment check.
