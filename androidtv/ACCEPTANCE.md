@@ -25,8 +25,8 @@ and device model with each result.
   and verify that the adapter denies access while the grant is revoked. See the
   [storage grant run](acceptance/2026-09-28-storage-grant.md).
   SAF write-journal recovery also covers interrupted writes, replacement
-  rollback, committed replacement preservation, and removal of an incomplete
-  fallback copy. See the
+  rollback, committed replacement preservation, incomplete fallback cleanup,
+  and isolation of an unavailable root from another selected root. See the
   [write recovery run](acceptance/2026-09-28-saf-write-recovery.md).
   The media test encodes H.264 with the bundled
   CPU encoder, checks it with ffprobe, decodes it with FFmpeg, and renders/seeks
