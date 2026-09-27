@@ -489,7 +489,9 @@ function TorrentStep({ form }: { form: any }) {
                             <h3 className="text-xl font-semibold">Torrent Client</h3>
                         </div>
                         <p className="text-sm text-[--muted]">
-                            Client used to download anime torrents
+                            {__isAndroidTV__
+                                ? "Connect to qBittorrent or Transmission running on a device on your network. Choose None if you do not use an external torrent client."
+                                : "Client used to download anime torrents"}
                         </p>
                         <Field.Select
                             name="defaultTorrentClient"
@@ -521,13 +523,17 @@ function TorrentStep({ form }: { form: any }) {
                                         <h4 className="text-xl font-semibold">qBittorrent Settings</h4>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                        <Field.Text name="qbittorrentHost" label="Host" />
+                                        <Field.Text
+                                            name="qbittorrentHost"
+                                            label="Host"
+                                            help={__isAndroidTV__ ? "Enter the network address of the qBittorrent service." : undefined}
+                                        />
                                         <Field.Text name="qbittorrentUsername" label="Username" />
                                         <Field.Text name="qbittorrentPassword" label="Password" />
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4 lg:grid-cols-[200px_1fr]">
+                                    <div className={cn("grid gap-4", __isAndroidTV__ ? "grid-cols-1 max-w-[200px]" : "grid-cols-2 lg:grid-cols-[200px_1fr]")}>
                                         <Field.Number name="qbittorrentPort" label="Port" formatOptions={{ useGrouping: false }} />
-                                        <Field.Text name="qbittorrentPath" label="Executable Path" />
+                                        {!__isAndroidTV__ && <Field.Text name="qbittorrentPath" label="Executable Path" />}
                                     </div>
                                 </>
                             )}
@@ -539,13 +545,17 @@ function TorrentStep({ form }: { form: any }) {
                                         <h4 className="text-xl font-semibold">Transmission Settings</h4>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                        <Field.Text name="transmissionHost" label="Host" />
+                                        <Field.Text
+                                            name="transmissionHost"
+                                            label="Host"
+                                            help={__isAndroidTV__ ? "Enter the network address of the Transmission service." : undefined}
+                                        />
                                         <Field.Text name="transmissionUsername" label="Username" />
                                         <Field.Text name="transmissionPassword" label="Password" />
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4 lg:grid-cols-[200px_1fr]">
+                                    <div className={cn("grid gap-4", __isAndroidTV__ ? "grid-cols-1 max-w-[200px]" : "grid-cols-2 lg:grid-cols-[200px_1fr]")}>
                                         <Field.Number name="transmissionPort" label="Port" formatOptions={{ useGrouping: false }} />
-                                        <Field.Text name="transmissionPath" label="Executable Path" />
+                                        {!__isAndroidTV__ && <Field.Text name="transmissionPath" label="Executable Path" />}
                                     </div>
                                 </>
                             )}
@@ -804,11 +814,11 @@ export function GettingStartedPage({ status }: { status: Status }) {
                         mpcPort: 13579,
                         defaultPlayer: "mpv",
                         vlcPath: vlcDefaultPath,
-                        qbittorrentPath: qbittorrentDefaultPath,
-                        qbittorrentHost: "127.0.0.1",
+                        qbittorrentPath: __isAndroidTV__ ? "" : qbittorrentDefaultPath,
+                        qbittorrentHost: __isAndroidTV__ ? "" : "127.0.0.1",
                         qbittorrentPort: 8081,
-                        transmissionPath: transmissionDefaultPath,
-                        transmissionHost: "127.0.0.1",
+                        transmissionPath: __isAndroidTV__ ? "" : transmissionDefaultPath,
+                        transmissionHost: __isAndroidTV__ ? "" : "127.0.0.1",
                         transmissionPort: 9091,
                         mpcPath: "C:/Program Files/MPC-HC/mpc-hc64.exe",
                         torrentProvider: DEFAULT_TORRENT_PROVIDER,
