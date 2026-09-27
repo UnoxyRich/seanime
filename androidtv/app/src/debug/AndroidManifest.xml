@@ -1,5 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <activity
+            android:name="app.seanime.tv.TestExternalPlayerActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="seanime-test" />
+            </intent-filter>
+        </activity>
         <provider
             android:name="app.seanime.tv.TestDocumentsProvider"
             android:authorities="app.seanime.tv.test.documents"
