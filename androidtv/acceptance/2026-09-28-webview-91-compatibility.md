@@ -52,3 +52,39 @@ app-x86_64-debug.apk
 This run establishes startup compatibility and WebView API availability. It
 does not cover a physical TV, USB storage, authenticated sources, or actual
 video playback.
+
+## Follow-up: structured-clone fallback — 2026-09-28
+
+Source commit: `e09da4af` (`codex/android-tv`).
+
+WebView 91 also lacks `structuredClone()`. Manga provider updates and editable
+data-grid copies now use `cloneApiData`: it delegates to the native API when
+available and falls back to cloning the plain API/settings values used by
+these screens on older WebViews.
+
+## Verification
+
+- `npm run typecheck` passed as part of the Android TV build.
+- `npm test` passed: 92 tests in 16 files.
+- `ANDROID_HOME=/Users/unoxyrich/Library/Android/sdk ./gradlew :app:connectedDebugAndroidTest`
+  passed: both ABI packages built and all 13 instrumentation tests passed on
+  the API 31 ARM64 TV emulator.
+- Installed and launched the ARM64 build on the emulator. D-pad navigation
+  moved through the setup steps and reached the Next control. Opening and
+  dismissing the Android numeric keyboard with Back restored focus to the
+  active field.
+- `apksigner verify --verbose` and `zipalign -c -P 16 4` passed for both APKs.
+  `scripts/verify_android_native_alignment.py` confirmed all four native
+  libraries in each APK have 16 KiB ELF/ZIP alignment.
+
+Screenshot: [Media Player setup with D-pad focus](screenshots/2026-09-28-structured-clone-dpad-media-player.png).
+
+## Follow-up debug APK SHA-256
+
+```text
+app-arm64-v8a-debug.apk
+83091b7db9cfb839e2ecd8f761958c6f138947a0984076bbb0a153f4c602810c
+
+app-x86_64-debug.apk
+3e4c82fdf7667ce29f476ee6bc6686c707d4deffb4313860f11dc0691855e529
+```
