@@ -1,6 +1,7 @@
 # Android TV SAF write recovery
 
-- Revision: `6c5f93f4` (`Recover abandoned Android SAF writes`).
+- Revision: `40be51a3` (`Cover cancelled and failed SAF writes`). The recovery
+  implementation is in parent commit `6c5f93f4`.
 - Emulator: API 31 Android TV ARM64, Android 12, WebView 91.0.4472.114,
   4096-byte pages.
 - Command: `ANDROID_HOME=/Users/unoxyrich/Library/Android/sdk
@@ -15,6 +16,11 @@
   that had already committed, and removing a fallback copy marked incomplete.
   It verifies the old and committed bytes and that handled transactions and
   temporary documents are gone.
+- It also verifies that cancellation deletes the temporary document, a failed
+  attempt to write over a directory preserves that directory and cleans up its
+  temp file, and an invalid transaction stays in the journal while storage
+  access fails closed. Once the invalid entry is cleared, the same adapter can
+  retry successfully.
 - Journal updates are synchronously persisted before replacement steps. If the
   provider, grant, or journal cannot be recovered, the adapter keeps the
   transaction and refuses subsequent storage operations until recovery can
