@@ -156,13 +156,14 @@ function StepIndicator({ currentStep, totalSteps, onStepClick }: { currentStep: 
                 {/*/>*/}
 
                 {STEPS.map((step, i) => (
-                    <div
+                    <button
+                        type="button"
                         key={step.id}
-                        onClick={(e) => {
-                            onStepClick(i)
-                        }}
+                        onClick={() => onStepClick(i)}
+                        aria-label={`${step.title}, step ${i + 1} of ${totalSteps}`}
+                        aria-current={i === currentStep ? "step" : undefined}
                         className={cn("flex flex-col items-center relative group transition-all duration-200 focus:outline-none rounded-lg p-2 w-full",
-                            "cursor-pointer")}
+                            "focus-visible:ring-2 focus-visible:ring-[--brand] focus-visible:ring-offset-2")}
                     >
                         <motion.div
                             className={cn(
@@ -209,7 +210,7 @@ function StepIndicator({ currentStep, totalSteps, onStepClick }: { currentStep: 
                          )} />
                          </div>
                          )} */}
-                    </div>
+                    </button>
                 ))}
             </div>
         </div>
