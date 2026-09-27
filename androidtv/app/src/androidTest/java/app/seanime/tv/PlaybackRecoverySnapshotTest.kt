@@ -1,6 +1,7 @@
 package app.seanime.tv
 
 import android.os.Bundle
+import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import org.json.JSONObject
@@ -62,6 +63,56 @@ class PlaybackRecoverySnapshotTest {
             assertTrue(directory.exists())
         } finally {
             directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun freshMainActivityDiscoversPersistedPlaybackRecoveryTicket() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val previous = PlaybackRecoverySnapshot.read(context.filesDir)
+        val staleProcessId = "previous-process-for-cold-launch-test"
+        val snapshot = PlaybackRecoverySnapshot(
+            checkpointId = "cold-launch-opaque-ticket",
+            mediaUri = "http://127.0.0.1:43211/api/v1/directstream/stream?id=source-secret",
+            processSessionId = staleProcessId,
+            title = "Persisted episode",
+            subtitleTracksJson = "[]",
+            subtitleStyleJson = "{}",
+            positionMs = 12_000,
+            playWhenReady = false,
+            completed = false,
+            speed = 1f,
+            pitch = 1f,
+            volume = 1f,
+            muted = false,
+            trackSelection = "",
+        )
+        var scenario: ActivityScenario<MainActivity>? = null
+        try {
+            PlaybackRecoverySnapshot.write(context.filesDir, snapshot)
+            val launchedScenario = ActivityScenario.launch(MainActivity::class.java)
+            scenario = launchedScenario
+            var pendingJson = ""
+            launchedScenario.onActivity { activity ->
+                assertFalse(
+                    "the test snapshot should represent a previous app process",
+                    (context.applicationContext as SeanimeTvApplication).processSessionId == staleProcessId,
+                )
+                pendingJson = activity.pendingPlaybackRecoveryJson()
+            }
+
+            val bridgePayload = JSONObject(pendingJson)
+            assertEquals(snapshot.checkpointId, bridgePayload.getString("checkpointId"))
+            assertEquals("only the opaque checkpoint ID crosses the bridge", 1, bridgePayload.length())
+            assertFalse(bridgePayload.has("mediaUri"))
+            assertFalse(bridgePayload.has("subtitleTracksJson"))
+        } finally {
+            scenario?.close()
+            if (previous == null) {
+                PlaybackRecoverySnapshot.clear(context.filesDir)
+            } else {
+                PlaybackRecoverySnapshot.write(context.filesDir, previous)
+            }
         }
     }
 }
