@@ -27,6 +27,11 @@ results below were built from that commit.
   unverified. This run did not force-stop the app during active playback or
   exercise a real authenticated stream provider, so end-to-end cold-process
   restoration remains a required device scenario.
+- A separate visible-launch attempt installed the ARM64 APK and `am start`
+  accepted the MainActivity launch, but the emulator fell back to software GLES
+  with about 2 GiB host memory available. Screenshot capture and later device
+  shell requests stopped responding, so this attempt produced no visual,
+  focus-navigation, or safe-area acceptance result; the emulator was stopped.
 
 ## APK SHA-256
 
