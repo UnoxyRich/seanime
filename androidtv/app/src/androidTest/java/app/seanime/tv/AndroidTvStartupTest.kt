@@ -128,6 +128,26 @@ class AndroidTvStartupTest {
                 ),
             )
 
+            val missingPlayerSource = File(context.cacheDir, "focus-return-${System.nanoTime()}.mp4")
+            scenario.onActivity { activity ->
+                activity.startActivity(
+                    NativePlayerActivity.intent(activity, Uri.fromFile(missingPlayerSource), "Focus return", "[]", 0, "{}"),
+                )
+            }
+            waitUntil("native player to take window focus", 10_000) {
+                NativePlayerActivity.isVisible() && !hasWindowFocus(scenario)
+            }
+            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            waitUntil("main WebView to regain focus after native player", 10_000) {
+                hasWindowFocus(scenario) && !NativePlayerActivity.isVisible()
+            }
+            waitUntil("WebView to restore visible focus after native player", 5_000) {
+                evaluateJavascript(
+                    scenario,
+                    "document.activeElement?.id === 'tv-native-focus-start' && document.activeElement?.getAttribute('data-android-tv-focus-restored') === 'true' && getComputedStyle(document.activeElement).outlineStyle === 'solid' && getComputedStyle(document.activeElement).outlineWidth === '3px'",
+                ) == "true"
+            }
+
             startSandboxedFrameBridgeProbe(scenario)
             waitUntil("sandboxed iframe bridge isolation", 10_000) {
                 evaluateJavascript(scenario, "typeof window.__seanimeTVFrameBridgeProbe === 'string'") == "true"
