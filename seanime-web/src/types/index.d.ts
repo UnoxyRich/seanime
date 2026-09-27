@@ -48,6 +48,10 @@ declare global {
             controlNativePlayer: (token: string, url: string, command: AndroidTVPlayerCommand, value: number) => void;
             installUpdate: (token: string, filePath: string) => void;
             setPlaybackActive: (token: string, active: boolean) => void;
+            pendingPlaybackRecovery: (token: string) => string;
+            startPlaybackRecovery: (token: string, checkpointId: string, clientId: string) => string;
+            finishPlaybackRecovery: (token: string, checkpointId: string, streamUrl: string) => string;
+            discardPlaybackRecovery: (token: string, checkpointId: string) => void;
         };
         AndroidTV?: {
             serverStatus: () => string;
@@ -69,6 +73,10 @@ declare global {
             controlNativePlayer: (url: string, command: AndroidTVPlayerCommand, value: number) => void;
             installUpdate: (filePath: string) => void;
             setPlaybackActive: (active: boolean) => void;
+            pendingPlaybackRecovery: () => string;
+            startPlaybackRecovery: (checkpointId: string, clientId: string) => string;
+            finishPlaybackRecovery: (checkpointId: string, streamUrl: string) => string;
+            discardPlaybackRecovery: (checkpointId: string) => void;
         };
         electron?: {
             window: {

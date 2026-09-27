@@ -85,6 +85,7 @@ class NativePlayerActivity : Activity() {
             if (current != null) {
                 lastPositionMs = current.currentPosition
                 publishSnapshot()
+                persistPlaybackRecovery()
                 progressHandler.postDelayed(this, 2_000)
             }
         }
@@ -99,28 +100,56 @@ class NativePlayerActivity : Activity() {
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             )
 
-        mediaUri = savedInstanceState?.getString(STATE_MEDIA_URI)?.let(Uri::parse) ?: intent.data
+        val checkpointIdExtra = intent.getStringExtra(EXTRA_CHECKPOINT_ID).orEmpty()
+        val persistedRecovery = PlaybackRecoverySnapshot.read(filesDir)
+        val recovery = persistedRecovery?.takeIf { checkpointIdExtra.isNotBlank() && it.checkpointId == checkpointIdExtra }
+        mediaUri = savedInstanceState?.getString(STATE_MEDIA_URI)?.let(Uri::parse)
+            ?: recovery?.mediaUri?.let(Uri::parse) ?: intent.data
         if (mediaUri == null) {
             nativePlayerVisible = false
             finish()
             return
         }
-        mediaTitle = (savedInstanceState?.getString(EXTRA_TITLE) ?: intent.getStringExtra(EXTRA_TITLE)).orEmpty().ifBlank { "Seanime TV" }
-        subtitleTracksJson = (savedInstanceState?.getString(EXTRA_SUBTITLES) ?: intent.getStringExtra(EXTRA_SUBTITLES)).orEmpty()
-        subtitleStyleJson = (savedInstanceState?.getString(EXTRA_SUBTITLE_STYLE) ?: intent.getStringExtra(EXTRA_SUBTITLE_STYLE)).orEmpty()
-        lastPositionMs = savedInstanceState?.getLong(EXTRA_START_POSITION) ?: intent.getLongExtra(EXTRA_START_POSITION, 0L)
+        mediaTitle = (savedInstanceState?.getString(EXTRA_TITLE) ?: recovery?.title ?: intent.getStringExtra(EXTRA_TITLE)).orEmpty().ifBlank { "Seanime TV" }
+        subtitleTracksJson = (savedInstanceState?.getString(EXTRA_SUBTITLES) ?: recovery?.subtitleTracksJson ?: intent.getStringExtra(EXTRA_SUBTITLES)).orEmpty()
+        subtitleStyleJson = (savedInstanceState?.getString(EXTRA_SUBTITLE_STYLE) ?: recovery?.subtitleStyleJson ?: intent.getStringExtra(EXTRA_SUBTITLE_STYLE)).orEmpty()
+        lastPositionMs = savedInstanceState?.getLong(EXTRA_START_POSITION) ?: recovery?.positionMs ?: intent.getLongExtra(EXTRA_START_POSITION, 0L)
         val playbackSettings = runCatching { JSONObject(intent.getStringExtra(EXTRA_PLAYBACK_SETTINGS).orEmpty()) }.getOrNull() ?: JSONObject()
-        resumePlayWhenReady = savedInstanceState?.getBoolean(STATE_PLAY_WHEN_READY, true) ?: !playbackSettings.optBoolean("paused", false)
-        completed = savedInstanceState?.getBoolean(STATE_COMPLETED, false) ?: false
+        resumePlayWhenReady = savedInstanceState?.getBoolean(STATE_PLAY_WHEN_READY, true) ?: recovery?.playWhenReady ?: !playbackSettings.optBoolean("paused", false)
+        completed = savedInstanceState?.getBoolean(STATE_COMPLETED, false) ?: recovery?.completed ?: false
         savedPlaybackParameters = PlaybackParameters(
-            savedInstanceState?.getFloat(STATE_SPEED, 1f) ?: playbackSettings.optDouble("speed", 1.0).toFloat().takeIf { it.isFinite() && it > 0 } ?: 1f,
-            savedInstanceState?.getFloat(STATE_PITCH, 1f) ?: 1f,
+            savedInstanceState?.getFloat(STATE_SPEED, 1f) ?: recovery?.speed ?: playbackSettings.optDouble("speed", 1.0).toFloat().takeIf { it.isFinite() && it > 0 } ?: 1f,
+            savedInstanceState?.getFloat(STATE_PITCH, 1f) ?: recovery?.pitch ?: 1f,
         )
-        savedVolume = savedInstanceState?.getFloat(STATE_VOLUME, 1f) ?: playbackSettings.optDouble("volume", 1.0).toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 1f
-        muted = savedInstanceState?.getBoolean(STATE_MUTED, false) ?: playbackSettings.optBoolean("muted", false)
+        savedVolume = savedInstanceState?.getFloat(STATE_VOLUME, 1f) ?: recovery?.volume ?: playbackSettings.optDouble("volume", 1.0).toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 1f
+        muted = savedInstanceState?.getBoolean(STATE_MUTED, false) ?: recovery?.muted ?: playbackSettings.optBoolean("muted", false)
         savedTrackSelectionParameters = savedInstanceState?.getBundle(STATE_TRACK_SELECTION)?.let(TrackSelectionParameters::fromBundle)
-        playbackCheckpointId = savedInstanceState?.getString(STATE_CHECKPOINT_ID).orEmpty()
-        playbackCheckpointUrl = savedInstanceState?.getString(STATE_CHECKPOINT_URL).orEmpty()
+            ?: recovery?.trackSelection?.let(PlaybackRecoverySnapshot::decodeBundle)?.let(TrackSelectionParameters::fromBundle)
+        playbackCheckpointId = savedInstanceState?.getString(STATE_CHECKPOINT_ID) ?: recovery?.checkpointId ?: intent.getStringExtra(EXTRA_CHECKPOINT_ID).orEmpty()
+        playbackCheckpointUrl = savedInstanceState?.getString(STATE_CHECKPOINT_URL) ?: recovery?.mediaUri.orEmpty()
+
+        val appProcessSession = (application as SeanimeTvApplication).processSessionId
+        val savedProcessSession = savedInstanceState?.getString(STATE_PROCESS_SESSION_ID).orEmpty()
+        val persistedForThisActivity = persistedRecovery?.mediaUri == mediaUri?.toString()
+        val processWasRecreated = (savedProcessSession.isNotBlank() && savedProcessSession != appProcessSession) ||
+            (persistedForThisActivity && persistedRecovery?.processSessionId?.let { it.isNotBlank() && it != appProcessSession } == true)
+        if (processWasRecreated && !completed) {
+            val snapshot = recovery ?: persistedRecovery?.takeIf { persistedForThisActivity } ?: recoverySnapshot()
+            if (snapshot != null && Uri.parse(snapshot.mediaUri).path == "/api/v1/directstream/stream") {
+                val app = application as SeanimeTvApplication
+                if (app.ownsPlaybackRecovery(snapshot.checkpointId)) {
+                    nativePlayerVisible = false
+                    finish()
+                    return
+                }
+                app.claimPlaybackRecovery(snapshot.checkpointId)
+                PlaybackRecoverySnapshot.write(filesDir, snapshot)
+                nativePlayerVisible = false
+                startActivity(MainActivity.playbackRecoveryIntent(this, snapshot.checkpointId))
+                finish()
+                return
+            }
+        }
 
         val frame = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
         val playerView = PlayerView(this).apply {
@@ -163,7 +192,7 @@ class NativePlayerActivity : Activity() {
             nextFocusUpId = R.id.native_player_retry
             nextFocusDownId = R.id.native_player_return
         }.also { errorPanel.addView(it) }
-        errorPanel.addView(trackButton(getString(R.string.player_return)) { finish() }.apply {
+        errorPanel.addView(trackButton(getString(R.string.player_return)) { returnFromPlayer() }.apply {
             id = R.id.native_player_return
             nextFocusUpId = R.id.native_player_retry
             nextFocusDownId = R.id.native_player_return
@@ -212,6 +241,7 @@ class NativePlayerActivity : Activity() {
                 lastPositionMs = exoPlayer.currentPosition
                 if (playbackState == Player.STATE_ENDED && !completed) {
                     completed = true
+                    PlaybackRecoverySnapshot.clear(filesDir)
                 }
             }
 
@@ -293,6 +323,37 @@ class NativePlayerActivity : Activity() {
         }
     }
 
+    private fun recoverySnapshot(): PlaybackRecoverySnapshot? {
+        val uri = mediaUri ?: return null
+        if (playbackCheckpointId.isBlank() || completed || uri.path != "/api/v1/directstream/stream") return null
+        val current = player
+        return PlaybackRecoverySnapshot(
+            checkpointId = playbackCheckpointId,
+            mediaUri = uri.toString(),
+            processSessionId = (application as SeanimeTvApplication).processSessionId,
+            title = mediaTitle,
+            subtitleTracksJson = subtitleTracksJson,
+            subtitleStyleJson = subtitleStyleJson,
+            positionMs = current?.currentPosition?.coerceAtLeast(0) ?: lastPositionMs.coerceAtLeast(0),
+            playWhenReady = current?.playWhenReady ?: resumePlayWhenReady,
+            completed = completed,
+            speed = current?.playbackParameters?.speed ?: savedPlaybackParameters.speed,
+            pitch = current?.playbackParameters?.pitch ?: savedPlaybackParameters.pitch,
+            volume = if (muted) savedVolume else current?.volume ?: savedVolume,
+            muted = muted,
+            trackSelection = PlaybackRecoverySnapshot.encodeBundle(
+                current?.trackSelectionParameters?.toBundle() ?: savedTrackSelectionParameters?.toBundle(),
+            ),
+        )
+    }
+
+    private fun persistPlaybackRecovery() {
+        val snapshot = recoverySnapshot() ?: return
+        runCatching {
+            checkpointExecutor.execute { PlaybackRecoverySnapshot.write(filesDir, snapshot) }
+        }.onFailure { Log.w("SeanimeTV", "Could not queue the playback recovery snapshot", it) }
+    }
+
     private fun capturePlaybackSource(uri: Uri) {
         val url = uri.toString()
         if (playbackCheckpointUrl == url && playbackCheckpointId.isNotBlank()) return
@@ -306,6 +367,7 @@ class NativePlayerActivity : Activity() {
                     runOnUiThread {
                         if (!isDestroyed && !isFinishing && checkpointGeneration == generation && mediaUri == uri) {
                             playbackCheckpointId = checkpoint
+                            persistPlaybackRecovery()
                         }
                     }
                 }
@@ -334,6 +396,11 @@ class NativePlayerActivity : Activity() {
         current.prepare()
     }
 
+    private fun returnFromPlayer() {
+        PlaybackRecoverySnapshot.clear(filesDir)
+        finish()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         rememberPlaybackState()
         outState.putString(STATE_MEDIA_URI, mediaUri?.toString())
@@ -349,7 +416,11 @@ class NativePlayerActivity : Activity() {
         outState.putBoolean(STATE_MUTED, muted)
         outState.putString(STATE_CHECKPOINT_ID, playbackCheckpointId)
         outState.putString(STATE_CHECKPOINT_URL, playbackCheckpointUrl)
+        outState.putString(STATE_PROCESS_SESSION_ID, (application as SeanimeTvApplication).processSessionId)
         savedTrackSelectionParameters?.let { outState.putBundle(STATE_TRACK_SELECTION, it.toBundle()) }
+        recoverySnapshot()?.let {
+            PlaybackRecoverySnapshot.write(filesDir, it)
+        }
         super.onSaveInstanceState(outState)
     }
 
@@ -579,6 +650,7 @@ class NativePlayerActivity : Activity() {
         progressHandler.removeCallbacksAndMessages(null)
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         rememberPlaybackState()
+        persistPlaybackRecovery()
         publishSnapshot(active = false, closed = isFinishing)
         showPlaybackError(null)
         activePlayerView?.player = null
@@ -602,6 +674,7 @@ class NativePlayerActivity : Activity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
+            PlaybackRecoverySnapshot.clear(filesDir)
             finish()
             return true
         }
@@ -614,6 +687,7 @@ class NativePlayerActivity : Activity() {
         private const val EXTRA_SUBTITLE_STYLE = "subtitleStyle"
         private const val EXTRA_START_POSITION = "startPositionMs"
         private const val EXTRA_PLAYBACK_SETTINGS = "playbackSettings"
+        private const val EXTRA_CHECKPOINT_ID = "playbackCheckpointId"
         private const val STATE_MEDIA_URI = "mediaUri"
         private const val STATE_PLAY_WHEN_READY = "playWhenReady"
         private const val STATE_COMPLETED = "completed"
@@ -624,6 +698,7 @@ class NativePlayerActivity : Activity() {
         private const val STATE_TRACK_SELECTION = "trackSelection"
         private const val STATE_CHECKPOINT_ID = "playbackCheckpointId"
         private const val STATE_CHECKPOINT_URL = "playbackCheckpointUrl"
+        private const val STATE_PROCESS_SESSION_ID = "processSessionId"
         private const val SERVER_PORT = 43211
         @Volatile private var nativePlayerVisible = false
         @Volatile private var activeInstance: WeakReference<NativePlayerActivity>? = null
@@ -663,7 +738,7 @@ class NativePlayerActivity : Activity() {
                         activity.muted = value != 0.0
                         current.volume = if (activity.muted) 0f else activity.savedVolume
                     }
-                    "stop" -> activity.finish()
+                    "stop" -> activity.returnFromPlayer()
                     else -> return@runOnUiThread
                 }
                 activity.publishSnapshot()
@@ -689,7 +764,7 @@ class NativePlayerActivity : Activity() {
             }
         }
 
-        fun intent(context: Context, uri: Uri, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String, playbackSettingsJson: String = "{}"): Intent =
+        fun intent(context: Context, uri: Uri, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String, playbackSettingsJson: String = "{}", checkpointId: String = ""): Intent =
             Intent(context, NativePlayerActivity::class.java)
                 .setData(uri)
                 .putExtra(EXTRA_TITLE, title)
@@ -697,6 +772,13 @@ class NativePlayerActivity : Activity() {
                 .putExtra(EXTRA_START_POSITION, startPositionMs)
                 .putExtra(EXTRA_SUBTITLE_STYLE, subtitleStyleJson)
                 .putExtra(EXTRA_PLAYBACK_SETTINGS, playbackSettingsJson)
+                .putExtra(EXTRA_CHECKPOINT_ID, checkpointId)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+        fun recoveryIntent(context: Context, snapshot: PlaybackRecoverySnapshot): Intent =
+            Intent(context, NativePlayerActivity::class.java)
+                .setData(Uri.parse(snapshot.mediaUri))
+                .putExtra(EXTRA_CHECKPOINT_ID, snapshot.checkpointId)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 }

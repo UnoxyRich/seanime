@@ -58,6 +58,32 @@ func TestPlaybackCheckpointReusesTicketForRecreatedActivity(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestPlaybackResumeRefreshRequiresMatchingSourceAndRotatesTicket(t *testing.T) {
+	directory := t.TempDir()
+	expected := localCheckpoint("old").Source
+	oldTicket, err := savePlaybackResume(directory, "old-stream", expected)
+	require.NoError(t, err)
+
+	actual := *expected
+	actual.Media = &anilist.BaseAnime{ID: expected.Media.ID}
+	refreshedTicket, err := refreshPlaybackCheckpoint(directory, oldTicket, "new-stream", expected, &actual)
+	require.NoError(t, err)
+	require.NotEqual(t, oldTicket, refreshedTicket)
+	_, err = readPlaybackCheckpoint(directory, oldTicket)
+	require.ErrorContains(t, err, "replaced")
+	refreshed, err := readPlaybackCheckpoint(directory, refreshedTicket)
+	require.NoError(t, err)
+	require.Equal(t, "new-stream", refreshed.PlaybackID)
+	require.Equal(t, expected.Path, refreshed.Source.Path)
+
+	wrongSource := *expected
+	wrongSource.Path = "/androidtv/usb/different.mkv"
+	_, err = refreshPlaybackCheckpoint(directory, refreshedTicket, "other-stream", expected, &wrongSource)
+	require.ErrorContains(t, err, "does not match")
+	_, err = readPlaybackCheckpoint(directory, refreshedTicket)
+	require.NoError(t, err, "a rejected source must not invalidate the valid ticket")
+}
+
 func TestPlaybackCheckpointInvalidWritesPreservePreviousSource(t *testing.T) {
 	directory := t.TempDir()
 	require.NoError(t, writePlaybackCheckpoint(directory, localCheckpoint("previous")))

@@ -10,9 +10,11 @@ import { VideoCore } from "@/app/(main)/_features/video-core/video-core"
 import { vc_miniPlayer } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { vc_videoElement } from "@/app/(main)/_features/video-core/video-core-atoms"
 import { VideoCoreLifecycleState } from "@/app/(main)/_features/video-core/video-core.atoms"
-import { clientIdAtom } from "@/app/websocket-provider"
+import { clientIdAtom, websocketConnectedAtom } from "@/app/websocket-provider"
+import { getServerBaseUrl } from "@/api/client/server-url"
 import { logger } from "@/lib/helpers/debug"
 import { WSEvents } from "@/lib/server/ws-events"
+import { __isAndroidTV__ } from "@/types/constants"
 import { useQueryClient } from "@tanstack/react-query"
 import { useAtom, useAtomValue } from "jotai"
 import React from "react"
@@ -27,9 +29,21 @@ const log = logger("NATIVE PLAYER")
 // minimum interval between subtitle event flushes
 const SUBTITLE_FLUSH_INTERVAL_MS = 300
 
+type AndroidTVPlaybackRecovery = { checkpointId: string }
+
+function parseAndroidTVPlaybackRecovery(value: string): AndroidTVPlaybackRecovery | null {
+    try {
+        const parsed = JSON.parse(value) as { checkpointId?: unknown }
+        return typeof parsed.checkpointId === "string" && parsed.checkpointId ? { checkpointId: parsed.checkpointId } : null
+    } catch {
+        return null
+    }
+}
+
 export function NativePlayer() {
     const qc = useQueryClient()
     const clientId = useAtomValue(clientIdAtom)
+    const websocketConnected = useAtomValue(websocketConnectedAtom)
     const { sendMessage } = useWebsocketSender()
 
     const videoElement = useAtomValue(vc_videoElement)
@@ -37,6 +51,8 @@ export function NativePlayer() {
     const [miniPlayer, setMiniPlayer] = useAtom(vc_miniPlayer)
     const subtitleManager = useAtomValue(vc_subtitleManager)
     const _preserveMiniPlayerRef = React.useRef(false)
+    const recoveryStartedRef = React.useRef(false)
+    const recoveryRef = React.useRef<AndroidTVPlaybackRecovery | null>(null)
 
     // AniSkip
     const { data: aniSkipData } = useSkipData(state?.playbackInfo?.media?.idMal, state?.playbackInfo?.episode?.progressNumber ?? -1)
@@ -175,6 +191,12 @@ export function NativePlayer() {
                     break
                 case "abort-open":
                     log.info("Abort open event received", { payload })
+                    if (recoveryRef.current && __isAndroidTV__) {
+                        window.AndroidTV?.discardPlaybackRecovery(recoveryRef.current.checkpointId)
+                        recoveryRef.current = null
+                        recoveryStartedRef.current = false
+                        toast.error("Could not restore the previous Android TV playback session.")
+                    }
                     resetSubtitleState("")
                     _preserveMiniPlayerRef.current = false
                     if (!(payload as string)) {
@@ -204,6 +226,18 @@ export function NativePlayer() {
                 case "watch":
                     log.info("Watch event received", { payload })
                     const playbackInfo = payload as NativePlayer_PlaybackInfo
+                    if (recoveryRef.current && __isAndroidTV__ && window.AndroidTV) {
+                        const streamUrl = playbackInfo.streamUrl.replace("{{SERVER_URL}}", getServerBaseUrl())
+                        const result = window.AndroidTV.finishPlaybackRecovery(recoveryRef.current.checkpointId, streamUrl)
+                        if (result === "started") {
+                            recoveryRef.current = null
+                        } else {
+                            window.AndroidTV.discardPlaybackRecovery(recoveryRef.current.checkpointId)
+                            recoveryRef.current = null
+                            recoveryStartedRef.current = false
+                            toast.error(result.startsWith("error:") ? result.slice(6).trim() : "Android TV could not verify the restored stream.")
+                        }
+                    }
                     resetSubtitleState(playbackInfo.id)
                     setState(draft => {
                         draft.playbackInfo = playbackInfo
@@ -268,6 +302,38 @@ export function NativePlayer() {
             }
         },
     })
+
+    React.useEffect(() => {
+        const startRecovery = () => {
+            if (!__isAndroidTV__ || !websocketConnected || !clientId || recoveryStartedRef.current || !window.AndroidTV) return
+            const recovery = parseAndroidTVPlaybackRecovery(window.AndroidTV.pendingPlaybackRecovery())
+            if (!recovery) return
+            recoveryStartedRef.current = true
+            recoveryRef.current = recovery
+            const result = window.AndroidTV.startPlaybackRecovery(recovery.checkpointId, clientId)
+            if (result !== "accepted") {
+                window.AndroidTV.discardPlaybackRecovery(recovery.checkpointId)
+                recoveryRef.current = null
+                recoveryStartedRef.current = false
+                toast.error(result.startsWith("error:") ? result.slice(6).trim() : "Android TV could not reopen the previous stream.")
+            }
+        }
+        const onRecoveryError = (event: Event) => {
+            const detail = (event as CustomEvent<{ checkpointId: string, message: string }>).detail
+            if (!recoveryRef.current || detail?.checkpointId !== recoveryRef.current.checkpointId) return
+            window.AndroidTV?.discardPlaybackRecovery(recoveryRef.current.checkpointId)
+            recoveryRef.current = null
+            recoveryStartedRef.current = false
+            toast.error(detail.message || "Android TV could not reopen the previous stream.")
+        }
+        window.addEventListener("seanime-androidtv-playback-recovery-ready", startRecovery)
+        window.addEventListener("seanime-androidtv-playback-recovery-error", onRecoveryError)
+        startRecovery()
+        return () => {
+            window.removeEventListener("seanime-androidtv-playback-recovery-ready", startRecovery)
+            window.removeEventListener("seanime-androidtv-playback-recovery-error", onRecoveryError)
+        }
+    }, [clientId, websocketConnected])
 
     //
     // Handlers

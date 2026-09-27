@@ -112,3 +112,30 @@ func TestCaptureResumeSourceRejectsStalePlaybackAndMissingSelections(t *testing.
 		require.Error(t, source.Validate())
 	}
 }
+
+func TestResumeSourcesMatch(t *testing.T) {
+	fileIndex := 2
+	base := &ResumeSource{Version: 1, Type: player.PlaybackTypeTorrent, Media: &anilist.BaseAnime{ID: 7}, AniDBEpisode: "1", Episode: 1,
+		Torrent: &hibiketorrent.AnimeTorrent{Name: "episode", MagnetLink: "magnet:?xt=urn:btih:abc", InfoHash: "abc"}, FileIndex: &fileIndex}
+	clone := *base
+	clone.Torrent = &hibiketorrent.AnimeTorrent{Name: "renamed metadata", MagnetLink: base.Torrent.MagnetLink, InfoHash: base.Torrent.InfoHash}
+	clone.FileIndex = &fileIndex
+	require.True(t, ResumeSourcesMatch(base, &clone), "display metadata may change without changing source identity")
+
+	otherFile := 3
+	clone.FileIndex = &otherFile
+	require.False(t, ResumeSourcesMatch(base, &clone), "a different selected torrent file must not match")
+	clone.FileIndex = base.FileIndex
+	clone.Torrent.InfoHash = "different-hash"
+	require.False(t, ResumeSourcesMatch(base, &clone), "a different torrent must not match")
+	clone = *base
+	clone.Media = &anilist.BaseAnime{ID: 8}
+	clone.Torrent = base.Torrent
+	clone.FileIndex = base.FileIndex
+	require.False(t, ResumeSourcesMatch(base, &clone), "a different media item must not match")
+
+	urlSource := &ResumeSource{Version: 1, Type: player.PlaybackTypeURL, Media: &anilist.BaseAnime{ID: 7}, AniDBEpisode: "1", StreamURL: "https://media.example/video.m3u8"}
+	changedURL := *urlSource
+	changedURL.StreamURL = "https://media.example/other.m3u8"
+	require.False(t, ResumeSourcesMatch(urlSource, &changedURL))
+}

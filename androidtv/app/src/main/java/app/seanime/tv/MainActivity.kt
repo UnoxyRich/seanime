@@ -65,6 +65,7 @@ class MainActivity : Activity() {
     private var savedWebViewState: Bundle? = null
     private var savedPageUrl: String? = null
     private var pendingLocalUrl: String? = null
+    private var pendingPlaybackRecovery: PlaybackRecoverySnapshot? = null
     private var displayedError: String? = null
     private var activityResumed = false
     private var webPlaybackActive = false
@@ -113,6 +114,14 @@ class MainActivity : Activity() {
         savedWebViewState = savedInstanceState?.getBundle(STATE_WEB_VIEW)
         savedPageUrl = localPageUrl(savedInstanceState?.getString(STATE_PAGE_URL))
         pendingLocalUrl = consumeLocalPageIntent(intent) ?: localPageUrl(savedInstanceState?.getString(STATE_PENDING_LOCAL_PAGE))
+        val savedProcessSession = savedInstanceState?.getString(STATE_PROCESS_SESSION_ID).orEmpty()
+        pendingPlaybackRecovery = when {
+            savedInstanceState != null && savedProcessSession == (application as SeanimeTvApplication).processSessionId ->
+                savedInstanceState.getString(STATE_PLAYBACK_RECOVERY_ID)?.let(::readPlaybackRecovery)
+            savedInstanceState != null -> PlaybackRecoverySnapshot.read(filesDir)
+            else -> consumePlaybackRecoveryIntent(intent) ?: PlaybackRecoverySnapshot.read(filesDir)
+        }
+        pendingPlaybackRecovery?.let { (application as SeanimeTvApplication).claimPlaybackRecovery(it.checkpointId) }
         pendingStoragePurpose = savedInstanceState?.getString(STATE_STORAGE_PURPOSE) ?: pendingStoragePurpose
         window.decorView.systemUiVisibility = (
             View.SYSTEM_UI_FLAG_FULLSCREEN or
@@ -274,6 +283,8 @@ class MainActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString(STATE_STORAGE_PURPOSE, pendingStoragePurpose)
+        outState.putString(STATE_PROCESS_SESSION_ID, (application as SeanimeTvApplication).processSessionId)
+        pendingPlaybackRecovery?.let { outState.putString(STATE_PLAYBACK_RECOVERY_ID, it.checkpointId) }
         outState.putString(STATE_PENDING_LOCAL_PAGE, pendingLocalUrl)
         outState.putString(STATE_PAGE_URL, pendingLocalUrl ?: localPageUrl(webView.url) ?: savedPageUrl)
         val webState = Bundle()
@@ -286,6 +297,15 @@ class MainActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        consumePlaybackRecoveryIntent(intent)?.let {
+            pendingPlaybackRecovery = it
+            (application as SeanimeTvApplication).claimPlaybackRecovery(it.checkpointId)
+            if (::webView.isInitialized) {
+                webView.post {
+                    webView.evaluateJavascript("window.dispatchEvent(new Event('seanime-androidtv-playback-recovery-ready'))", null)
+                }
+            }
+        }
         // Consume callback navigation without replacing this activity's launch
         // identity. Pending URLs and page/history are saved independently.
         consumeLocalPageIntent(intent)?.let(::navigateToLocalPage)
@@ -296,6 +316,78 @@ class MainActivity : Activity() {
         // OAuth callbacks are one-shot; activity recreation must not replay one.
         intent.removeExtra(EXTRA_LOCAL_PAGE)
         return url
+    }
+
+    private fun consumePlaybackRecoveryIntent(intent: Intent): PlaybackRecoverySnapshot? {
+        val checkpointId = intent.getStringExtra(EXTRA_PLAYBACK_RECOVERY_ID)
+        intent.removeExtra(EXTRA_PLAYBACK_RECOVERY_ID)
+        return readPlaybackRecovery(checkpointId)
+    }
+
+    private fun readPlaybackRecovery(checkpointId: String?): PlaybackRecoverySnapshot? {
+        if (checkpointId.isNullOrBlank()) return null
+        return PlaybackRecoverySnapshot.read(filesDir)?.takeIf { it.checkpointId == checkpointId }
+    }
+
+    internal fun pendingPlaybackRecoveryJson(): String =
+        synchronized(this) { pendingPlaybackRecovery?.toJson()?.toString().orEmpty() }
+
+    internal fun startPlaybackRecovery(checkpointId: String, clientId: String): String {
+        val snapshot = synchronized(this) { pendingPlaybackRecovery } ?: return ""
+        if (snapshot.checkpointId != checkpointId) return ""
+        if (clientId.isBlank()) return "error: the WebView player session is not ready"
+        return runCatching {
+            serverExecutor.execute {
+                runCatching { Mobile.restorePlaybackResume(checkpointId, clientId) }
+                    .onFailure { error -> dispatchPlaybackRecoveryError(checkpointId, error.message ?: "could not restore playback") }
+            }
+            "accepted"
+        }.getOrElse { "error: could not schedule playback recovery" }
+    }
+
+    private fun dispatchPlaybackRecoveryError(checkpointId: String, message: String) {
+        val detail = JSONObject().put("checkpointId", checkpointId).put("message", message)
+        runOnUiThread {
+            if (!isDestroyed && ::webView.isInitialized) {
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('seanime-androidtv-playback-recovery-error',{detail:$detail}))",
+                    null,
+                )
+            }
+        }
+    }
+
+    internal fun finishPlaybackRecovery(checkpointId: String, streamUrl: String): String {
+        val original = synchronized(this) { pendingPlaybackRecovery } ?: return ""
+        if (original.checkpointId != checkpointId || localPageUrl(streamUrl) == null ||
+            runCatching { Uri.parse(streamUrl).path }.getOrNull() != "/api/v1/directstream/stream") return ""
+        val refreshedCheckpoint = runCatching { Mobile.refreshPlaybackResume(checkpointId, streamUrl) }
+            .getOrElse { return "error: ${it.message ?: "restored playback source did not match"}" }
+        val recovered = original.withStream(streamUrl, refreshedCheckpoint, (application as SeanimeTvApplication).processSessionId)
+        synchronized(this) {
+            if (pendingPlaybackRecovery?.checkpointId != checkpointId) return ""
+            pendingPlaybackRecovery = null
+        }
+        (application as SeanimeTvApplication).releasePlaybackRecovery(checkpointId)
+        PlaybackRecoverySnapshot.write(filesDir, recovered)
+        runOnUiThread { launchRecoveredPlayer(recovered) }
+        return "started"
+    }
+
+    internal fun discardPlaybackRecovery(checkpointId: String) {
+        synchronized(this) {
+            if (pendingPlaybackRecovery?.checkpointId != checkpointId) return
+            pendingPlaybackRecovery = null
+        }
+        (application as SeanimeTvApplication).releasePlaybackRecovery(checkpointId)
+        PlaybackRecoverySnapshot.clear(filesDir)
+    }
+
+    private fun launchRecoveredPlayer(snapshot: PlaybackRecoverySnapshot) {
+        val uri = runCatching { Uri.parse(snapshot.mediaUri) }.getOrNull() ?: return
+        if (uri.scheme != "http" || localPageUrl(snapshot.mediaUri) == null) return
+        NativePlayerActivity.markLaunchPending()
+        startActivity(NativePlayerActivity.recoveryIntent(this, snapshot))
     }
 
     private fun navigateToLocalPage(url: String) {
@@ -817,10 +909,13 @@ class MainActivity : Activity() {
 
     companion object {
         private const val EXTRA_LOCAL_PAGE = "local-page"
+        private const val EXTRA_PLAYBACK_RECOVERY_ID = "playback-recovery-id"
         private const val STATE_WEB_VIEW = "main-web-view"
         private const val STATE_PAGE_URL = "main-page-url"
         private const val STATE_PENDING_LOCAL_PAGE = "pending-local-page"
         private const val STATE_STORAGE_PURPOSE = "storage-purpose"
+        private const val STATE_PLAYBACK_RECOVERY_ID = "playback-recovery-id"
+        private const val STATE_PROCESS_SESSION_ID = "process-session-id"
         const val STORAGE_PICK_REQUEST = 521
         private const val UPDATE_PREFERENCES = "android-tv-updates"
         private const val PENDING_UPDATE_DOWNLOAD_ID = "pending-download-id"
@@ -893,6 +988,11 @@ class MainActivity : Activity() {
         internal fun localPageIntent(context: Context, url: String): Intent =
             Intent(context, MainActivity::class.java)
                 .putExtra(EXTRA_LOCAL_PAGE, requireNotNull(localPageUrl(url)))
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+
+        fun playbackRecoveryIntent(context: Context, checkpointId: String): Intent =
+            Intent(context, MainActivity::class.java)
+                .putExtra(EXTRA_PLAYBACK_RECOVERY_ID, checkpointId)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
         fun notifyNativePlaybackProgress(payload: JSONObject) {
@@ -1000,6 +1100,24 @@ private class AndroidTVBridge(
     fun playNative(token: String, url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String, playbackSettingsJson: String) {
         if (!isAuthorized(token)) return
         activity.runOnUiThread { activity.launchNativePlayer(url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson, playbackSettingsJson) }
+    }
+
+    @JavascriptInterface
+    fun pendingPlaybackRecovery(token: String): String =
+        if (isAuthorized(token)) activity.pendingPlaybackRecoveryJson() else ""
+
+    @JavascriptInterface
+    fun startPlaybackRecovery(token: String, checkpointId: String, clientId: String): String =
+        if (isAuthorized(token)) activity.startPlaybackRecovery(checkpointId, clientId) else ""
+
+    @JavascriptInterface
+    fun finishPlaybackRecovery(token: String, checkpointId: String, streamUrl: String): String =
+        if (isAuthorized(token)) activity.finishPlaybackRecovery(checkpointId, streamUrl) else ""
+
+    @JavascriptInterface
+    fun discardPlaybackRecovery(token: String, checkpointId: String) {
+        if (!isAuthorized(token)) return
+        activity.discardPlaybackRecovery(checkpointId)
     }
 
     @JavascriptInterface

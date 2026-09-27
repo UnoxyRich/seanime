@@ -42,6 +42,10 @@ function installAndroidTVBridgeFacade() {
         controlNativePlayer: (url, command, value) => native.controlNativePlayer(token, url, command, value),
         installUpdate: (filePath) => native.installUpdate(token, filePath),
         setPlaybackActive: (active) => native.setPlaybackActive(token, active),
+        pendingPlaybackRecovery: () => native.pendingPlaybackRecovery(token),
+        startPlaybackRecovery: (checkpointId, clientId) => native.startPlaybackRecovery(token, checkpointId, clientId),
+        finishPlaybackRecovery: (checkpointId, streamUrl) => native.finishPlaybackRecovery(token, checkpointId, streamUrl),
+        discardPlaybackRecovery: (checkpointId) => native.discardPlaybackRecovery(token, checkpointId),
     }
 }
 

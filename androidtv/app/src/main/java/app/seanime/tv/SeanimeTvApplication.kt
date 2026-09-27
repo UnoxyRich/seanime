@@ -11,11 +11,27 @@ import android.util.Log
 import app.seanime.tv.gomobile.mobile.Mobile
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.UUID
 
 class SeanimeTvApplication : Application(), Application.ActivityLifecycleCallbacks {
+    val processSessionId: String = UUID.randomUUID().toString()
+    @Volatile private var playbackRecoveryTicket: String = ""
     private val handler = Handler(Looper.getMainLooper())
     private val lifecycleExecutor = Executors.newSingleThreadExecutor()
     private var startedActivities = 0
+
+    @Synchronized
+    fun claimPlaybackRecovery(ticket: String) {
+        if (ticket.isNotBlank()) playbackRecoveryTicket = ticket
+    }
+
+    @Synchronized
+    fun ownsPlaybackRecovery(ticket: String): Boolean = ticket.isNotBlank() && playbackRecoveryTicket == ticket
+
+    @Synchronized
+    fun releasePlaybackRecovery(ticket: String) {
+        if (playbackRecoveryTicket == ticket) playbackRecoveryTicket = ""
+    }
 
     private val pauseBackgroundWork = Runnable {
         if (startedActivities == 0) {

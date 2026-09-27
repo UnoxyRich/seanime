@@ -55,6 +55,34 @@ func (s *ResumeSource) Validate() error {
 	return nil
 }
 
+// ResumeSourcesMatch verifies that a reopened stream is the same source as an
+// app-private checkpoint. It compares stable source identity, not transient
+// playback IDs or mutable display metadata.
+func ResumeSourcesMatch(expected, actual *ResumeSource) bool {
+	if expected == nil || actual == nil || expected.Validate() != nil || actual.Validate() != nil {
+		return false
+	}
+	if expected.Type != actual.Type || expected.Media.ID != actual.Media.ID ||
+		expected.AniDBEpisode != actual.AniDBEpisode || expected.Episode != actual.Episode {
+		return false
+	}
+	switch expected.Type {
+	case player.PlaybackTypeLocalFile:
+		return expected.Path == actual.Path
+	case player.PlaybackTypeTorrent:
+		return expected.Torrent.InfoHash == actual.Torrent.InfoHash &&
+			*expected.FileIndex == *actual.FileIndex
+	case player.PlaybackTypeDebrid:
+		return expected.Torrent.InfoHash == actual.Torrent.InfoHash && expected.FileID == actual.FileID
+	case player.PlaybackTypeURL:
+		return expected.StreamURL == actual.StreamURL
+	case player.PlaybackTypeNakama:
+		return expected.StreamURL == actual.StreamURL && expected.NakamaToken == actual.NakamaToken
+	default:
+		return false
+	}
+}
+
 // CaptureResumeSource only captures the stream whose playback ID is in the
 // supplied proxy URL. A late callback cannot replace the next episode's source.
 func (m *Manager) CaptureResumeSource(playbackURL string) (*ResumeSource, error) {

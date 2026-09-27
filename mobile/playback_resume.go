@@ -126,6 +126,44 @@ func RestorePlaybackResume(checkpointID string, clientID string) error {
 	return errors.New("unsupported playback checkpoint")
 }
 
+// RefreshPlaybackResume only returns a new checkpoint when the active stream
+// matches the original source descriptor. The refreshed ticket is bound to the
+// new stream ID, so stale recovery state cannot be reused after this handoff.
+func RefreshPlaybackResume(checkpointID string, playbackURL string) (string, error) {
+	playbackResumeMu.Lock()
+	defer playbackResumeMu.Unlock()
+	app, err := playbackResumeApp()
+	if err != nil {
+		return "", err
+	}
+	checkpoint, err := readPlaybackCheckpoint(app.Config.Data.AppDataDir, checkpointID)
+	if err != nil {
+		return "", err
+	}
+	currentSource, err := app.DirectStreamManager.CaptureResumeSource(playbackURL)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(playbackURL)
+	if err != nil {
+		return "", err
+	}
+	return refreshPlaybackCheckpoint(app.Config.Data.AppDataDir, checkpointID, u.Query().Get("id"), checkpoint.Source, currentSource)
+}
+
+func refreshPlaybackCheckpoint(dataDir, checkpointID, playbackID string, expected, actual *directstream.ResumeSource) (string, error) {
+	if checkpointID == "" {
+		return "", errors.New("playback checkpoint ID is required")
+	}
+	if playbackID == "" {
+		return "", errors.New("playback ID is required")
+	}
+	if !directstream.ResumeSourcesMatch(expected, actual) {
+		return "", errors.New("restored playback source does not match the checkpoint")
+	}
+	return savePlaybackResume(dataDir, playbackID, actual)
+}
+
 const maxPlaybackCheckpointBytes = 1024 * 1024
 
 func writePlaybackCheckpoint(dataDir string, checkpoint *playbackCheckpoint) error {
