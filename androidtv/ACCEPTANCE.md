@@ -28,6 +28,12 @@ and device model with each result.
   discovery, icon/banner metadata, and optional touchscreen declaration. Latest
   run details are recorded in
   [focus restoration run](acceptance/2026-09-28-focus-restoration.md).
+- The Go mobile lifecycle test now starts with the app already backgrounded
+  and verifies periodic work remains stopped until foreground return. The
+  server applies the same suspension policy to Auto Downloader, Auto Scanner,
+  manga downloads, and active built-in torrent downloads when that background
+  transition arrives during startup. See the
+  [background-at-start run](acceptance/2026-09-28-background-startup.md).
 - A visible host-GPU emulator run at 1920 × 1080 verified remote navigation to
   the USB-folder control and restoration of its purple focus ring after native
   dialog dismissal. See the captured
