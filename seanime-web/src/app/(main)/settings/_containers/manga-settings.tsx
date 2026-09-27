@@ -5,6 +5,7 @@ import { SettingsCard, SettingsPageHeader } from "@/app/(main)/settings/_compone
 import { SettingsSubmitButton } from "@/app/(main)/settings/_components/settings-submit-button"
 import { ConfirmationDialog, useConfirmationDialog } from "@/components/shared/confirmation-dialog"
 import { AndroidTVStoragePicker } from "@/components/shared/android-tv-storage-picker"
+import { cloneApiData } from "@/lib/helpers/clone-api-data"
 import { Button } from "@/components/ui/button"
 import { Field } from "@/components/ui/form"
 import { atom } from "jotai"
@@ -54,7 +55,7 @@ export function MangaSettings(props: MangaSettingsProps) {
         actionIntent: "warning",
         onConfirm: async () => {
             if (!defaultProviderExt) return
-            const oldProviders = structuredClone(storedProviders)
+            const oldProviders = cloneApiData(storedProviders)
             overwriteStoredProvidersWith(defaultProviderExt.id)
             toast.success("All source selections have been overwritten.")
             setTimeout(() => {

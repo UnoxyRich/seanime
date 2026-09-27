@@ -114,8 +114,10 @@ the output, decodes it with FFmpeg, and checks Media3 frame rendering and seekin
 - Native direct-stream playback checkpoints the underlying source in private
   Go app data and saves an opaque checkpoint ID in the activity state. Local,
   torrent, debrid, URL and Nakama source selections can be reopened through the
-  Go binding for a new WebView client. Automatic coordination after a full
-  process restart is still being implemented; see the acceptance matrix.
+  Go binding for a new WebView client. The cold-process restoration path is
+  implemented, but a force-stop during real playback followed by a successful
+  restored session has not yet been verified end to end; see the acceptance
+  matrix.
 - Native playback errors show focused remote controls to retry the source or
   return to the web player. Retrying retains the position, speed, volume and
   pause state; failures do not advance the playlist.

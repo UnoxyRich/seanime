@@ -1,4 +1,5 @@
 import { Row, Table } from "@tanstack/react-table"
+import { cloneApiData } from "@/lib/helpers/clone-api-data"
 import equal from "fast-deep-equal"
 import * as React from "react"
 import { AnyZodObject, ZodIssue } from "zod"
@@ -202,7 +203,7 @@ export function useDataGridEditing<T extends Record<string, any>>(props: Props<T
 
             // Optimistic update
             if (enableOptimisticUpdates && optimisticUpdatePrimaryKey) {
-                let clone = structuredClone(data)
+                let clone = cloneApiData(data)
                 const index = clone.findIndex(p => {
                     if (!p[optimisticUpdatePrimaryKey] || !rowData[optimisticUpdatePrimaryKey]) return false
                     return p[optimisticUpdatePrimaryKey] === rowData[optimisticUpdatePrimaryKey]
@@ -239,7 +240,7 @@ export function useDataGridEditing<T extends Record<string, any>>(props: Props<T
             try {
                 const parsed = await schema.safeParseAsync(rowData)
                 if (parsed.success) {
-                    let finalData = structuredClone(rowData)
+                    let finalData = cloneApiData(rowData)
                     Object.keys(parsed.data).map(key => {
                         // @ts-expect-error
                         finalData[key] = parsed.data[key]
