@@ -64,6 +64,9 @@ and device model with each result.
   the USB-folder control and restoration of its purple focus ring after native
   dialog dismissal. See the captured
   [focus restoration screenshot](acceptance/screenshots/2026-09-28-api31-arm64-dpad-focus-restored.png).
+- The freshly installed ARM64 debug APK launched its embedded first-run setup;
+  an injected D-pad Right moved the visible focus ring to the next player card.
+  See the [visible launch check](acceptance/2026-09-28-visible-launch-smoke.md).
 - The first-run setup now opens with a visible D-pad focus target, describes
   the built-in Android TV player, and configures qBittorrent/Transmission as
   network services without desktop executable paths. See the

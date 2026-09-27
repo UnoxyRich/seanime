@@ -2,14 +2,20 @@
 
 - Revision: `40be51a3` (`Cover cancelled and failed SAF writes`). The recovery
   implementation is in parent commit `6c5f93f4`.
-- Emulator: API 31 Android TV ARM64, Android 12, WebView 91.0.4472.114,
-  4096-byte pages.
+- Device: `sdk_google_atv64_arm64` (`emulator64_arm64`), API 31 Android TV
+  ARM64, Android 12, WebView 91.0.4472.114, 4096-byte pages.
+- Storage provider: app-owned synthetic DocumentsProvider
+  `app.seanime.tv.test.documents`; physical USB storage was not attached.
 - Command: `ANDROID_HOME=/Users/unoxyrich/Library/Android/sdk
   ANDROID_NDK_HOME=/Users/unoxyrich/Library/Android/sdk/ndk/27.2.12479018
   ./gradlew :app:connectedDebugAndroidTest --no-daemon` from `androidtv`.
 - Result: **16/16 instrumentation tests passed**. The task built the Android TV
   frontend and debug package, compiled Android instrumentation code, then
   installed and ran the suite on the connected emulator.
+- Both ABI debug APKs pass APK signature verification and the repository's
+  16 KiB ELF/ZIP alignment checker. SHA-256:
+  - ARM64: `550d97ba0c1268f9fc422648a20f1da8cb64ae157588dfa69b2eadc9282c837c`
+  - x86_64: `41f8a77437132883312c13d6b0a24a49e4a0a88a1a6545989531b93b58abafba`
 - The storage test seeds the synthetic DocumentsProvider and persisted journal,
   then constructs a fresh adapter to cover abandoned `.part` cleanup, restoring
   an old destination when replacement stopped halfway, keeping a replacement
