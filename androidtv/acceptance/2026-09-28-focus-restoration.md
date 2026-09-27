@@ -1,7 +1,7 @@
 # Android TV launcher and focus restoration run — 2026-09-28
 
 Android application source commit: `e6a8b723` (`codex/android-tv`).
-Instrumentation test source commit: `c03566f9`.
+Instrumentation test source commit: `4fbcbb24`.
 
 ## Environment
 
@@ -17,7 +17,8 @@ Instrumentation test source commit: `c03566f9`.
   creates a focused WebView control, invokes the native Android storage-picker
   path, dismisses the TV image's fallback dialog with Back, and checks that the
   same control is active again with the Android TV 3 px outline and visible
-  focus ring. It also verifies the activity loses and regains window focus.
+  focus ring. It also launches the native player Activity, returns with Back,
+  and checks focus and visible styling survive the Activity transition.
 - The package-manager test confirms the app is discoverable from the Leanback
   launcher, resolves to `MainActivity`, has an icon and TV banner, requires the
   Leanback feature, and declares touchscreen support optional.
