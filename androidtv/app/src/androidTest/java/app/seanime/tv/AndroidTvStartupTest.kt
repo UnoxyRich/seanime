@@ -1,7 +1,9 @@
 package app.seanime.tv
 
-import android.os.SystemClock
+import android.content.pm.FeatureInfo
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -16,6 +18,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -23,6 +26,27 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AndroidTvStartupTest {
+    @Test
+    fun packageIsDiscoverableAsAnAndroidTvLauncherApp() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val packageManager = context.packageManager
+        val launchIntent = packageManager.getLeanbackLaunchIntentForPackage(context.packageName)
+        assertNotNull("Seanime TV is missing its Leanback launcher entry", launchIntent)
+        assertEquals(MainActivity::class.java.name, launchIntent?.component?.className)
+
+        val applicationInfo = packageManager.getApplicationInfo(context.packageName, 0)
+        assertTrue("Android TV app icon is missing", applicationInfo.icon != 0)
+        assertTrue("Android TV launcher banner is missing", applicationInfo.banner != 0)
+
+        val features = packageManager.getPackageInfo(context.packageName, PackageManager.GET_CONFIGURATIONS).reqFeatures.orEmpty()
+        val leanback = features.firstOrNull { it.name == "android.software.leanback" }
+        val touchscreen = features.firstOrNull { it.name == "android.hardware.touchscreen" }
+        assertNotNull("Leanback must be required for this TV-only app", leanback)
+        assertTrue("Leanback must be required", (leanback!!.flags and FeatureInfo.FLAG_REQUIRED) != 0)
+        assertNotNull("Touchscreen support must be declared optional", touchscreen)
+        assertFalse("Touchscreen must remain optional", (touchscreen!!.flags and FeatureInfo.FLAG_REQUIRED) != 0)
+    }
+
     @Test
     fun bridgeBootstrapOnlyAcceptsTheLocalMainFrame() {
         val local = Uri.parse("http://127.0.0.1:43211")
