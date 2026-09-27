@@ -63,6 +63,13 @@ and device model with each result.
   manga downloads, and active built-in torrent downloads when that background
   transition arrives during startup. See the
   [background-at-start run](acceptance/2026-09-28-background-startup.md).
+- Manga downloads now cancel active image requests when the app backgrounds,
+  persist completed page files for resume, and recover interrupted queue intent
+  when the server starts again. The targeted Go packages pass, and the final
+  ARM64/x86_64 Go binding builds; all 18 Android instrumentation tests pass on
+  the API 31 ARM64 TV emulator. See the
+  [manga background/resume run](acceptance/2026-09-28-background-manga-resume.md)
+  for APK hashes and verification details.
 - A visible host-GPU emulator run at 1920 × 1080 verified remote navigation to
   the USB-folder control and restoration of its purple focus ring after native
   dialog dismissal. See the captured
