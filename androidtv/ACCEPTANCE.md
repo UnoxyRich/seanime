@@ -12,14 +12,16 @@ and device model with each result.
   isolation, suppression of late browser playback events, and older-WebView
   bridge bootstrap, Android stream routing, playlist playback selection, and
   watch-party player identity.
-- ARM64 and x86_64 debug APKs build; their debug signatures verify.
-- All 10 Android instrumentation tests pass on the API 31 ARM64 TV emulator
-  with WebView 91 and 4 KiB pages. They cover server startup/restart,
-  bridge access, sample D-pad widgets, a test document provider, native player
-  lifecycle/commands, missing-source recovery, WebView route restoration,
-  callback intent delivery, and execution of the bundled media tools. The media
-  test encodes H.264 with the bundled CPU encoder, checks it with ffprobe,
-  decodes it with FFmpeg, and renders/seeks it in Media3 while paused.
+- ARM64 and x86_64 debug APKs build and pass APK signature verification.
+- All 11 Android instrumentation tests pass on the API 31 ARM64 TV emulator
+  with WebView 91.0.4472.114 and 4 KiB pages. They cover server
+  startup/restart, bridge access, sample D-pad widgets, a test document
+  provider, native-player lifecycle/commands, missing-source recovery, WebView
+  route restoration, callback intent delivery, persisted decoder/track state,
+  and the bundled media tools. The media test encodes H.264 with the bundled
+  CPU encoder, checks it with ffprobe, decodes it with FFmpeg, and renders/seeks
+  it in Media3 while paused. The latest run is recorded in
+  [playback recovery run](acceptance/2026-09-27-playback-recovery.md).
 - The four transcoding capability tests and seven playback checkpoint tests
   pass. Physical-device scenarios below still need recorded passing runs.
 - Android storage, direct-stream, playlist, and Nakama Go package tests pass,
@@ -31,35 +33,34 @@ and device model with each result.
 - All four native libraries in each debug APK pass the 16 KiB ELF/ZIP check
   in `scripts/verify_android_native_alignment.py`; its seven regression tests
   pass. Runtime operation on a 16 KiB device still needs a separate test run.
-- The earlier emulator disk blocker was resolved using the checksum-verified
-  API 31 image and a task-owned sparse data partition. The AVD is available
-  for continued testing. See the [media pipeline run](acceptance/2026-09-26-api31-arm64.md),
-  [playback routing run](acceptance/2026-09-26-playback-routing.md), and
-  [latest APK run](acceptance/2026-09-27-android-tv-build.md) for source
-  revisions, APK hashes, environment, and test scope.
+- The API 31 ARM64 TV emulator uses a task-owned sparse data partition. See
+  the [media pipeline run](acceptance/2026-09-26-api31-arm64.md),
+  [playback routing run](acceptance/2026-09-26-playback-routing.md),
+  [latest APK run](acceptance/2026-09-27-android-tv-build.md), and
+  [playback recovery run](acceptance/2026-09-27-playback-recovery.md) for
+  source revisions, APK hashes, environment, and test scope.
 
-## Remaining process-restoration work
+## Process-death playback restoration
 
-Main and OAuth activity recreation now restores their page/history, and native
-player recreation restores its media and decoder settings in the existing
-process. These are distinct from reconstruction after Android kills the entire
-app process. A restored native player can hold a loopback stream URL whose Go
-server and in-memory stream session no longer exist.
+The cold-process recovery path is implemented. Go stores an app-private source
+descriptor for local, torrent, debrid, HTTP URL, and Nakama streams. Android
+atomically stores the opaque ticket and native decoder state, including
+position, play/pause, subtitle preferences, speed, volume, and track selection.
+After process recreation, the host waits for the Go server and a new WebView
+client, reopens the selected source through the existing playback modules,
+checks that the reopened stream matches the checkpoint, rotates the ticket,
+and hands the fresh loopback URL to Media3. The full source description and
+Nakama credentials stay in Go's private data; the bridge carries only the
+checkpoint ID.
 
-Direct-stream source checkpoints now retain the original local file, torrent
-and file selection, debrid torrent/file selection, or URL/Nakama source in
-private app data. The Android activity saves only an opaque checkpoint ID with
-its decoder state. The Go binding can reopen those selections for a new client
-ID using the existing playback modules; debrid recovery resolves a fresh source
-URL. Checkpoint replacement, corruption/size handling, stale playback IDs, and
-metadata isolation have unit coverage.
-
-The Android cold-process flow still needs to restart the backend, reconnect the
-WebView/player events, invoke the reopen operation and hand the fresh stream to
-Media3. Media-stream/transcode and online-provider recovery need their own
-source refresh path. Nakama room reconnection and playlist state also need
-end-to-end verification. The checkpoint API alone does not establish full
-process-death recovery.
+Go tests cover checkpoint reload/replacement, source identity checks and ticket
+rotation. The Android instrumentation suite covers durable snapshot roundtrip
+and track-preference serialization. A force-stop while a real source is
+playing, followed by successful cold-launch restoration, has **not** been
+exercised end to end. Authenticated torrent/debrid providers, revoked USB
+grants, Nakama room reconnection, and playlist continuity also need device
+verification; passing snapshot and source-identity tests alone does not prove
+those live flows.
 
 ## Feature scenarios
 
