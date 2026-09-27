@@ -7,12 +7,12 @@ and device model with each result.
 
 ## Current evidence
 
-- The shared frontend suite passes 92 tests in 16 files, including playback recovery,
+- The shared frontend suite passes 93 tests in 16 files, including playback recovery,
   Media3 state/command adaptation, browser HLS handoff, source-refresh pause
   isolation, suppression of late browser playback events, and older-WebView
-  bridge bootstrap, modern Array/Promise polyfills, and a structured-clone
-  fallback for older WebViews, Android stream routing, playlist playback
-  selection, and watch-party player identity.
+  bridge bootstrap, `Object.hasOwn` and modern Array/Promise polyfills, and a
+  structured-clone fallback for older WebViews, Android stream routing,
+  playlist playback selection, and watch-party player identity.
 - ARM64 and x86_64 debug APKs build and pass APK signature verification.
 - All 13 Android instrumentation tests pass on the API 31 ARM64 TV emulator
   with WebView 91.0.4472.114 and 4 KiB pages. They cover server
@@ -32,18 +32,19 @@ and device model with each result.
   discovery, icon/banner metadata, and optional touchscreen declaration. Latest
   run details are recorded in
   [focus restoration run](acceptance/2026-09-28-focus-restoration.md).
-- Android TV now supplies the ES2023 Array methods and `Promise.withResolvers`
-  missing from WebView 91. The startup instrumentation probe executes all six
-  Array methods and resolves a deferred Promise inside the real WebView. Shared
+- Android TV now supplies `Object.hasOwn`, the ES2023 Array methods and
+  `Promise.withResolvers` missing from WebView 91. The startup instrumentation
+  probe checks own-property behavior, executes all six Array methods, and
+  resolves a deferred Promise inside the real WebView. Shared
   settings and data-grid code also use a tested clone fallback when
   `structuredClone()` is absent. Viewport sizing uses `dvh` when available and
   a tested `vh` fallback on older WebViews. The earlier home run reached the
   catalogue with visible D-pad focus and no renderer exception; the latest
-  build passed the real-WebView viewport assertion and focus-restoration
-  checks. See the
+  build passed the real-WebView API and viewport assertions and
+  focus-restoration checks. See the
   [WebView compatibility run](acceptance/2026-09-28-webview-91-compatibility.md),
   [home screenshot](acceptance/screenshots/2026-09-28-webview-91-home-after-fix.png),
-  and [latest D-pad screenshot](acceptance/screenshots/2026-09-28-webview-91-dpad-current-build.png).
+  and [latest D-pad screenshot](acceptance/screenshots/2026-09-28-webview-91-dpad-object-hasown.png).
 - The Go mobile lifecycle test now starts with the app already backgrounded
   and verifies periodic work remains stopped until foreground return. The
   server applies the same suspension policy to Auto Downloader, Auto Scanner,

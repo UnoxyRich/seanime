@@ -117,7 +117,7 @@ selection state do not depend on them.
 
 Screenshot: [current build with visible D-pad focus](screenshots/2026-09-28-webview-91-dpad-current-build.png).
 
-## Current debug APK SHA-256
+## Viewport-fallback debug APK SHA-256
 
 ```text
 app-arm64-v8a-debug.apk
@@ -125,4 +125,40 @@ f2f948c992fffe775726a3eedbd1e99c325031698239a86c3ee0d01f5b562d28
 
 app-x86_64-debug.apk
 a734c6720cfc04feace1311c5e9302318397ed45051a97364ead6f3bb45547c0
+```
+
+## Follow-up: Object.hasOwn fallback — 2026-09-28
+
+Source commit: `dba88453` (`codex/android-tv`).
+
+The generated Android TV bundle uses `Object.hasOwn()` in a virtualization
+dependency without a feature check. WebView 91 predates that API, so startup
+polyfills now provide its own-property semantics before the shared React
+application loads. A frontend regression test removes the native method and
+checks inherited, `__proto__`, symbol, and null-input behavior.
+
+## Verification
+
+- `npm run typecheck` passed as part of the Android TV build.
+- `npm test` passed: 93 tests in 16 files.
+- `ANDROID_HOME=/Users/unoxyrich/Library/Android/sdk ./gradlew :app:connectedDebugAndroidTest`
+  passed: both ABI packages built and all 13 instrumentation tests passed on
+  the API 31 ARM64 TV emulator. The embedded WebView startup probe verifies
+  `Object.hasOwn` distinguishes own from inherited properties.
+- Installed and launched the ARM64 package at 1920 × 1080; the setup page
+  rendered with a visible D-pad focus ring.
+- Both APKs passed APK signature verification and `zipalign -c -P 16 4`.
+  `scripts/verify_android_native_alignment.py` confirmed all four native
+  libraries in each APK have 16 KiB ELF/ZIP alignment.
+
+Screenshot: [latest build with visible D-pad focus](screenshots/2026-09-28-webview-91-dpad-object-hasown.png).
+
+## Latest debug APK SHA-256
+
+```text
+app-arm64-v8a-debug.apk
+234434f8ac74c928da49beb97d01187dabb9310f1d7fa3301b7ea2a60a493668
+
+app-x86_64-debug.apk
+76b64d174eb1c2c6d0b8e0a03cdfca3d549c75ef3143a33b36a4597d8e73d106
 ```
