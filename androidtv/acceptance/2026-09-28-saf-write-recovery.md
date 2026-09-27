@@ -1,8 +1,8 @@
 # Android TV SAF write recovery
 
-- Revision: `899e7f36` (`Isolate SAF recovery per storage root`). The journal
-  implementation began in `6c5f93f4`; later commits added cancellation, failure,
-  invalid-journal, and cross-root coverage.
+- Revision: `34abc080` (`Exercise SAF through the Go API`). The journal
+  implementation is in `899e7f36` and began in `6c5f93f4`; later commits added
+  cancellation, failure, invalid-journal, cross-root, and Go API coverage.
 - Device: `sdk_google_atv64_arm64` (`emulator64_arm64`), API 31 Android TV
   ARM64, Android 12, WebView 91.0.4472.114, 4096-byte pages.
 - Storage provider: app-owned synthetic DocumentsProvider
@@ -10,7 +10,7 @@
 - Command: `ANDROID_HOME=/Users/unoxyrich/Library/Android/sdk
   ANDROID_NDK_HOME=/Users/unoxyrich/Library/Android/sdk/ndk/27.2.12479018
   ./gradlew :app:connectedDebugAndroidTest --no-daemon` from `androidtv`.
-- Result: **16/16 instrumentation tests passed**. The task built the Android TV
+- Result: **17/17 instrumentation tests passed**. The task built the Android TV
   frontend and debug package, compiled Android instrumentation code, then
   installed and ran the suite on the connected emulator.
 - Both ABI debug APKs pass APK signature verification and the repository's
@@ -32,6 +32,11 @@
   remains unresolved and access to that root fails, while another selected
   root can still be listed. This exercises per-root isolation with the test
   provider; it does not simulate unplugging physical USB hardware.
+- The integration test launches `MainActivity` and its actual Go server, then
+  posts the persisted virtual root and a nested directory to
+  `/api/v1/directory-selector`. Both requests return HTTP 200 with the expected
+  SAF folder names, exercising the registered Kotlin adapter through Go rather
+  than calling the adapter directly.
 - Journal updates are synchronously persisted before replacement steps. If the
   provider, grant, or journal cannot be recovered, the adapter keeps the
   transaction and refuses subsequent storage operations until recovery can
