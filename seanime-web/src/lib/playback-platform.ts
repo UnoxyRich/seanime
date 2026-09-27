@@ -6,6 +6,26 @@ export function sharedPlayerSurface(androidTV: boolean, electron: boolean, mpvEn
     return null
 }
 
+export function playlistStreamPlaybackMethod(
+    androidTV: boolean,
+    electron: boolean,
+    electronPlaybackMethod: string,
+    torrentPlaybackMethod: string,
+    externalPlayerLink: string,
+): string {
+    if (androidTV) {
+        return torrentPlaybackMethod === "externalPlayerLink" && externalPlayerLink.trim()
+            ? "externalPlayerLink"
+            : "nativePlayer"
+    }
+    if (electron && electronPlaybackMethod !== "default") return electronPlaybackMethod
+    return torrentPlaybackMethod
+}
+
+export function watchPartyUsesIntegratedPlayer(androidTV: boolean, electron: boolean, electronPlaybackMethod: string): boolean {
+    return androidTV || (electron && electronPlaybackMethod === "nativePlayer")
+}
+
 type StreamPlaybackOptions = {
     androidTV: boolean
     electron: boolean

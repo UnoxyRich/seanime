@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { sharedPlayerSurface, streamPlaybackType } from "./playback-platform"
+import { playlistStreamPlaybackMethod, sharedPlayerSurface, streamPlaybackType, watchPartyUsesIntegratedPlayer } from "./playback-platform"
 
 const tv = { androidTV: true, electron: false, electronPlaybackMethod: "default", externalPlayerSelected: false, externalPlayerLink: "" }
 
@@ -15,6 +15,22 @@ describe("shared player platform routing", () => {
     it("routes default TV torrent and debrid requests to the listening player", () => {
         expect(streamPlaybackType(tv)).toBe("nativeplayer")
         expect(streamPlaybackType({ ...tv, electronPlaybackMethod: "nativePlayer" })).toBe("nativeplayer")
+    })
+
+    it("uses the shared Android player for playlist streams and preserves configured external links", () => {
+        expect(playlistStreamPlaybackMethod(true, false, "default", "default", "")).toBe("nativePlayer")
+        expect(playlistStreamPlaybackMethod(true, false, "nativePlayer", "externalPlayerLink", "")).toBe("nativePlayer")
+        expect(playlistStreamPlaybackMethod(true, false, "default", "externalPlayerLink", "vlc://play")).toBe("externalPlayerLink")
+        expect(playlistStreamPlaybackMethod(false, true, "nativePlayer", "default", "")).toBe("nativePlayer")
+        expect(playlistStreamPlaybackMethod(false, false, "nativePlayer", "externalPlayerLink", "")).toBe("externalPlayerLink")
+    })
+
+    it("advertises Android TV as an integrated watch-party player regardless of imported desktop settings", () => {
+        expect(watchPartyUsesIntegratedPlayer(true, false, "default")).toBe(true)
+        expect(watchPartyUsesIntegratedPlayer(true, false, "nativePlayer")).toBe(true)
+        expect(watchPartyUsesIntegratedPlayer(false, true, "nativePlayer")).toBe(true)
+        expect(watchPartyUsesIntegratedPlayer(false, true, "default")).toBe(false)
+        expect(watchPartyUsesIntegratedPlayer(false, false, "nativePlayer")).toBe(false)
     })
 
     it("honors the TV external app choice and requires its configured link", () => {

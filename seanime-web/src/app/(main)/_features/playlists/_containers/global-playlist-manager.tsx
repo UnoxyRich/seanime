@@ -1,6 +1,6 @@
 import { Anime_Entry, Anime_Playlist, Anime_PlaylistEpisode, HibikeTorrent_AnimeTorrent } from "@/api/generated/types"
 import { useGetAnimeEntry } from "@/api/hooks/anime_entries.hooks"
-import { PlaybackDownloadedMedia, useCurrentDevicePlaybackSettings } from "@/app/(main)/_atoms/playback.atoms"
+import { PlaybackDownloadedMedia, useCurrentDevicePlaybackSettings, useExternalPlayerLink } from "@/app/(main)/_atoms/playback.atoms"
 import { useAutoPlaySelectedTorrent } from "@/app/(main)/_features/autoplay/autoplay"
 import { getBatchSelectionParams } from "@/app/(main)/_features/autoplay/batches.ts"
 import { nativePlayer_stateAtom } from "@/app/(main)/_features/native-player/native-player.atoms"
@@ -29,6 +29,7 @@ import { Modal } from "@/components/ui/modal"
 import { Tooltip } from "@/components/ui/tooltip"
 import { logger } from "@/lib/helpers/debug"
 import { useRouter } from "@/lib/navigation"
+import { playlistStreamPlaybackMethod } from "@/lib/playback-platform"
 import { getImageUrl } from "@/lib/server/assets"
 import { WSEvents } from "@/lib/server/ws-events"
 import { __isAndroidTV__, __isElectronDesktop__ } from "@/types/constants"
@@ -63,6 +64,7 @@ export function usePlaylistManager() {
     const [playEpisodeRequestPending, setPlayEpisodeRequestPending] = useAtom(pm_playEpisodeRequestPending)
 
     const { downloadedMediaPlayback, torrentStreamingPlayback, electronPlaybackMethod } = useCurrentDevicePlaybackSettings()
+    const { externalPlayerLink } = useExternalPlayerLink()
     const { activeOnDevice } = useMediastreamActiveOnDevice()
 
     function startPlaylist(playlist: Anime_Playlist) {
@@ -81,9 +83,13 @@ export function usePlaylistManager() {
                     clientId: clientId,
                     dbId: playlist.dbId,
                     localFilePlaybackMethod,
-                    streamPlaybackMethod: __isElectronDesktop__ && electronPlaybackMethod !== "default"
-                        ? electronPlaybackMethod
-                        : torrentStreamingPlayback,
+                    streamPlaybackMethod: playlistStreamPlaybackMethod(
+                        __isAndroidTV__,
+                        __isElectronDesktop__,
+                        electronPlaybackMethod,
+                        torrentStreamingPlayback,
+                        externalPlayerLink,
+                    ),
                 },
             },
         })
