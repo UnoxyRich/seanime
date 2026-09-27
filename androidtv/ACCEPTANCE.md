@@ -18,7 +18,8 @@ and device model with each result.
   startup/restart, bridge access, sample D-pad widgets, a test document
   provider, native-player lifecycle/commands, missing-source recovery, WebView
   route restoration, callback intent delivery, persisted decoder/track state,
-  and the bundled media tools. The media test encodes H.264 with the bundled
+  an opaque-ticket-only recovery bridge response, and the bundled media tools.
+  The media test encodes H.264 with the bundled
   CPU encoder, checks it with ffprobe, decodes it with FFmpeg, and renders/seeks
   it in Media3 while paused. The latest run is recorded in
   [playback recovery run](acceptance/2026-09-27-playback-recovery.md).

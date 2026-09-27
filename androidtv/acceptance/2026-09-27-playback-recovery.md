@@ -1,6 +1,6 @@
 # Android TV playback recovery run — 2026-09-27
 
-Source commit: `ee92f874` (`codex/android-tv`). The debug artifacts and test
+Source commit: `9bc9d311` (`codex/android-tv`). The debug artifacts and test
 results below were built from that commit.
 
 ## Environment
@@ -13,11 +13,12 @@ results below were built from that commit.
 
 ## Results
 
-- `:app:connectedDebugAndroidTest`: **11 passed, 0 failed** in 27.281 seconds.
+- `:app:connectedDebugAndroidTest`: **11 passed, 0 failed** in 21.018 seconds.
   Coverage includes embedded UI/server lifecycle, bridge restrictions, SAF
   test-provider operations, native-player commands and activity recreation,
-  failure/retry flows, persisted decoder/track state, and bundled FFmpeg and
-  ffprobe execution with Media3 encode/probe/decode/seek.
+  failure/retry flows, persisted decoder/track state, the WebView bridge
+  returning only the opaque checkpoint ID, and bundled FFmpeg/ffprobe execution
+  with Media3 encode/probe/decode/seek.
 - Go `internal/directstream` and `mobile` tests passed, including matching
   source validation and checkpoint rotation after reopening a stream.
 - Frontend TypeScript checking passed; Vitest passed **89 tests in 14 files**.
@@ -38,8 +39,8 @@ results below were built from that commit.
 
 ```text
 app-arm64-v8a-debug.apk
-29b12c7c54f9aa6fd344c0451e443ec174bf4fa4dd8a63542a8436965cad34b8
+0df370f6f94c4e894755beef5be4af04339e064002704f19bf1b95f998ae4ee4
 
 app-x86_64-debug.apk
-e42b7cad9ee8364c792b234a4686574f12d07d4edd0a271edd877f8d781220d1
+9f1dde5b68767f2ecbd3949289167c3085d8445c2e66605259b2abbb2acf7c18
 ```
