@@ -17,6 +17,56 @@ import org.junit.Test
 
 class AndroidSafStorageAdapterTest {
     @Test
+    fun revokedPersistedGrantIsRejectedAndWorksAgainAfterRestoration() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val targetContext = instrumentation.targetContext
+        TestDocumentsProvider.reset(targetContext)
+
+        val treeUri = DocumentsContract.buildTreeDocumentUri(TestDocumentsProvider.AUTHORITY, "root")
+        val readWriteFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val grantFlags = readWriteFlags or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+            Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        TestDocumentsProvider.grantTree(targetContext, treeUri, grantFlags)
+        targetContext.contentResolver.takePersistableUriPermission(treeUri, readWriteFlags)
+
+        val preferences = targetContext.getSharedPreferences("android-tv-storage", Context.MODE_PRIVATE)
+        val previousRoots = preferences.getString("roots", "[]")
+        val rootPath = AndroidSafStorageAdapter.virtualRoot(treeUri)
+        preferences.edit().putString(
+            "roots",
+            JSONArray().put(
+                JSONObject()
+                    .put("id", AndroidSafStorageAdapter.storageId(treeUri))
+                    .put("uri", treeUri.toString())
+                    .put("path", rootPath)
+                    .put("name", "Test USB"),
+            ).toString(),
+        ).commit()
+
+        try {
+            val adapter = AndroidSafStorageAdapter(targetContext)
+            assertTrue(JSONObject(adapter.stat(rootPath)).getString("name").isNotBlank())
+
+            targetContext.contentResolver.releasePersistableUriPermission(treeUri, readWriteFlags)
+            var rejectedRevokedGrant = false
+            try {
+                adapter.stat(rootPath)
+            } catch (_: SecurityException) {
+                rejectedRevokedGrant = true
+            }
+            assertTrue("adapter continued using a revoked persisted permission", rejectedRevokedGrant)
+
+            targetContext.contentResolver.takePersistableUriPermission(treeUri, readWriteFlags)
+            assertTrue(JSONObject(adapter.stat(rootPath)).getString("name").isNotBlank())
+        } finally {
+            preferences.edit().putString("roots", previousRoots).commit()
+            runCatching { targetContext.contentResolver.releasePersistableUriPermission(treeUri, readWriteFlags) }
+            targetContext.revokeUriPermission(treeUri, readWriteFlags)
+            TestDocumentsProvider.reset(targetContext)
+        }
+    }
+
+    @Test
     fun selectedTreeSupportsLibraryReadsWritesListingAndRemoval() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val targetContext = instrumentation.targetContext
