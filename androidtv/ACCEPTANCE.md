@@ -13,13 +13,16 @@ and device model with each result.
   bridge bootstrap, Android stream routing, playlist playback selection, and
   watch-party player identity.
 - ARM64 and x86_64 debug APKs build and pass APK signature verification.
-- All 12 Android instrumentation tests pass on the API 31 ARM64 TV emulator
+- All 13 Android instrumentation tests pass on the API 31 ARM64 TV emulator
   with WebView 91.0.4472.114 and 4 KiB pages. They cover server
   startup/restart, bridge access, injected Android D-pad key events through the
   focused WebView, spatial focus controls, a test document
   provider, native-player lifecycle/commands, missing-source recovery, WebView
   route restoration, callback intent delivery, persisted decoder/track state,
   an opaque-ticket-only recovery bridge response, and the bundled media tools.
+  The document-provider tests also release and restore a persisted permission
+  and verify that the adapter denies access while the grant is revoked. See the
+  [storage grant run](acceptance/2026-09-28-storage-grant.md).
   The media test encodes H.264 with the bundled
   CPU encoder, checks it with ffprobe, decodes it with FFmpeg, and renders/seeks
   it in Media3 while paused. The startup test opens and dismisses the native
