@@ -20,6 +20,10 @@ val ffmpegBuildConfigChecksum = providers.provider {
     }.standardOutput.asText.get().trim().substringBefore(" ")
 }
 val generatedAar = layout.buildDirectory.file("generated/gomobile/seanime-mobile.aar")
+val goBuildParallelism = providers.environmentVariable("SEANIME_GO_BUILD_PARALLELISM")
+    .orElse("2").get().toIntOrNull()?.takeIf { it > 0 }
+    ?: throw GradleException("SEANIME_GO_BUILD_PARALLELISM must be a positive integer")
+val goBuildFlags = (System.getenv("GOFLAGS").orEmpty() + " -p=$goBuildParallelism").trim()
 val pinnedNdkPath = android.sdkDirectory.resolve("ndk/27.2.12479018")
 val gomobileNdkPath = providers.environmentVariable("ANDROID_NDK_HOME")
     .orElse(pinnedNdkPath.absolutePath)
@@ -143,7 +147,17 @@ android {
 }
 
 val buildAndroidWeb by tasks.registering(Exec::class) {
-    workingDir = repoRoot.resolve("seanime-web")
+    val webRoot = repoRoot.resolve("seanime-web")
+    inputs.files(fileTree(webRoot) {
+        include("src/**", "public/**", "patches/**", "scripts/**")
+        include("*.json", "*.ts", "*.js", "*.cjs", "*.mjs", "*.html", "*lock*", ".env*")
+        exclude("src/**/*.test.*", "src/**/*.spec.*", "public/jassub/**")
+    })
+    inputs.property("platform", "androidtv")
+    inputs.property("rsdoctor", providers.environmentVariable("RSDOCTOR").orElse(""))
+    outputs.dir(webOutput)
+    outputs.dir(webRoot.resolve("public/jassub"))
+    workingDir = webRoot
     commandLine("npm", "run", "build:androidtv")
 }
 
@@ -189,6 +203,7 @@ val initGoMobile by tasks.registering(Exec::class) {
     workingDir = repoRoot
     environment("PATH", goToolPath.get())
     environment("ANDROID_NDK_HOME", gomobileNdkPath.get())
+    environment("GOFLAGS", goBuildFlags)
     commandLine("go", "run", "golang.org/x/mobile/cmd/gomobile", "init")
 }
 
@@ -198,6 +213,8 @@ val bindGoMobile by tasks.registering(Exec::class) {
     inputs.dir(repoRoot.resolve("internal"))
     inputs.file(repoRoot.resolve("go.mod"))
     inputs.file(repoRoot.resolve("go.sum"))
+    inputs.property("versionName", androidVersionName)
+    inputs.property("ndkPath", gomobileNdkPath)
     outputs.file(generatedAar)
     doFirst {
         generatedAar.get().asFile.parentFile.mkdirs()
@@ -205,6 +222,7 @@ val bindGoMobile by tasks.registering(Exec::class) {
     workingDir = repoRoot
     environment("PATH", goToolPath.get())
     environment("ANDROID_NDK_HOME", gomobileNdkPath.get())
+    environment("GOFLAGS", goBuildFlags)
     commandLine(
         "go", "run", "golang.org/x/mobile/cmd/gomobile", "bind",
         "-target=android/arm64,android/amd64",

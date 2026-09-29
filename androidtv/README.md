@@ -25,6 +25,11 @@ The Gradle task builds the `androidtv` frontend, copies it under `mobile/web`
 for Go embedding, creates a gomobile AAR for ARM64 and x86_64, and packages
 ABI-split APKs for ARM64 and x86_64. Each APK includes only the media binaries
 for its matching ABI. The debug APKs are signed with Gradle's debug key.
+The frontend task tracks its sources, assets, configuration, and lockfiles, so
+native-only changes reuse the existing web bundle. Go package compilation uses
+two workers per ABI to limit memory pressure during a cold build; set
+`SEANIME_GO_BUILD_PARALLELISM` to a positive integer to tune it for your host.
+Retaining Go and dependency caches speeds subsequent builds.
 FFmpeg and the Go bridge are linked for 16 KiB pages. Check every native library
 and any uncompressed native ZIP entries in the built APKs from the repo root:
 
