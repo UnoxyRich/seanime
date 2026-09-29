@@ -116,6 +116,9 @@ export default defineConfig({
             },
             optimization: {
                 chunkIds: !!process.env.RSDOCTOR ? "named" : undefined,
+                // Rspack's final-asset hash pass can panic on circular chunk
+                // references. Keep compilation-based content hashes for TV.
+                realContentHash: isAndroidTV ? false : undefined,
             },
             plugins: [
                 TanStackRouterRspack({
