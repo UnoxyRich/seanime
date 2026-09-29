@@ -27,6 +27,9 @@ and device model with each result.
   the fresh ARM64 APK using the API 31 TV emulator with WebView 91 and 4 KiB
   pages. The full earlier instrumentation result below retains its original
   revision. APK hashes and current test scope are in the parity batch report.
+- All six Go packages touched by the parity batch pass their complete test
+  suites on the final checkout, including streaming, handlers, debrid, built-in
+  torrents, and mobile lifecycle. See the parity batch report for the command.
 
 ## Earlier acceptance evidence
 

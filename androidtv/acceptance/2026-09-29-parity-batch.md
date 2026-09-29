@@ -79,6 +79,7 @@ Focused emulator command, from `androidtv`:
 
 | Check | Recorded result | Scope |
 | --- | --- | --- |
+| Full affected Go packages | Pass | All six changed packages pass their complete test suites. |
 | Source gateway/conversion (`internal/mediastream`) | Pass, 2.160 s | Authenticated remote ranges, source sessions, conversion and suspension. |
 | Cassette (`internal/mediastream/cassette`) | Pass, 1.973 s | Source conversion and encoder teardown regressions. |
 | Handlers (`internal/handlers`) | 1.930 s, no tests selected | Package compiled; the focused expression selected no handler tests. |
@@ -88,6 +89,16 @@ Focused emulator command, from `androidtv`:
 | Focused frontend regressions | 19 tests, 4 files, 945 ms | Conversion state/errors, original native source identity, audio publication and subtitle preservation. |
 | Shared frontend suite | 156 tests, 24 files, 3.05 s | Full shared frontend suite. |
 | Frontend TypeScript check | Pass | `tsc --noEmit --incremental false --pretty false`. |
+
+Complete package command, run from the repository root:
+
+```sh
+go test -p 2 ./internal/mediastream ./internal/mediastream/cassette ./internal/handlers ./internal/debrid/client ./internal/torrent_clients/builtin_client ./mobile -count=1
+```
+
+It passed on the final checkout: `mediastream` 2.710 s, `cassette` 2.319 s,
+`handlers` 1.545 s, `debrid/client` 2.392 s, `builtin_client` 1.178 s and
+`mobile` 1.663 s.
 
 Source/cassette/handlers command, run from the parity worktree root:
 
