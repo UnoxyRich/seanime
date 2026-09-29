@@ -83,7 +83,7 @@ func (h *Handler) HandleImportLocalFiles(c echo.Context) error {
 		return err
 	}
 
-	contentB, err := os.ReadFile(b.DataFilePath)
+	contentB, err := androidtvstorage.ReadFile(b.DataFilePath)
 	if err != nil {
 		return h.RespondWithError(c, err)
 	}

@@ -2,16 +2,71 @@ package handlers
 
 import (
 	"archive/zip"
+	"bytes"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/util"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+type torrentExportStorageAdapter struct {
+	androidtvstorage.Adapter
+	directory string
+	filePath  string
+	contents  bytes.Buffer
+	committed bool
+}
+
+func (a *torrentExportStorageAdapter) MkdirAll(path string) error {
+	a.directory = path
+	return nil
+}
+
+func (a *torrentExportStorageAdapter) BeginWrite(path string, truncate bool) (string, error) {
+	a.filePath = path
+	return "torrent-export", nil
+}
+
+func (a *torrentExportStorageAdapter) WriteChunk(_ string, data string) error {
+	decoded, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return err
+	}
+	_, err = a.contents.Write(decoded)
+	return err
+}
+
+func (a *torrentExportStorageAdapter) FinishWrite(string) error {
+	a.committed = true
+	return nil
+}
+
+func (a *torrentExportStorageAdapter) CancelWrite(string) error { return nil }
+
+func TestDownloadTorrentFileExportsToAndroidTVStorage(t *testing.T) {
+	payload := bytes.Repeat([]byte("torrent-data"), 50_000)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename="[Group] Example.torrent"`)
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	storage := &torrentExportStorageAdapter{}
+	androidtvstorage.SetAdapter(storage)
+	t.Cleanup(func() { androidtvstorage.SetAdapter(nil) })
+	const destination = "/androidtv/root/Torrents"
+	require.NoError(t, downloadTorrentFile(server.URL, destination))
+	require.Equal(t, destination, storage.directory)
+	require.Equal(t, destination+"/[Group] Example.torrent", storage.filePath)
+	require.True(t, storage.committed)
+	require.Equal(t, payload, storage.contents.Bytes())
+}
 
 func TestDownloadTorrentFileUsesContentDispositionFilename(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

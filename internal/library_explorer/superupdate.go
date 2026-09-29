@@ -1,9 +1,10 @@
 package library_explorer
 
 import (
+	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/database/db_bridge"
 	"seanime/internal/library/anime"
 	"seanime/internal/security"
@@ -33,6 +34,8 @@ func (l *LibraryExplorer) SuperUpdateFiles(opts []*SuperUpdateFileOptions) error
 
 	wg := sync.WaitGroup{}
 	wg.Add(len(opts))
+	var updateErrors []error
+	var updateErrorsMu sync.Mutex
 
 	lfs, lfsId, err := db_bridge.GetLocalFiles(l.database)
 	if err != nil {
@@ -56,7 +59,11 @@ func (l *LibraryExplorer) SuperUpdateFiles(opts []*SuperUpdateFileOptions) error
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			defer wg.Done()
-			_ = l.superUpdateFile(opt, lfs, lfsId, settings.GetLibrary().GetLibraryPaths())
+			if err := l.superUpdateFile(opt, lfs, lfsId, settings.GetLibrary().GetLibraryPaths()); err != nil {
+				updateErrorsMu.Lock()
+				updateErrors = append(updateErrors, err)
+				updateErrorsMu.Unlock()
+			}
 		}(opt)
 	}
 
@@ -70,7 +77,7 @@ func (l *LibraryExplorer) SuperUpdateFiles(opts []*SuperUpdateFileOptions) error
 
 	l.fileTree = nil
 
-	return nil
+	return errors.Join(updateErrors...)
 }
 
 func validateSuperUpdateFile(opt *SuperUpdateFileOptions, lfs []*anime.LocalFile) (*anime.LocalFile, error) {
@@ -120,6 +127,12 @@ func (l *LibraryExplorer) superUpdateFile(opt *SuperUpdateFileOptions, lfs []*an
 
 	if opt.NewName != "" {
 		newPath := filepath.Join(filepath.Dir(opt.Path), opt.NewName)
+		// Persist the real rename before changing the library record. A revoked
+		// SAF grant or a full provider must not leave the DB pointing at a name
+		// that was never created.
+		if err := androidtvstorage.Rename(opt.Path, newPath); err != nil {
+			return err
+		}
 		// Update the file name
 		// If the local file exists, update the name
 		if found {
@@ -131,11 +144,6 @@ func (l *LibraryExplorer) superUpdateFile(opt *SuperUpdateFileOptions, lfs []*an
 			lf.Path = newPath
 		}
 
-		// Rename the real file name
-		err := os.Rename(opt.Path, newPath)
-		if err != nil {
-			return err
-		}
 	}
 
 	if opt.Metadata != nil {

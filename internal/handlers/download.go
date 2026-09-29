@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/api/anilist"
 	"seanime/internal/updater"
 	"seanime/internal/util"
@@ -165,6 +166,13 @@ func downloadTorrentFile(url string, dest string) (err error) {
 		return fmt.Errorf("failed to determine file name")
 	}
 	filePath := filepath.Join(dest, fileName)
+	if androidtvstorage.IsPath(dest) {
+		if err := androidtvstorage.MkdirAll(dest); err != nil {
+			return err
+		}
+		_, err := androidtvstorage.WriteFrom(filePath, resp.Body, true)
+		return err
+	}
 
 	// Create the destination folder if it doesn't exist
 	err = os.MkdirAll(dest, 0755)

@@ -1,12 +1,25 @@
 package library_explorer
 
 import (
+	"path/filepath"
 	"seanime/internal/library/anime"
 	"testing"
 
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFailedSuperUpdateRenameKeepsTheLibraryRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.mkv")
+	file := &anime.LocalFile{Path: path, Name: "missing.mkv"}
+	logger := zerolog.Nop()
+	explorer := &LibraryExplorer{logger: &logger}
+	err := explorer.superUpdateFile(&SuperUpdateFileOptions{Path: path, NewName: "renamed.mkv"}, []*anime.LocalFile{file}, 0, nil)
+	require.Error(t, err)
+	require.Equal(t, path, file.Path)
+	require.Equal(t, "missing.mkv", file.Name)
+}
 
 func TestValidateSuperUpdateFile(t *testing.T) {
 	lfs := []*anime.LocalFile{
