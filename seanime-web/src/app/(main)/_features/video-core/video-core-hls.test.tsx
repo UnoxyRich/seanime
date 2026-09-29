@@ -46,7 +46,7 @@ afterEach(async () => {
     delete window.AndroidTV
 })
 
-async function mount(nativeActive = false) {
+async function mount(nativeActive = false, nativeSourceUrl?: string) {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
     window.AndroidTV = { nativePlayerActive: () => nativeActive } as NonNullable<Window["AndroidTV"]>
     const video = document.createElement("video")
@@ -54,7 +54,7 @@ async function mount(nativeActive = false) {
     Object.defineProperty(video, "play", { value: play })
     const onFatalError = vi.fn()
     function Player() {
-        useVideoCoreHls({ videoElement: video, streamUrl: url, streamType: "hls", onFatalError })
+        useVideoCoreHls({ videoElement: video, streamUrl: url, nativeSourceUrl, streamType: "hls", onFatalError })
         return null
     }
     const host = document.createElement("div")
@@ -66,15 +66,24 @@ async function mount(nativeActive = false) {
     return { hls, play, onFatalError }
 }
 
-async function nativeEvent(closed: boolean) {
+async function nativeEvent(closed: boolean, sourceUrl = url) {
     await act(async () => {
         window.dispatchEvent(new CustomEvent("seanime-androidtv-player-progress", {
-            detail: { url, positionMs: 45_000, active: !closed, closed },
+            detail: { url: sourceUrl, positionMs: 45_000, active: !closed, closed },
         }))
     })
 }
 
 describe("HLS during Android native playback", () => {
+    it("matches native handoff by the original source after a converted HLS URL replaces browser media", async () => {
+        const original = "http://127.0.0.1:43211/api/v1/directstream/stream?id=original"
+        const { hls } = await mount(false, original)
+        await nativeEvent(false, original)
+        expect(hls.stopLoad).toHaveBeenCalledOnce()
+        await nativeEvent(true, original)
+        expect(hls.startLoad).toHaveBeenCalledOnce()
+    })
+
     it("suspends browser loading and ignores late autoplay and recovery callbacks", async () => {
         const { hls, play, onFatalError } = await mount()
         expect(hls.loadSource).toHaveBeenCalledWith(url)

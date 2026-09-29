@@ -18,19 +18,21 @@ type SeaQuery<D> = {
     data?: D
     params?: D
     password?: string
+    signal?: AbortSignal
 }
 
 export function useSeaQuery() {
     const password = useAtomValue(serverAuthTokenAtom)
 
     return {
-        seaFetch: <T, D extends any = any>(endpoint: string, method: "POST" | "GET" | "PATCH" | "DELETE" | "PUT", data?: D, params?: D) => {
+        seaFetch: <T, D extends any = any>(endpoint: string, method: "POST" | "GET" | "PATCH" | "DELETE" | "PUT", data?: D, params?: D, signal?: AbortSignal) => {
             return buildSeaQuery<T, D>({
                 endpoint,
                 method,
                 data,
                 params,
                 password,
+                signal,
             })
         },
     }
@@ -99,6 +101,7 @@ export async function buildSeaQuery<T, D extends any = any>(
         data,
         params,
         password,
+        signal,
     }: SeaQuery<D>): Promise<T | undefined> {
     const headers: Record<string, string> = {}
 
@@ -127,6 +130,7 @@ export async function buildSeaQuery<T, D extends any = any>(
             params,
             headers,
             withCredentials: true,
+            signal,
         })
     }
     catch (error) {

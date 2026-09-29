@@ -455,6 +455,9 @@ func InitRoutes(app *core.App, e *echo.Echo) {
 	v1.POST("/mediastream/preload", h.HandlePreloadMediastreamMediaContainer)
 	// Transcode
 	v1.POST("/mediastream/shutdown-transcode", h.HandleMediastreamShutdownTranscodeStream)
+	v1.POST("/mediastream/source/request", h.HandleRequestAndroidTVSourceTranscode)
+	v1.POST("/mediastream/source/stop", h.HandleStopAndroidTVSourceTranscode)
+	v1.GET("/mediastream/source/:session/*", h.HandleAndroidTVSourceTranscode)
 	v1.GET("/mediastream/transcode/*", h.HandleMediastreamTranscode)
 	v1.GET("/mediastream/subs/*", h.HandleMediastreamGetSubtitles)
 	v1.GET("/mediastream/att/*", h.HandleMediastreamGetAttachments)

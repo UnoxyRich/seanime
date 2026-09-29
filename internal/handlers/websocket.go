@@ -81,6 +81,18 @@ func (h *Handler) webSocketEventHandler(c echo.Context) error {
 				h.App.Logger.Debug().Str("id", id).Msg("ws: Client disconnection")
 			}
 			h.App.WSEventManager.RemoveConn(id)
+			if platform == ClientPlatformAndroidTV {
+				stillConnected := false
+				for _, connectedID := range h.App.WSEventManager.GetClientIds() {
+					if connectedID == id {
+						stillConnected = true
+						break
+					}
+				}
+				if !stillConnected && h.App.MediastreamRepository != nil {
+					h.App.MediastreamRepository.StopAndroidTVClientSourceTranscodes(id)
+				}
+			}
 			break
 		}
 

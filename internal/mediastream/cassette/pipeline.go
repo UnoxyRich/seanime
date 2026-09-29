@@ -91,7 +91,11 @@ type PipelineConfig struct {
 
 // NewPipeline creates a pipeline and initializes its segment table
 func NewPipeline(cfg PipelineConfig) *Pipeline {
-	ctx, cancel := context.WithCancel(context.Background())
+	parent := cfg.Settings.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
 
 	length, isDone := cfg.Session.Keyframes.Length()
 	segments := NewSegmentTable(length)
@@ -174,6 +178,9 @@ func (p *Pipeline) GetIndex(token string) (string, error) {
 // GetSegment blocks until the requested segment is ready and returns the path
 // to the .ts file on disk
 func (p *Pipeline) GetSegment(ctx context.Context, seg int32) (string, error) {
+	if seg < 0 || seg >= int32(p.segments.Len()) {
+		return "", fmt.Errorf("cassette: invalid segment %d", seg)
+	}
 	// Recreate the kill channel so that a previously-killed pipeline can
 	// service new requests
 	p.killCh = make(chan struct{})
@@ -188,8 +195,11 @@ func (p *Pipeline) GetSegment(ctx context.Context, seg int32) (string, error) {
 	}
 
 	if p.segments.IsReady(seg) {
-		p.prefetch(seg)
-		return p.segmentPath(seg), nil
+		if _, err := os.Stat(p.segmentPath(seg)); err == nil {
+			p.prefetch(seg)
+			return p.segmentPath(seg), nil
+		}
+		p.segments.Forget(seg)
 	}
 
 	// decide whether to spawn a new encoder
@@ -338,7 +348,11 @@ func (p *Pipeline) prefetch(current int32) {
 // it acquires a slot from the governor.
 func (p *Pipeline) runHead(start int32) error {
 	length, isDone := p.session.Keyframes.Length()
-	end := min(start+100, length)
+	window := int32(100)
+	if p.settings.FixedSegmentDuration > 0 {
+		window = 12
+	}
+	end := min(start+window, length)
 	// keep a 2-segment padding when keyframes are still arriving so we
 	// never reference a keyframe that hasn't been extracted yet.
 	if !isDone {
@@ -396,6 +410,13 @@ func (p *Pipeline) runHead(start int32) error {
 		}
 	}
 
+	if p.settings.FixedSegmentDuration > 0 {
+		// Accurate input seeking plus copied timestamps preserves the absolute
+		// source position. No pre-segment/keyframe nudge is needed for encoding.
+		startSeg = start
+		startRef = p.session.Keyframes.Get(start)
+	}
+
 	endPad := int32(1)
 	if end == length {
 		endPad = 0
@@ -404,7 +425,7 @@ func (p *Pipeline) runHead(start int32) error {
 	// We must include the "start" keyframe as a boundary so ffmpeg spits out
 	// the pre-segment (which we discard) as a separate file
 	firstBoundary := start + 1
-	if start != 0 {
+	if start != 0 && p.settings.FixedSegmentDuration == 0 {
 		firstBoundary = start
 	}
 
@@ -423,7 +444,7 @@ func (p *Pipeline) runHead(start int32) error {
 	args = append(args, p.settings.HwAccel.DecodeFlags...)
 
 	if startRef != 0 {
-		if p.kind == VideoKind {
+		if p.kind == VideoKind && p.settings.FixedSegmentDuration == 0 {
 			// -noaccurate_seek gives faster seeks for video and is required
 			// for correct segment boundary behaviour in transmux mode
 			args = append(args, "-noaccurate_seek")
@@ -457,6 +478,12 @@ func (p *Pipeline) runHead(start int32) error {
 		return t - p.session.Keyframes.Get(startSeg)
 	})
 
+	if p.settings.FixedSegmentDuration > 0 {
+		// -copyts / -start_at_zero retains original-source timestamps after -ss.
+		// HLS.js and chapter/progress controls therefore require no seek offset.
+		relTimes = segmentTimes
+	}
+
 	args = append(args,
 		"-f", "segment",
 		"-segment_time_delta", "0.05",
@@ -472,7 +499,7 @@ func (p *Pipeline) runHead(start int32) error {
 		Int32("start", start).Int32("end", end).
 		Msgf("cassette: spawning ffmpeg")
 
-	cmd := util.NewCmdCtx(context.Background(), p.settings.FfmpegPath, args...)
+	cmd := util.NewCmdCtx(headCtx, p.settings.FfmpegPath, args...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

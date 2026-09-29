@@ -1,5 +1,10 @@
 package cassette
 
+import (
+	"context"
+	"sync"
+)
+
 // HwAccelProfile holds ffmpeg flags for a hardware backend
 type HwAccelProfile struct {
 	// Name is the identifier for logging
@@ -26,4 +31,9 @@ type Settings struct {
 	FfmpegPath string
 	// FfprobePath is the path to the ffprobe binary
 	FfprobePath string
+	// FixedSegmentDuration avoids a full keyframe scan of remote sources. All
+	// variants are encoded with boundaries at these absolute source times.
+	FixedSegmentDuration float64
+	Context              context.Context
+	Probes               *sync.WaitGroup
 }

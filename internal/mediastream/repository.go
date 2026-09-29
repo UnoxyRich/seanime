@@ -42,6 +42,10 @@ type (
 		cacheDir             string // where attachments are stored
 		transcodeDir         string // where stream segments are stored
 		stagedSourceMu       sync.Mutex
+		sourceMu             sync.Mutex
+		sourceTranscodes     map[string]*sourceTranscode
+		sourceSuspended      bool
+		sourceCacheCleanup   sync.Once
 	}
 
 	NewRepositoryOptions struct {
@@ -68,6 +72,7 @@ func NewRepository(opts *NewRepositoryOptions) *Repository {
 		opts.MediacoreCoordinator.RegisterEventCallback(func(event player.Event) bool {
 			switch e := event.(type) {
 			case *player.TerminatedEvent:
+				ret.stopAndroidTVSourceTranscodes(e.Session.ClientID)
 				if ret.TranscoderIsInitialized() {
 					opts.Logger.Debug().Str("clientId", e.Session.ClientID).Msg("mediastream: Received TerminatedEvent, killing transcoder")
 					ret.ShutdownTranscodeStream(e.Session.ClientID)
@@ -85,7 +90,11 @@ func (r *Repository) IsInitialized() bool {
 }
 
 func (r *Repository) OnCleanup() {
-
+	r.stopAndroidTVSourceTranscodes("")
+	if transcoder, ok := r.transcoder.Get(); ok {
+		transcoder.Destroy()
+		r.transcoder = mo.None[*cassette.Cassette]()
+	}
 }
 
 func (r *Repository) InitializeModules(settings *models.MediastreamSettings, cacheDir string, transcodeDir string) {
@@ -93,6 +102,15 @@ func (r *Repository) InitializeModules(settings *models.MediastreamSettings, cac
 		r.logger.Error().Msg("mediastream: Settings not present")
 		return
 	}
+	// Clean cache left by a killed process once per repository lifetime. Settings
+	// refreshes must not remove the output of current source sessions.
+	r.sourceCacheCleanup.Do(func() {
+		if transcodeDir != "" {
+			if err := os.RemoveAll(filepath.Join(transcodeDir, "sources")); err != nil {
+				r.logger.Warn().Err(err).Msg("mediastream: Could not remove orphaned source conversion cache")
+			}
+		}
+	})
 	// Create the temp directory
 	err := os.MkdirAll(transcodeDir, 0755)
 	if err != nil {
@@ -128,6 +146,7 @@ func (r *Repository) CacheWasCleared() {
 }
 
 func (r *Repository) ClearTranscodeDir() {
+	r.stopAndroidTVSourceTranscodes("")
 	r.reqMu.Lock()
 	defer r.reqMu.Unlock()
 

@@ -23,7 +23,9 @@ type NewCassetteOptions struct {
 	FfprobePath           string
 	HwAccelCustomSettings string
 	// MaxConcurrency limits simultaneous ffmpeg processes. 0 = NumCPU
-	MaxConcurrency int
+	MaxConcurrency       int
+	FixedSegmentDuration float64
+	Context              context.Context
 }
 
 // Cassette is the top-level transcoding orchestrator.
@@ -37,6 +39,8 @@ type Cassette struct {
 	governor   *Governor
 	logger     *zerolog.Logger
 	settings   Settings
+	cancel     context.CancelFunc
+	probes     sync.WaitGroup
 }
 
 // New creates and returns a cassette instance.
@@ -62,17 +66,27 @@ func New(opts *NewCassetteOptions) (*Cassette, error) {
 		CustomSettings: opts.HwAccelCustomSettings,
 	}, opts.FfmpegPath, opts.Logger)
 
+	parent := opts.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	lifetime, cancel := context.WithCancel(parent)
 	c := &Cassette{
 		clientChan: make(chan ClientInfo, 1024),
 		governor:   NewGovernor(opts.MaxConcurrency, hwAccel.Name != "disabled", opts.Logger),
 		logger:     opts.Logger,
+		cancel:     cancel,
 		settings: Settings{
-			StreamDir:   streamDir,
-			HwAccel:     hwAccel,
-			FfmpegPath:  opts.FfmpegPath,
-			FfprobePath: opts.FfprobePath,
+			StreamDir:            streamDir,
+			HwAccel:              hwAccel,
+			FfmpegPath:           opts.FfmpegPath,
+			FfprobePath:          opts.FfprobePath,
+			FixedSegmentDuration: opts.FixedSegmentDuration,
+			Context:              lifetime,
 		},
 	}
+	c.settings.Context = lifetime
+	c.settings.Probes = &c.probes
 	c.tracker = NewClientTracker(c)
 
 	c.logger.Info().
@@ -101,6 +115,9 @@ func (c *Cassette) Destroy() {
 		}
 	}()
 
+	c.cancel()
+	c.sessionsMu.Lock()
+	defer c.sessionsMu.Unlock()
 	c.tracker.Stop()
 	c.logger.Debug().Msg("cassette: destroying all sessions")
 
@@ -112,8 +129,12 @@ func (c *Cassette) Destroy() {
 		return true
 	})
 
+	c.probes.Wait()
+
 	// clear keyframe cache
-	ClearKeyframeCache()
+	if c.settings.FixedSegmentDuration == 0 {
+		ClearKeyframeCache()
+	}
 
 	c.logger.Debug().Msg("cassette: destroyed")
 }
@@ -124,6 +145,9 @@ func (c *Cassette) getSession(
 	filePath, hash string,
 	mediaInfo *videofile.MediaInfo,
 ) (*Session, error) {
+	if err := c.settings.Context.Err(); err != nil {
+		return nil, err
+	}
 	// session already exists
 	if v, ok := c.sessions.Load(filePath); ok {
 		s := v.(*Session)
@@ -137,6 +161,10 @@ func (c *Cassette) getSession(
 
 	// create session
 	c.sessionsMu.Lock()
+	if err := c.settings.Context.Err(); err != nil {
+		c.sessionsMu.Unlock()
+		return nil, err
+	}
 	if v, ok := c.sessions.Load(filePath); ok {
 		c.sessionsMu.Unlock()
 		s := v.(*Session)
@@ -277,4 +305,22 @@ func (c *Cassette) GetAudioSegment(
 		Quality: nil, Audio: audio, Head: segment,
 	})
 	return s.GetAudioSegment(ctx, audio, segment)
+}
+
+// Suspend stops encoders while retaining the seekable source timeline. Pipelines
+// are recreated on the next segment request; this never stages the remote file.
+func (c *Cassette) Suspend() {
+	c.sessions.Range(func(_, value any) bool {
+		value.(*Session).Suspend()
+		return true
+	})
+}
+
+// TrimCachedSegments bounds completed remote-source output. Missing segments
+// are regenerated on demand, including when seeking backwards after eviction.
+func (c *Cassette) TrimCachedSegments(maxBytes int64) {
+	c.sessions.Range(func(_, value any) bool {
+		value.(*Session).trimCachedSegments(maxBytes)
+		return true
+	})
 }

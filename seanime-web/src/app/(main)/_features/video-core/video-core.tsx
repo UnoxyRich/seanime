@@ -1,3 +1,5 @@
+import { canPreserveSubtitleManagers, subtitleSourceIdentity } from "@/app/(main)/_features/video-core/_lib/subtitle-source"
+import { useAndroidTVSourceTranscode } from "@/app/(main)/_features/video-core/_lib/use-androidtv-source-transcode"
 import { getServerBaseUrl } from "@/api/client/server-url"
 import { API_ENDPOINTS } from "@/api/generated/endpoints"
 import type { MKVParser_ChapterInfo } from "@/api/generated/types"
@@ -61,6 +63,7 @@ import { vc_fullscreenManager, VideoCoreFullscreenManager } from "@/app/(main)/_
 import {
     useVideoCoreHls,
     vc_hlsAudioTracks,
+    vc_hlsAudioTracksSource,
     vc_hlsCurrentAudioTrack,
     vc_hlsCurrentQuality,
     vc_hlsQualityLevels,
@@ -263,6 +266,7 @@ export function VideoCoreProvider(props: { id: string, children: React.ReactNode
                 vc_hlsCurrentQuality,
                 vc_hlsSetQuality,
                 vc_hlsAudioTracks,
+                vc_hlsAudioTracksSource,
                 vc_hlsCurrentAudioTrack,
                 vc_hlsSetAudioTrack,
                 vc_isSwiping,
@@ -288,6 +292,9 @@ interface PlayerContentProps {
     chapterCues: VideoCoreChapterCue[] | undefined
     aniSkipData: VideoCoreProps["aniSkipData"]
     streamUrl: string | undefined
+    nativeStreamUrl: string | undefined
+    playbackError: string | null
+    webConversionAction?: { label: string; onClick: () => void; disabled?: boolean }
     combineRef: (instance: HTMLVideoElement | null) => void
     combineContainerRef: (instance: HTMLDivElement | null) => void
     handleContainerPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void
@@ -320,6 +327,9 @@ const PlayerContent = React.memo<PlayerContentProps>(({
     chapterCues,
     aniSkipData,
     streamUrl,
+    nativeStreamUrl,
+    playbackError,
+    webConversionAction,
     combineRef,
     combineContainerRef,
     handleContainerPointerMove,
@@ -434,7 +444,7 @@ const PlayerContent = React.memo<PlayerContentProps>(({
     }, [inline, isMiniPlayer, setHoveringControlBar, state.active])
 
     const launchAndroidTVPlayer = React.useCallback(() => {
-        if (!streamUrl || !window.AndroidTV) return
+        if (!nativeStreamUrl || !window.AndroidTV) return
 
         pauseAndroidTVBrowserPlayer(videoRef.current)
         const subtitleTracks = (state.playbackInfo?.subtitleTracks ?? []).map(track => ({
@@ -447,17 +457,17 @@ const PlayerContent = React.memo<PlayerContentProps>(({
         }))
         nativePlaybackId.current = state.playbackInfo?.id ?? null
         window.AndroidTV.playNative(
-            streamUrl,
+            nativeStreamUrl,
             state.playbackInfo?.media?.title?.userPreferred || "Seanime TV",
             JSON.stringify(subtitleTracks),
             Math.max(0, Math.round((videoRef.current?.currentTime ?? state.playbackInfo?.initialState?.currentTime ?? 0) * 1000)),
             nativeSubtitleStyleJson,
             JSON.stringify({ speed: videoRef.current?.playbackRate ?? 1, volume: videoRef.current?.volume ?? 1, muted: videoRef.current?.muted ?? false }),
         )
-    }, [streamUrl, state.playbackInfo, nativeSubtitleStyleJson])
+    }, [nativeStreamUrl, state.playbackInfo, nativeSubtitleStyleJson])
 
     React.useEffect(() => {
-        if (!__isAndroidTV__ || !streamUrl || !window.AndroidTV?.nativePlayerActive()) return
+        if (!__isAndroidTV__ || !nativeStreamUrl || !window.AndroidTV?.nativePlayerActive()) return
         const playbackId = state.playbackInfo?.id ?? null
         const startPositionMs = nativePlaybackId.current === playbackId
             ? -1 // Preserve Media3's position and pause state when refreshing the same episode's URL.
@@ -473,13 +483,13 @@ const PlayerContent = React.memo<PlayerContentProps>(({
         nativePlaybackId.current = playbackId
         pauseAndroidTVBrowserPlayer(videoRef.current)
         window.AndroidTV.updateNativePlayer(
-            streamUrl,
+            nativeStreamUrl,
             state.playbackInfo?.media?.title?.userPreferred || "Seanime TV",
             JSON.stringify(subtitleTracks),
             startPositionMs,
             nativeSubtitleStyleJson,
         )
-    }, [streamUrl, state.playbackInfo?.id])
+    }, [nativeStreamUrl, state.playbackInfo?.id])
 
     React.useEffect(() => {
         if (!__isAndroidTV__ || !window.AndroidTV?.nativePlayerActive()) return
@@ -491,10 +501,14 @@ const PlayerContent = React.memo<PlayerContentProps>(({
 
 
             <MediaCoreErrorOverlay
-                playbackError={state.playbackError}
+                playbackError={playbackError}
                 isMiniPlayer={isMiniPlayer}
                 onClose={onTerminateStream}
-                fallbackAction={__isAndroidTV__ && !!streamUrl ? {
+                fallbackAction={webConversionAction ?? (__isAndroidTV__ && !!nativeStreamUrl ? {
+                    label: "Open in TV player",
+                    onClick: launchAndroidTVPlayer,
+                } : undefined)}
+                secondaryFallbackAction={webConversionAction && __isAndroidTV__ && !!nativeStreamUrl ? {
                     label: "Open in TV player",
                     onClick: launchAndroidTVPlayer,
                 } : undefined}
@@ -668,6 +682,9 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                             <VideoCorePlaylistControl />
                             <VideoCoreVolumeButton />
                             <VideoCoreTimestamp />
+                            {webConversionAction && <Button intent="gray-outline" size="sm" onClick={webConversionAction.onClick} disabled={webConversionAction.disabled}>
+                                {webConversionAction.label}
+                            </Button>}
                             {__isAndroidTV__ && !!streamUrl && <Button
                                 intent="gray-outline"
                                 size="sm"
@@ -696,6 +713,9 @@ const PlayerContent = React.memo<PlayerContentProps>(({
                             </>}
                             topRightSection={<>
                                 <VideoCoreSettingsMenu />
+                                {webConversionAction && <Button intent="gray-outline" size="sm" onClick={webConversionAction.onClick} disabled={webConversionAction.disabled}>
+                                    {webConversionAction.label}
+                                </Button>}
                                 {__isAndroidTV__ && !!streamUrl && <Button
                                     intent="gray-outline"
                                     size="sm"
@@ -855,6 +875,7 @@ export function VideoCore(props: VideoCoreProps) {
 
     const [, setContainerElement] = useAtom(vc_containerElement)
 
+    const subtitleSourceRef = React.useRef<ReturnType<typeof subtitleSourceIdentity> | undefined>(undefined)
     const [subtitleManager, setSubtitleManager] = useAtom(vc_subtitleManager)
     const [mediaCaptionsManager, setMediaCaptionsManager] = useAtom(vc_mediaCaptionsManager)
     const [audioManager, setAudioManager] = useAtom(vc_audioManager)
@@ -990,6 +1011,7 @@ export function VideoCore(props: VideoCoreProps) {
     })
 
     function onTerminateStream() {
+        sourceTranscode.stop()
         closeTerminateConfirm()
         if (__isAndroidTV__ && state.playbackInfo?.streamUrl) {
             window.AndroidTV?.controlNativePlayer(state.playbackInfo.streamUrl.replace("{{SERVER_URL}}", getServerBaseUrl()), "stop", 0)
@@ -1172,17 +1194,34 @@ export function VideoCore(props: VideoCoreProps) {
         }
     }, [state.playbackInfo?.id, activePlayer])
 
-    const streamUrl = state?.playbackInfo?.streamUrl?.replace?.("{{SERVER_URL}}", getServerBaseUrl())
+    const originalStreamUrl = state?.playbackInfo?.streamUrl?.replace?.("{{SERVER_URL}}", getServerBaseUrl())
+    const sourceTranscode = useAndroidTVSourceTranscode({
+        playbackId: state.playbackInfo?.id,
+        sourceUrl: originalStreamUrl,
+        active: state.active,
+        playbackError: state.playbackError,
+        hasRestoredPosition: () => hasSoughtRef.current,
+        videoRef,
+    })
+    const streamUrl = sourceTranscode.streamUrl
+    const effectiveStreamType = sourceTranscode.converted ? "hls" : streamType
+    const effectivePlaybackError = sourceTranscode.error
+        ?? (sourceTranscode.pending || (sourceTranscode.converted && state.playbackError === sourceTranscode.stalePlaybackError) ? null : state.playbackError)
+    const webConversionAction = sourceTranscode.available ? {
+        label: sourceTranscode.pending ? "Converting…" : sourceTranscode.converted ? "Use original stream" : "Convert for web player",
+        onClick: sourceTranscode.converted ? sourceTranscode.reset : () => { void sourceTranscode.convert() },
+        disabled: sourceTranscode.pending,
+    } : undefined
 
     React.useEffect(() => {
-        if (!__isAndroidTV__ || !videoElement || !streamUrl) return
+        if (!__isAndroidTV__ || !videoElement || !originalStreamUrl) return
         let adapter: ReturnType<typeof attachAndroidTVPlayer> | undefined
         const onNativeProgress = (event: Event) => {
             const detail = (event as CustomEvent<AndroidTVPlayerSnapshot>).detail
             if (adapter?.isDisposed()) adapter = undefined
-            if (!detail || detail.url !== streamUrl || (!adapter && !detail.active)) return
-            adapter ??= attachAndroidTVPlayer(videoElement, streamUrl, (command, value) => {
-                window.AndroidTV?.controlNativePlayer(streamUrl, command, value)
+            if (!detail || detail.url !== originalStreamUrl || (!adapter && !detail.active)) return
+            adapter ??= attachAndroidTVPlayer(videoElement, originalStreamUrl, (command, value) => {
+                window.AndroidTV?.controlNativePlayer(originalStreamUrl, command, value)
             })
             if (adapter.update(detail)) currentPlaybackRef.current = state.playbackInfo?.id ?? null
         }
@@ -1191,20 +1230,23 @@ export function VideoCore(props: VideoCoreProps) {
             window.removeEventListener("seanime-androidtv-player-progress", onNativeProgress)
             adapter?.dispose()
         }
-    }, [videoElement, streamUrl, state.playbackInfo?.id])
+    }, [videoElement, originalStreamUrl, state.playbackInfo?.id])
 
     // Initialize HLS
     useVideoCoreHls({
         videoElement: videoRef.current,
         streamUrl: streamUrl,
-        streamType: streamType,
+        nativeSourceUrl: originalStreamUrl,
+        streamType: effectiveStreamType,
         preferredQuality: hlsPreferredQuality,
         onMediaDetached: onHlsMediaDetached,
         onFatalError: error => {
+            if (sourceTranscode.pending) return
             if (__isAndroidTV__ && window.AndroidTV?.nativePlayerActive()) return
+            if (sourceTranscode.converted) sourceTranscode.reportPlaybackError(error.error?.message || "Converted stream playback failed")
             onHlsFatalError?.(error)
         },
-        onStalled: err => onStalled?.(`HLS stalled: ${err.error?.message || err.details}`),
+        onStalled: err => { if (!sourceTranscode.pending) onStalled?.(`HLS stalled: ${err.error?.message || err.details}`) },
     })
 
     React.useEffect(() => {
@@ -1231,10 +1273,32 @@ export function VideoCore(props: VideoCoreProps) {
 
     // Get HLS audio track values
     const hlsAudioTracks = useAtomValue(vc_hlsAudioTracks)
+    const hlsAudioTracksSource = useAtomValue(vc_hlsAudioTracksSource)
     const hlsCurrentAudioTrack = useAtomValue(vc_hlsCurrentAudioTrack)
     const hlsSetAudioTrack = useAtomValue(vc_hlsSetAudioTrack)
 
     // events
+    const audioMetadataReady = !!videoElement && videoElement.readyState >= 1 && duration > 0
+    const hlsAudioTracksSignature = JSON.stringify(hlsAudioTracks)
+    React.useEffect(() => {
+        if (effectiveStreamType !== "hls" || !videoElement || !audioMetadataReady) return
+        if (__isAndroidTV__ && window.AndroidTV?.nativePlayerActive()) return
+        if (!state.playbackInfo || hlsAudioTracksSource !== streamUrl || !hlsAudioTracks.length || !hlsSetAudioTrack) return
+        setAudioManager(new VideoCoreAudioManager({
+            videoElement,
+            playbackInfo: state.playbackInfo,
+            settings,
+            onError: error => {
+                log.error("Audio manager error", error)
+                if (sourceTranscode.converted) sourceTranscode.reportPlaybackError(error)
+                onError?.(error)
+            },
+            hlsSetAudioTrack,
+            hlsAudioTracks,
+            hlsCurrentAudioTrack,
+        }))
+    }, [effectiveStreamType, streamUrl, videoElement, audioMetadataReady, hlsAudioTracksSource, hlsAudioTracksSignature, hlsSetAudioTrack, state.playbackInfo?.id])
+
     const handleLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         if (__isAndroidTV__ && window.AndroidTV?.nativePlayerActive()) return
         onLoadedMetadata?.(e)
@@ -1270,96 +1334,90 @@ export function VideoCore(props: VideoCoreProps) {
         /*
          * File subtitle tracks that don't use libass renderer
          */
-        const nonLibassSubtitleTracks = state.playbackInfo?.subtitleTracks?.filter(t => !t.useLibassRenderer)
-        if (nonLibassSubtitleTracks && nonLibassSubtitleTracks.length > 0) {
-            setSubtitleManager(p => {
-                if (p) p.destroy()
-                return null
-            })
-            setMediaCaptionsManager(p => {
-                if (p) p.destroy()
-                return new MediaCaptionsManager({
-                    videoElement: v!,
-                    tracks: nonLibassSubtitleTracks,
-                    translateTargetLang: serverStatus?.settings?.mediaPlayer?.vcTranslate
-                        ? serverStatus?.settings?.mediaPlayer?.vcTranslateTargetLanguage
-                        : null,
-                    settings: settings,
-                    fetchAndConvertToVTT: (url?: string, content?: string) => {
-                        return new Promise((resolve, reject) => {
-                            convertSubs({ url: url ?? "", content: content ?? "", to: "vtt" }, {
-                                onSuccess: (data) => resolve(data),
-                                onError: (error) => reject(error),
-                            })
-                        })
-                    },
-                    sendTranslateRequest: (text?: string, track?: VideoCore_VideoSubtitleTrack) => {
-                        if (text) {
-                            dispatchTranslateTextEvent(text)
-                        }
-                        if (track) {
-                            dispatchTranslateSubtitleTrackEvent(track)
-                        }
-                    },
+        const subtitleIdentity = subtitleSourceIdentity(state.playbackInfo, v, originalStreamUrl)
+        const preserveSubtitles = canPreserveSubtitleManagers(subtitleSourceRef.current, subtitleIdentity, !!(subtitleManager || mediaCaptionsManager))
+        subtitleSourceRef.current = subtitleIdentity
+        if (!preserveSubtitles) {
+            const nonLibassSubtitleTracks = state.playbackInfo?.subtitleTracks?.filter(t => !t.useLibassRenderer)
+            if (nonLibassSubtitleTracks && nonLibassSubtitleTracks.length > 0) {
+                setSubtitleManager(p => {
+                    if (p) p.destroy()
+                    return null
                 })
-            })
-        } else {
-            setMediaCaptionsManager(p => {
-                if (p) p.destroy()
-                return null
-            })
-            setSubtitleManager(p => {
-                if (p) p.destroy()
-                return new VideoCoreSubtitleManager({
-                    videoElement: v!,
-                    playbackInfo: state.playbackInfo!,
-                    jassubOffscreenRender: true,
-                    hmacToken: directstreamAttToken,
-                    translateTargetLang: serverStatus?.settings?.mediaPlayer?.vcTranslate
-                        ? serverStatus?.settings?.mediaPlayer?.vcTranslateTargetLanguage
-                        : null,
-                    settings: settings,
-                    fetchAndConvertToASS: (url?: string, content?: string) => {
-                        return new Promise((resolve, reject) => {
-                            convertSubs({ url: url ?? "", content: content ?? "", to: "ass" }, {
-                                onSuccess: (data) => resolve(data),
-                                onError: (error) => reject(error),
+                setMediaCaptionsManager(p => {
+                    if (p) p.destroy()
+                    return new MediaCaptionsManager({
+                        videoElement: v!,
+                        tracks: nonLibassSubtitleTracks,
+                        translateTargetLang: serverStatus?.settings?.mediaPlayer?.vcTranslate
+                            ? serverStatus?.settings?.mediaPlayer?.vcTranslateTargetLanguage
+                            : null,
+                        settings: settings,
+                        fetchAndConvertToVTT: (url?: string, content?: string) => {
+                            return new Promise((resolve, reject) => {
+                                convertSubs({ url: url ?? "", content: content ?? "", to: "vtt" }, {
+                                    onSuccess: (data) => resolve(data),
+                                    onError: (error) => reject(error),
+                                })
                             })
-                        })
-                    },
-                    sendTranslateRequest: (text?: string, track?: VideoCore_VideoSubtitleTrack) => {
-                        if (text) {
-                            dispatchTranslateTextEvent(text)
-                        }
-                        if (track) {
-                            dispatchTranslateSubtitleTrackEvent(track)
-                        }
-                    },
+                        },
+                        sendTranslateRequest: (text?: string, track?: VideoCore_VideoSubtitleTrack) => {
+                            if (text) {
+                                dispatchTranslateTextEvent(text)
+                            }
+                            if (track) {
+                                dispatchTranslateSubtitleTrackEvent(track)
+                            }
+                        },
+                    })
                 })
-            })
+            } else {
+                setMediaCaptionsManager(p => {
+                    if (p) p.destroy()
+                    return null
+                })
+                setSubtitleManager(p => {
+                    if (p) p.destroy()
+                    return new VideoCoreSubtitleManager({
+                        videoElement: v!,
+                        playbackInfo: state.playbackInfo!,
+                        jassubOffscreenRender: true,
+                        hmacToken: directstreamAttToken,
+                        translateTargetLang: serverStatus?.settings?.mediaPlayer?.vcTranslate
+                            ? serverStatus?.settings?.mediaPlayer?.vcTranslateTargetLanguage
+                            : null,
+                        settings: settings,
+                        fetchAndConvertToASS: (url?: string, content?: string) => {
+                            return new Promise((resolve, reject) => {
+                                convertSubs({ url: url ?? "", content: content ?? "", to: "ass" }, {
+                                    onSuccess: (data) => resolve(data),
+                                    onError: (error) => reject(error),
+                                })
+                            })
+                        },
+                        sendTranslateRequest: (text?: string, track?: VideoCore_VideoSubtitleTrack) => {
+                            if (text) {
+                                dispatchTranslateTextEvent(text)
+                            }
+                            if (track) {
+                                dispatchTranslateSubtitleTrackEvent(track)
+                            }
+                        },
+                    })
+                })
+            }
         }
 
-        // Initialize audio manager for HLS streams
-        if (hlsAudioTracks.length > 0 && hlsSetAudioTrack) {
+        // Browser HLS audio is initialized reactively below because the
+        // manifest's track publication can arrive after loadedmetadata.
+        if ((effectiveStreamType !== "hls" || (__isAndroidTV__ && window.AndroidTV?.nativePlayerActive())) && !!state.playbackInfo?.mkvMetadata) {
             setAudioManager(new VideoCoreAudioManager({
                 videoElement: v!,
                 playbackInfo: state.playbackInfo,
                 settings: settings,
                 onError: (error) => {
                     log.error("Audio manager error", error)
-                    onError?.(error)
-                },
-                hlsSetAudioTrack: hlsSetAudioTrack,
-                hlsAudioTracks: hlsAudioTracks,
-                hlsCurrentAudioTrack: hlsCurrentAudioTrack,
-            }))
-        } else if (!!state.playbackInfo?.mkvMetadata) {
-            setAudioManager(new VideoCoreAudioManager({
-                videoElement: v!,
-                playbackInfo: state.playbackInfo,
-                settings: settings,
-                onError: (error) => {
-                    log.error("Audio manager error", error)
+                    if (sourceTranscode.converted) sourceTranscode.reportPlaybackError(error)
                     onError?.(error)
                 },
             }))
@@ -1438,7 +1496,7 @@ export function VideoCore(props: VideoCoreProps) {
                 log.info("Initializing preview manager")
                 setPreviewManager(p => {
                     if (p) p.cleanup()
-                    return new VideoCorePreviewManager(videoRef.current!, streamUrl!, streamType, state.playbackInfo?.playbackType !== "onlinestream")
+                    return new VideoCorePreviewManager(videoRef.current!, streamUrl!, effectiveStreamType, state.playbackInfo?.playbackType !== "onlinestream")
                 })
             }
         })
@@ -1449,7 +1507,7 @@ export function VideoCore(props: VideoCoreProps) {
         if (currentPlaybackRef.current) {
             setupPreviewManager()
         }
-    }, [streamType, currentPlaybackRef.current])
+    }, [effectiveStreamType, streamUrl, currentPlaybackRef.current])
 
     const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         onTimeUpdate?.(e)
@@ -1585,9 +1643,10 @@ export function VideoCore(props: VideoCoreProps) {
     }
 
     const handleError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+        if (sourceTranscode.pending) return
         if (__isAndroidTV__ && window.AndroidTV?.nativePlayerActive()) return
         log.error("Video error", e)
-        if (isFirstError.current && props.id !== "native-player") {
+        if (isFirstError.current && props.id !== "native-player" && !sourceTranscode.converted) {
             // Change stream type to HLS if it failed to load
             log.warning("Video player could not load the URL, switching to HLS")
             setStreamType("hls")
@@ -1596,6 +1655,7 @@ export function VideoCore(props: VideoCoreProps) {
         }
 
         const error = `Video playback error occurred. (Code: ${(e.currentTarget.error && e.currentTarget.error.code) || "unknown"})`
+        if (sourceTranscode.converted) sourceTranscode.reportPlaybackError(error)
         onError?.(error)
         dispatchVideoErrorEvent(error)
     }
@@ -1637,6 +1697,11 @@ export function VideoCore(props: VideoCoreProps) {
 
     const handleCanPlay = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         setBuffering(false)
+        if (videoRef.current && sourceTranscode.restore(videoRef.current) === "position") {
+            hasSoughtRef.current = true
+            dispatchCanPlayEvent()
+            return
+        }
 
         if (!hasSoughtRef.current) {
             if (!state.playbackInfo || !videoRef.current) return
@@ -1840,7 +1905,7 @@ export function VideoCore(props: VideoCoreProps) {
             // chapters from the local direct-play and transcoding surface.
             const embeddedChapters = state.playbackInfo?.mkvMetadata?.chapters?.length
                 ? state.playbackInfo.mkvMetadata.chapters
-                : chapters
+                : chapters?.length ? chapters : sourceTranscode.chapters
             if (embeddedChapters?.length) {
                 const cues = vc_createChapterCues(embeddedChapters, duration)
                 log.info("Chapter cues from media", cues)
@@ -1861,6 +1926,7 @@ export function VideoCore(props: VideoCoreProps) {
         [
             state.playbackInfo?.mkvMetadata?.chapters,
             chapters,
+            sourceTranscode.chapters,
             resolvedSkipData?.op?.interval,
             resolvedSkipData?.ed?.interval,
             duration,
@@ -1890,6 +1956,9 @@ export function VideoCore(props: VideoCoreProps) {
                         chapterCues={chapterCues}
                         aniSkipData={resolvedSkipData}
                         streamUrl={streamUrl}
+                        nativeStreamUrl={originalStreamUrl}
+                        playbackError={effectivePlaybackError}
+                        webConversionAction={webConversionAction}
                         combineRef={combineRef}
                         combineContainerRef={combineContainerRef}
                         handleContainerPointerMove={handleContainerPointerMove}
@@ -1986,6 +2055,9 @@ export function VideoCore(props: VideoCoreProps) {
                         chapterCues={chapterCues}
                         aniSkipData={resolvedSkipData}
                         streamUrl={streamUrl}
+                        nativeStreamUrl={originalStreamUrl}
+                        playbackError={effectivePlaybackError}
+                        webConversionAction={webConversionAction}
                         combineRef={combineRef}
                         combineContainerRef={combineContainerRef}
                         handleContainerPointerMove={handleContainerPointerMove}

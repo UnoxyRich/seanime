@@ -29,6 +29,7 @@ export const vc_hlsQualityLevels = atom<HlsQualityLevel[]>([])
 export const vc_hlsCurrentQuality = atom<number>(-1)
 export const vc_hlsSetQuality = atom<((level: number) => void) | null>(null)
 export const vc_hlsAudioTracks = atom<HlsAudioTrack[]>([])
+export const vc_hlsAudioTracksSource = atom<string | undefined>(undefined)
 export const vc_hlsCurrentAudioTrack = atom<number>(-1)
 export const vc_hlsSetAudioTrack = atom<((trackId: number) => void) | null>(null)
 
@@ -53,6 +54,7 @@ export function isNativeVideoExtension(src: string): boolean {
 export function useVideoCoreHls({
     videoElement,
     streamUrl,
+    nativeSourceUrl,
     streamType,
     preferredQuality,
     onFatalError,
@@ -61,6 +63,7 @@ export function useVideoCoreHls({
 }: {
     videoElement: HTMLVideoElement | null
     streamUrl: string | undefined
+    nativeSourceUrl?: string
     streamType?: string
     preferredQuality?: string
     onMediaDetached?: () => void
@@ -82,10 +85,13 @@ export function useVideoCoreHls({
     const setCurrentQuality = useSetAtom(vc_hlsCurrentQuality)
     const setSetQuality = useSetAtom(vc_hlsSetQuality)
     const setAudioTracks = useSetAtom(vc_hlsAudioTracks)
+    const setAudioTracksSource = useSetAtom(vc_hlsAudioTracksSource)
     const setSetAudioTrack = useSetAtom(vc_hlsSetAudioTrack)
 
     useEffect(() => {
         if (!streamUrl || !videoElement) return
+        setAudioTracksSource(undefined)
+        setAudioTracks([])
 
         const isHls = streamType === "hls" || isHLSSrc(streamUrl)
 
@@ -133,7 +139,7 @@ export function useVideoCoreHls({
 
             const onNativeProgress = (event: Event) => {
                 const detail = (event as CustomEvent<AndroidTVPlayerSnapshot>).detail
-                if (detail?.url !== streamUrl || hlsRef.current !== hls) return
+                if (detail?.url !== (nativeSourceUrl ?? streamUrl) || hlsRef.current !== hls) return
                 if (!detail.closed) {
                     if (!nativeOwnsPlayback) hls.stopLoad()
                     nativeOwnsPlayback = true
@@ -270,6 +276,7 @@ export function useVideoCoreHls({
 
                     hlsLog.info("Audio tracks", audioTracks)
                     setAudioTracks(audioTracks)
+                    setAudioTracksSource(streamUrl)
                     setCurrentAudioTrack(hls.audioTrack)
                 } else {
                     setAudioTracks([])
@@ -338,7 +345,7 @@ export function useVideoCoreHls({
             hlsLog.error("HLS not supported on this browser")
             toast.error("HLS playback not supported on this browser")
         }
-    }, [streamUrl, videoElement, streamType])
+    }, [streamUrl, nativeSourceUrl, videoElement, streamType])
 
 
     // Update audio manager when HLS audio track changes

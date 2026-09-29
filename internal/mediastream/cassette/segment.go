@@ -106,3 +106,12 @@ func (st *SegmentTable) WaitFor(ctx context.Context, seg int32, kill <-chan stru
 		return context.Canceled
 	}
 }
+
+// Forget invalidates a completed segment after cache eviction.
+func (st *SegmentTable) Forget(seg int32) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.isReadyLocked(seg) {
+		st.segments[seg] = segmentEntry{ch: make(chan struct{})}
+	}
+}

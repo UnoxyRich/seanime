@@ -199,7 +199,11 @@ func (t *ClientTracker) killSessionIfDead(path string) bool {
 	if s == nil {
 		return false
 	}
-	s.Kill()
+	if t.cassette.settings.FixedSegmentDuration > 0 {
+		s.Suspend()
+	} else {
+		s.Kill()
+	}
 
 	// Schedule full destruction after a cooldown
 	go func() {

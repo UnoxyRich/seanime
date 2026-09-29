@@ -26,9 +26,10 @@ export function MediaCoreErrorOverlay(props: {
     playbackError: string | null
     isMiniPlayer: boolean
     onClose?: () => void
-    fallbackAction?: { label: string; onClick: () => void }
+    fallbackAction?: { label: string; onClick: () => void; disabled?: boolean }
+    secondaryFallbackAction?: { label: string; onClick: () => void; disabled?: boolean }
 }) {
-    const { playbackError, isMiniPlayer, onClose, fallbackAction } = props
+    const { playbackError, isMiniPlayer, onClose, fallbackAction, secondaryFallbackAction } = props
     if (!playbackError) return null
 
     return (
@@ -52,8 +53,15 @@ export function MediaCoreErrorOverlay(props: {
                 </p>
                 {fallbackAction && (
                     <div className="mt-6">
-                        <Button intent="primary" size={isMiniPlayer ? "sm" : "md"} onClick={fallbackAction.onClick} autoFocus>
+                        <Button intent="primary" size={isMiniPlayer ? "sm" : "md"} onClick={fallbackAction.onClick} disabled={fallbackAction.disabled} autoFocus>
                             {fallbackAction.label}
+                        </Button>
+                    </div>
+                )}
+                {secondaryFallbackAction && (
+                    <div className="mt-3">
+                        <Button intent="gray-outline" size={isMiniPlayer ? "sm" : "md"} onClick={secondaryFallbackAction.onClick} disabled={secondaryFallbackAction.disabled}>
+                            {secondaryFallbackAction.label}
                         </Button>
                     </div>
                 )}

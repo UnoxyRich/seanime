@@ -2,13 +2,13 @@ package cassette
 
 import (
 	"bufio"
+	"context"
 	"path/filepath"
 	"seanime/internal/mediastream/videofile"
 	"seanime/internal/util"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/rs/zerolog"
 )
@@ -21,6 +21,8 @@ type KeyframeIndex struct {
 
 	mu        sync.RWMutex
 	ready     sync.WaitGroup
+	readyOnce sync.Once
+	err       error
 	listeners []func(keyframes []float64)
 }
 
@@ -107,18 +109,34 @@ func getOrExtractKeyframes(
 	kfCache.Store(hash, ki)
 	kfCacheMu.Unlock()
 
+	if settings.Probes != nil {
+		settings.Probes.Add(1)
+	}
 	go func() {
+		if settings.Probes != nil {
+			defer settings.Probes.Done()
+		}
+		defer ki.markReady() // Failed/cancelled probes must release initial waiters too.
 		diskPath := filepath.Join(settings.StreamDir, hash, "keyframes.json")
 
 		// Try disk cache first
 		if err := getSavedInfo(diskPath, ki); err == nil {
 			logger.Trace().Msg("cassette: keyframes disk cache HIT")
-			ki.ready.Done()
+			ki.markReady()
 			return
 		}
 
 		// Extract from the file
-		if err := extractKeyframes(settings.FfprobePath, path, ki, hash, logger); err == nil {
+		ctx := settings.Context
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		err := extractKeyframes(ctx, settings.FfprobePath, path, ki, hash, logger)
+		ki.mu.Lock()
+		ki.err = err
+		ki.IsDone = true
+		ki.mu.Unlock()
+		if err == nil {
 			saveInfo(diskPath, ki)
 		}
 	}()
@@ -129,6 +147,7 @@ func getOrExtractKeyframes(
 
 // extractKeyframes probes the file for keyframes
 func extractKeyframes(
+	ctx context.Context,
 	ffprobePath string,
 	path string,
 	ki *KeyframeIndex,
@@ -142,8 +161,8 @@ func extractKeyframes(
 		probeBin = "ffprobe"
 	}
 
-	cmd := util.NewCmd(
-		probeBin,
+	cmd := util.NewCmdCtx(
+		ctx, probeBin,
 		"-loglevel", "error",
 		"-select_streams", "v:0",
 		"-show_entries", "packet=pts_time,flags",
@@ -158,12 +177,13 @@ func extractKeyframes(
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	// Always reap the process, including early parser errors/cancellation.
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
 
 	scanner := bufio.NewScanner(stdout)
 	buf := make([]float64, 0, 1000)
 	batchSize := 100
 	flushed := int32(0)
-	var readyDone atomic.Bool
 
 	flush := func(final bool) {
 		if len(buf) == 0 && !final {
@@ -171,10 +191,7 @@ func extractKeyframes(
 		}
 		ki.append(buf)
 		flushed += int32(len(buf))
-		if !readyDone.Load() {
-			readyDone.Store(true)
-			ki.ready.Done()
-		}
+		ki.markReady()
 		buf = buf[:0]
 		// After the first 500 keyframes increase batch size to reduce
 		// listener overhead on long files
@@ -209,9 +226,19 @@ func extractKeyframes(
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return err
+	}
+
 	// Handle files with <=1 keyframe
 	if flushed == 0 && len(buf) < 2 {
-		dummy, err := makeDummyKeyframes(ffprobePath, path, hash)
+		dummy, err := makeDummyKeyframes(ctx, ffprobePath, path, hash)
 		if err != nil {
 			return err
 		}
@@ -219,14 +246,13 @@ func extractKeyframes(
 	}
 
 	flush(true)
-	ki.IsDone = true
 	return nil
 }
 
 // makeDummyKeyframes at 2s intervals
-func makeDummyKeyframes(ffprobePath, path, hash string) ([]float64, error) {
+func makeDummyKeyframes(ctx context.Context, ffprobePath, path, hash string) ([]float64, error) {
 	const interval = 2.0
-	info, err := videofile.FfprobeGetInfo(ffprobePath, path, hash)
+	info, err := videofile.FfprobeGetInfoContext(ctx, ffprobePath, path, hash)
 	if err != nil {
 		return nil, err
 	}
@@ -237,3 +263,16 @@ func makeDummyKeyframes(ffprobePath, path, hash string) ([]float64, error) {
 	}
 	return out, nil
 }
+
+// fixedSegmentIndex covers the whole original timeline without downloading it
+// to inspect keyframes. Exclude the exact duration to avoid an empty last segment.
+func fixedSegmentIndex(hash string, duration, step float64) *KeyframeIndex {
+	ki := &KeyframeIndex{Sha: hash, IsDone: true}
+	for t := 0.0; t < duration; t += step {
+		ki.Keyframes = append(ki.Keyframes, t)
+	}
+	return ki
+}
+
+func (ki *KeyframeIndex) markReady()   { ki.readyOnce.Do(func() { ki.ready.Done() }) }
+func (ki *KeyframeIndex) Error() error { ki.mu.RLock(); defer ki.mu.RUnlock(); return ki.err }

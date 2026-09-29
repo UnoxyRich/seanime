@@ -197,6 +197,12 @@ func (e *MediaInfoExtractor) getInfo(ffprobePath, sourcePath, mediaPath, hash st
 var ffprobeOnce sync.Once
 
 func FfprobeGetInfo(ffprobePath, path, hash string) (*MediaInfo, error) {
+	return FfprobeGetInfoContext(context.Background(), ffprobePath, path, hash)
+}
+
+// FfprobeGetInfoContext also respects session stop/source replacement while the
+// existing caller API retains its 40 second probe timeout.
+func FfprobeGetInfoContext(ctx context.Context, ffprobePath, path, hash string) (*MediaInfo, error) {
 
 	if ffprobePath != "" {
 		ffprobeOnce.Do(func() {
@@ -204,7 +210,7 @@ func FfprobeGetInfo(ffprobePath, path, hash string) (*MediaInfo, error) {
 		})
 	}
 
-	ffprobeCtx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ffprobeCtx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 
 	data, err := ffprobe.ProbeURL(ffprobeCtx, path)

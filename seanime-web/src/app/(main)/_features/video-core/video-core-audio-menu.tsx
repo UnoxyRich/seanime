@@ -1,3 +1,4 @@
+import { selectPlaybackAudioTracks } from "@/app/(main)/_features/video-core/_lib/audio-track-source"
 import { MKVParser_TrackInfo } from "@/api/generated/types"
 import { nativePlayer_stateAtom } from "@/app/(main)/_features/native-player/native-player.atoms"
 import { vc_audioManager } from "@/app/(main)/_features/video-core/video-core"
@@ -33,8 +34,7 @@ export function VideoCoreAudioMenu() {
     const hlsCurrentAudioTrack = useAtomValue(vc_hlsCurrentAudioTrack)
 
     // Determine which audio tracks to use
-    const audioTracks = mkvAudioTracks || (hlsAudioTracks.length > 0 ? hlsAudioTracks : null)
-    const isHls = !mkvAudioTracks && hlsAudioTracks.length > 0
+    const { audioTracks, isHls } = selectPlaybackAudioTracks(mkvAudioTracks, hlsAudioTracks, audioManager?.isHLS ?? false)
 
     function onAudioChange() {
         setSelectedTrack(audioManager?.getSelectedTrackNumberOrNull?.() ?? null)

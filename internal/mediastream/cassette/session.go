@@ -56,11 +56,28 @@ func NewSession(
 		logger:   logger,
 	}
 
-	s.ready.Add(1)
-	go func() {
-		defer s.ready.Done()
-		s.Keyframes = getOrExtractKeyframes(path, hash, settings, logger)
-	}()
+	if settings.FixedSegmentDuration > 0 {
+		s.Keyframes = fixedSegmentIndex(hash, float64(info.Duration), settings.FixedSegmentDuration)
+		// Synthetic boundaries are not source keyframes. Even an H.264 source
+		// must be re-encoded to make every advertised segment independently seekable.
+		for i := range s.Ladder {
+			s.Ladder[i].OriginalCanTransmux = false
+			s.Ladder[i].NeedsTranscode = true
+		}
+	} else {
+		s.ready.Add(1)
+		if settings.Probes != nil {
+			settings.Probes.Add(1)
+		}
+		go func() {
+			defer s.ready.Done()
+			if settings.Probes != nil {
+				defer settings.Probes.Done()
+			}
+			s.Keyframes = getOrExtractKeyframes(path, hash, settings, logger)
+			s.err = s.Keyframes.Error()
+		}()
+	}
 
 	if len(s.Ladder) > 0 {
 		logger.Debug().
@@ -261,9 +278,11 @@ func (s *Session) getAudioPipeline(idx int32) *Pipeline {
 		Bitrate:  "128k",
 		Channels: "2",
 	}
-	if srcAudio != nil {
+	if srcAudio != nil && s.settings.FixedSegmentDuration == 0 {
 		decision = DecideAudioTranscode(srcAudio)
 	}
+	// Android WebView support for multichannel AAC varies. Keep the fallback
+	// universally playable; the original/native path retains source passthrough.
 
 	if decision.Copy {
 		s.logger.Debug().Int32("audio", idx).Str("codec", "copy").
@@ -330,4 +349,21 @@ func (s *Session) Destroy() {
 	s.logger.Debug().Str("path", s.Path).Msg("cassette: destroying session")
 	s.Kill()
 	_ = os.RemoveAll(s.Out)
+}
+
+// Suspend releases the cancelled pipelines so resumed requests can start new
+// encoders. Session.Kill alone is terminal for the retained Pipeline context.
+func (s *Session) Suspend() {
+	s.videosMu.Lock()
+	for q, p := range s.videos {
+		p.Kill()
+		delete(s.videos, q)
+	}
+	s.videosMu.Unlock()
+	s.audiosMu.Lock()
+	for a, p := range s.audios {
+		p.Kill()
+		delete(s.audios, a)
+	}
+	s.audiosMu.Unlock()
 }
