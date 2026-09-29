@@ -46,7 +46,6 @@ class AndroidTvStartupTest {
             // the history fixture while the native Back callbacks are in flight.
             scenario.onActivity {
                 val view = requireNotNull(findWebView(it.window.decorView))
-                val originalClient = view.webViewClient
                 view.webViewClient = object : android.webkit.WebViewClient() {
                     override fun shouldInterceptRequest(
                         webView: WebView?, request: android.webkit.WebResourceRequest?,
@@ -56,7 +55,7 @@ class AndroidTvStartupTest {
                             return android.webkit.WebResourceResponse("text/html", "UTF-8",
                                 java.io.ByteArrayInputStream(html.toByteArray()))
                         }
-                        return originalClient.shouldInterceptRequest(webView, request)
+                        return null
                     }
                 }
                 // A real URL load participates in native WebView history, unlike
@@ -74,7 +73,8 @@ class AndroidTvStartupTest {
                     const navigate = document.createElement('button');
                     navigate.textContent = 'Open route';
                     navigate.style.cssText = 'position:fixed;left:64px;top:64px;width:200px;height:80px';
-                    navigate.addEventListener('click', () => {
+                    navigate.addEventListener('click', event => {
+                        window.__tvBackTrustedNavigation = event.isTrusted && navigator.userActivation.hasBeenActive;
                         history.replaceState({}, '', '/#tv-back-root');
                         history.pushState({}, '', '/#tv-back-first');
                         history.pushState({}, '', '/#tv-back-second');
@@ -109,6 +109,7 @@ class AndroidTvStartupTest {
                 scenario.onActivity { canGoBack = findWebView(it.window.decorView)?.canGoBack() == true }
                 canGoBack
             }
+            assertEquals("true", evaluateJavascript(scenario, "window.__tvBackTrustedNavigation === true"))
 
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             waitUntil("focused menu to consume Back", 5_000) {
