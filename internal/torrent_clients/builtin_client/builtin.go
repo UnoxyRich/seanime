@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/database/db"
 	"seanime/internal/database/models"
 	"seanime/internal/util"
@@ -19,6 +20,7 @@ import (
 	g "github.com/anacrolix/generics"
 	alog "github.com/anacrolix/log"
 	anacrolix "github.com/anacrolix/torrent"
+	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
 	"github.com/rs/zerolog"
 	"golang.org/x/time/rate"
@@ -58,6 +60,7 @@ type Client struct {
 	closeCh            chan struct{}
 	closed             bool
 	pieceCompletion    storage.PieceCompletion
+	dataDir            string
 }
 
 type torrentEntry struct {
@@ -75,6 +78,14 @@ type torrentEntry struct {
 	storageCloser         io.Closer
 	writeError            error
 	writeErrorMu          sync.RWMutex
+	safMu                 sync.Mutex
+	safCancel             func()
+	safDone               chan struct{}
+	safMoving             bool
+	safLastAttempt        time.Time
+	safExported           map[string]int64
+	safExportError        error
+	operationMu           *sync.Mutex
 }
 
 func (e *torrentEntry) getWriteError() error {
@@ -215,6 +226,7 @@ func New(opts *NewClientOptions) (*Client, error) {
 		maxActiveDownloads: opts.MaxActiveDownloads,
 		closeCh:            make(chan struct{}),
 		pieceCompletion:    pc,
+		dataDir:            opts.Dir,
 	}
 	if err := c.restore(); err != nil {
 		inner.Close()
@@ -261,12 +273,18 @@ func (c *Client) Close() {
 	close(c.closeCh)
 	inner := c.client
 	var closers []io.Closer
+	var entries []*torrentEntry
 	for _, entry := range c.torrents {
+		entries = append(entries, entry)
+		entry.cancelSAFExport()
 		if entry.storageCloser != nil {
 			closers = append(closers, entry.storageCloser)
 		}
 	}
 	c.mu.Unlock()
+	for _, entry := range entries {
+		entry.stopSAFExport()
+	}
 
 	if inner != nil {
 		for _, err := range inner.Close() {
@@ -304,7 +322,7 @@ func (c *Client) AddMagnet(magnet, destination string) (*anacrolix.Torrent, erro
 		return nil, errors.New("destination is required")
 	}
 	destination = filepath.Clean(destination)
-	if err := os.MkdirAll(destination, 0755); err != nil {
+	if err := ensureTorrentDestination(destination); err != nil {
 		return nil, fmt.Errorf("create destination: %w", err)
 	}
 	spec, err := anacrolix.TorrentSpecFromMagnetUri(magnet)
@@ -348,12 +366,27 @@ func (c *Client) AddMagnet(magnet, destination string) (*anacrolix.Torrent, erro
 }
 
 func (c *Client) addPersisted(item *models.LocalTorrent) (*anacrolix.Torrent, error) {
+	return c.addPersistedWithMetadata(item, nil)
+}
+
+func (c *Client) addPersistedWithMetadata(item *models.LocalTorrent, metadata *metainfo.MetaInfo) (*anacrolix.Torrent, error) {
+	return c.addPersistedStorage(item, metadata, false)
+}
+
+func (c *Client) addPersistedStorage(item *models.LocalTorrent, metadata *metainfo.MetaInfo, moving bool) (*anacrolix.Torrent, error) {
 	defer util.HandlePanicInModuleThen("builtin_client/addPersisted", func() {})
+	operationMu := new(sync.Mutex)
+	if previous, err := c.getEntry(item.Hash); err == nil {
+		operationMu = previous.operationMutex()
+	}
 	if item.Paused {
 		entry := &torrentEntry{
 			client: c, model: item, torrent: nil, lastSample: time.Now(), sequentialStart: -1,
 			filePriorities: make(map[int]int),
 			storageCloser:  nil,
+			safMoving:      moving,
+			safExported:    make(map[string]int64),
+			operationMu:    operationMu,
 		}
 		if item.FilePriorities != "" {
 			_ = json.Unmarshal([]byte(item.FilePriorities), &entry.filePriorities)
@@ -368,7 +401,16 @@ func (c *Client) addPersisted(item *models.LocalTorrent) (*anacrolix.Torrent, er
 	if err != nil {
 		return nil, fmt.Errorf("parse persisted magnet: %w", err)
 	}
-	fc := newTorrentStorage(item.Destination, c.pieceCompletion)
+	if metadata != nil {
+		spec = anacrolix.TorrentSpecFromMetaInfo(metadata)
+	} else if cached, err := c.loadTorrentMetadata(item.Hash); err == nil {
+		spec = anacrolix.TorrentSpecFromMetaInfo(cached)
+	}
+	dataDir, err := c.torrentDataDirectory(item)
+	if err != nil {
+		return nil, err
+	}
+	fc := newTorrentStorage(dataDir, c.pieceCompletion)
 	spec.Storage = fc
 	spec.DisallowDataDownload = true
 	spec.DisallowDataUpload = true
@@ -391,6 +433,9 @@ func (c *Client) addPersisted(item *models.LocalTorrent) (*anacrolix.Torrent, er
 		client: c, model: item, torrent: t, lastSample: time.Now(), sequentialStart: -1,
 		filePriorities: filePriorities,
 		storageCloser:  fc,
+		safExported:    make(map[string]int64),
+		safMoving:      moving,
+		operationMu:    operationMu,
 	}
 	t.SetOnWriteChunkError(func(err error) {
 		if err != nil {
@@ -425,31 +470,66 @@ func (c *Client) RemoveTorrent(hash string, deleteFiles bool) error {
 	if entry == nil {
 		return errors.New("torrent not found")
 	}
+	entry.cancelSAFExport()
+	operationMu := entry.operationMutex()
+	operationMu.Lock()
+	defer operationMu.Unlock()
+	entry, err := c.getEntry(hash)
+	if err != nil {
+		return err
+	}
+	entry.safMu.Lock()
+	entry.safMoving = true
+	entry.safMu.Unlock()
+	defer func() {
+		entry.safMu.Lock()
+		entry.safMoving = false
+		entry.safMu.Unlock()
+		c.reconcileQueue()
+	}()
 	if entry.torrent != nil {
 		entry.torrent.DisallowDataDownload()
 		entry.torrent.DisallowDataUpload()
 	}
+	entry.stopSAFExport()
+	if deleteFiles && androidtvstorage.IsPath(entry.model.Destination) {
+		if err := c.removeSAFTorrentData(entry); err != nil {
+			return err
+		}
+		c.removeRuntime(hash)
+		if stage, err := c.safStageDirectory(hash); err == nil {
+			if err := os.RemoveAll(filepath.Dir(stage)); err != nil {
+				return err
+			}
+		}
+		if err := c.database.DeleteLocalTorrent(hash); err != nil {
+			return err
+		}
+		c.compactQueue()
+		c.reconcileQueue()
+		return nil
+	}
 	var paths []string
 	var root string
-	var err error
+	var fileErr error
 	if deleteFiles {
 		if entry.torrent != nil {
-			paths, root, err = torrentFilePaths(entry.model.Destination, entry.torrent)
-			if err != nil {
-				c.logger.Warn().Err(err).Str("hash", hash).Msg("builtin torrent: could not determine file paths for deletion")
-				root, err = torrentRootFromModel(entry.model.Destination, entry.model.Name)
-				if err != nil {
-					c.logger.Warn().Err(err).Str("hash", hash).Msg("builtin torrent: could not determine fallback root for deletion")
+			paths, root, fileErr = torrentFilePaths(entry.model.Destination, entry.torrent)
+			if fileErr != nil {
+				c.logger.Warn().Err(fileErr).Str("hash", hash).Msg("builtin torrent: could not determine file paths for deletion")
+				root, fileErr = torrentRootFromModel(entry.model.Destination, entry.model.Name)
+				if fileErr != nil {
+					c.logger.Warn().Err(fileErr).Str("hash", hash).Msg("builtin torrent: could not determine fallback root for deletion")
 					root = ""
 				}
-				err = nil
+				fileErr = nil
 			}
 		} else {
-			root, err = torrentRootFromModel(entry.model.Destination, entry.model.Name)
-			if err != nil {
-				c.logger.Warn().Err(err).Str("hash", hash).Msg("builtin torrent: could not determine fallback root for deletion")
+			root, fileErr = torrentRootFromModel(entry.model.Destination, entry.model.Name)
+			if fileErr != nil {
+				c.logger.Warn().Err(fileErr).Str("hash", hash).Msg("builtin torrent: could not determine fallback root for deletion")
 				root = ""
-				err = nil
+				fileErr = nil
 			}
 		}
 	}
@@ -473,6 +553,7 @@ func (c *Client) removeRuntime(hash string) {
 	delete(c.torrents, hash)
 	c.mu.Unlock()
 	if entry != nil {
+		entry.stopSAFExport()
 		if entry.torrent != nil {
 			entry.torrent.Drop()
 		}
@@ -551,6 +632,16 @@ func (c *Client) ResumeTorrent(hash string) error {
 func (c *Client) setPaused(hash string, paused bool) error {
 	defer util.HandlePanicInModuleThen("builtin_client/setPaused", func() {})
 	hash = strings.ToLower(hash)
+	previous, err := c.getEntry(hash)
+	if err != nil {
+		return err
+	}
+	if paused {
+		previous.cancelSAFExport()
+	}
+	operationMu := previous.operationMutex()
+	operationMu.Lock()
+	defer operationMu.Unlock()
 	c.mu.Lock()
 	entry := c.torrents[hash]
 	if entry == nil {
@@ -565,11 +656,17 @@ func (c *Client) setPaused(hash string, paused bool) error {
 		closer := entry.storageCloser
 		if t != nil {
 			entry.model.Length = t.Length()
-			entry.model.Completed = t.BytesCompleted()
+			entry.model.Completed = safReadyCompleted(entry, t, t.Length(), t.BytesCompleted())
 		}
 		entry.torrent = nil
 		entry.storageCloser = nil
 		c.mu.Unlock()
+		entry.stopSAFExport()
+		if t != nil && t.Info() != nil {
+			if err := c.saveTorrentMetadata(entry.model.Hash, new(t.Metainfo())); err != nil {
+				c.logger.Warn().Err(err).Msg("builtin torrent: could not preserve metadata before pausing")
+			}
+		}
 		if t != nil {
 			t.Drop()
 		}
@@ -578,7 +675,10 @@ func (c *Client) setPaused(hash string, paused bool) error {
 		}
 	} else {
 		// Resume: Check directory existence first!
-		if _, err := os.Stat(entry.model.Destination); err != nil {
+		if err := checkTorrentDestination(entry.model.Destination); err != nil {
+			entry.safMu.Lock()
+			entry.safExported = nil
+			entry.safMu.Unlock()
 			c.mu.Unlock()
 			if os.IsNotExist(err) || errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("cannot resume: save directory not found (%s)", entry.model.Destination)
@@ -859,9 +959,19 @@ func (c *Client) MoveStorage(hash, newDestination string) (err error) {
 	if err != nil {
 		return err
 	}
+	operationMu := entry.operationMutex()
+	operationMu.Lock()
+	defer operationMu.Unlock()
+	entry, err = c.getEntry(hash)
+	if err != nil {
+		return err
+	}
 	newDestination = filepath.Clean(newDestination)
 	if newDestination == "" || newDestination == "." {
 		return errors.New("new destination is required")
+	}
+	if androidtvstorage.IsPath(entry.model.Destination) || androidtvstorage.IsPath(newDestination) {
+		return c.moveSAFTorrentStorage(entry, newDestination)
 	}
 	if err := os.MkdirAll(newDestination, 0755); err != nil {
 		return err
@@ -1004,6 +1114,7 @@ func (c *Client) snapshotEntryA(entry *torrentEntry, allowed map[string]bool) To
 		if entry.torrent.Info() != nil {
 			length = entry.torrent.Length()
 			completed = entry.torrent.BytesCompleted()
+			completed = safReadyCompleted(entry, entry.torrent, length, completed)
 
 			entry.model.Length = length
 			entry.model.Completed = completed
@@ -1013,6 +1124,11 @@ func (c *Client) snapshotEntryA(entry *torrentEntry, allowed map[string]bool) To
 	if wErr := entry.getWriteError(); wErr != nil {
 		errStr = wErr.Error()
 	}
+	entry.safMu.Lock()
+	if errStr == "" && entry.safExportError != nil {
+		errStr = entry.safExportError.Error()
+	}
+	entry.safMu.Unlock()
 	return TorrentSnapshot{
 		Name:        displayName(entry),
 		Hash:        entry.model.Hash,
@@ -1085,6 +1201,12 @@ func (c *Client) allowedEntriesLocked() map[string]bool {
 		if entry.model.Paused || entry.torrent == nil {
 			continue
 		}
+		entry.safMu.Lock()
+		moving := entry.safMoving
+		entry.safMu.Unlock()
+		if moving {
+			continue
+		}
 		if entry.getWriteError() != nil {
 			continue
 		}
@@ -1114,18 +1236,22 @@ func (c *Client) reconcileQueue() {
 		isPaused := entry.model.Paused
 		isAllowed := allowed[entry.model.Hash]
 		isSequential := entry.model.Sequential
-		c.mu.RUnlock()
-
 		if t == nil {
+			c.mu.RUnlock()
 			continue
 		}
-		if isPaused || !isAllowed {
+		entry.safMu.Lock()
+		if isPaused || !isAllowed || entry.safMoving {
 			t.DisallowDataDownload()
 			t.DisallowDataUpload()
+			entry.safMu.Unlock()
+			c.mu.RUnlock()
 			continue
 		}
 		t.AllowDataDownload()
 		t.AllowDataUpload()
+		entry.safMu.Unlock()
+		c.mu.RUnlock()
 		if t.Info() != nil {
 			if isSequential {
 				applySequentialPriorities(entry, t)
@@ -1274,6 +1400,7 @@ func (c *Client) runScheduler() {
 		case now := <-ticker.C:
 			c.sampleRates(now)
 			c.reconcileQueue()
+			c.exportSAFTorrents()
 		}
 	}
 }
@@ -1307,7 +1434,10 @@ func (c *Client) sampleRates(now time.Time) {
 			}
 		}
 
-		if _, err := os.Stat(entry.model.Destination); err != nil {
+		if err := checkTorrentDestination(entry.model.Destination); err != nil {
+			entry.safMu.Lock()
+			entry.safExported = nil
+			entry.safMu.Unlock()
 			if os.IsNotExist(err) || errors.Is(err, os.ErrNotExist) {
 				entry.setWriteError(fmt.Errorf("save directory not found: %s", entry.model.Destination))
 			} else {
