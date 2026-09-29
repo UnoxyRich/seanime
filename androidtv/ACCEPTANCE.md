@@ -5,16 +5,36 @@ acceptance requires running the scenarios below on the APK being evaluated.
 Record its commit, ABI, Android/WebView versions, page size, storage provider,
 and device model with each result.
 
-## Current evidence
+## Current source evidence
 
-- The shared frontend suite passes 96 tests in 17 files, including playback recovery,
+- The shared frontend suite passes 156 tests in 24 files in 3.05 seconds,
+  including 19 focused source-conversion/player regressions. Coverage includes playback recovery,
   Media3 state/command adaptation, browser HLS handoff, source-refresh pause
   isolation, suppression of late browser playback events, and older-WebView
   bridge bootstrap, `Object.hasOwn` and modern Array/Promise polyfills, and a
   structured-clone fallback for older WebViews, Android stream routing,
   playlist playback selection, and watch-party player identity.
-- ARM64 and x86_64 debug APKs build and pass APK signature verification.
-- All 22 Android instrumentation tests pass on the API 31 ARM64 TV emulator
+- The September 29 parity batch adds transactional SAF destinations for debrid
+  and built-in torrent downloads, web source conversion with retained advanced
+  player state, background queue/encoder suspension, trusted D-pad Back
+  regression coverage, and external-link handling. Focused Go checks and a host
+  FFmpeg integration smoke pass. See the
+  [parity batch evidence](acceptance/2026-09-29-parity-batch.md) for source
+  commit, commands, scope, and remaining acceptance gates.
+- The current ARM64 and x86_64 debug APKs build in 2 minutes 52 seconds and
+  pass signature verification and native-library 16 KiB ELF/ZIP alignment.
+  Two targeted startup/bridge/lifecycle and trusted remote-Back tests pass on
+  the fresh ARM64 APK using the API 31 TV emulator with WebView 91 and 4 KiB
+  pages. The full earlier instrumentation result below retains its original
+  revision. APK hashes and current test scope are in the parity batch report.
+
+## Earlier acceptance evidence
+
+These dated reports retain their original source revisions and APKs. The
+22-test instrumentation result below is earlier API 31 emulator evidence.
+
+- Earlier ARM64 and x86_64 debug APKs built and passed APK signature verification.
+- All 22 Android instrumentation tests passed on the API 31 ARM64 TV emulator
   with WebView 91.0.4472.114 and 4 KiB pages. They cover server
   startup/restart, bridge access, external-player scheme dispatch and focus
   return, injected Android D-pad key events through the
@@ -130,11 +150,11 @@ and device model with each result.
   [playback recovery run](acceptance/2026-09-27-playback-recovery.md) for
   source revisions, APK hashes, environment, and test scope.
 
-- The latest playback lifecycle run confirms that explicit Back dismissal
+- The earlier playback lifecycle run confirms that explicit Back dismissal
   serializes checkpoint deletion after any in-flight write, stop/destroy cannot
   recreate the dismissed snapshot, and a fresh MainActivity discovers a ticket
   persisted by an earlier process. All 22 Android instrumentation tests
-  passed on the ARM64 TV emulator; current APK hashes and build limitations are
+  passed on the ARM64 TV emulator; that run's APK hashes and build limitations are
   recorded in the [dismissal recovery run](acceptance/2026-09-28-playback-dismissal-recovery.md).
 - An end-to-end Android force-stop and cold relaunch restored a URL-backed
   playback checkpoint on the API 31 ARM64 TV emulator. The native player
@@ -190,7 +210,7 @@ after returning from another screen/activity.
 | Offline anime | Downloaded entry playback and metadata while disconnected, reconnect, progress reconciliation. |
 | Playlists and continuity | Next/previous, automatic next, global playlists, position restoration, completion exactly once, URL refresh while paused. |
 | Extensions and plugins | Installation/update, repository management, configuration, playground, plugin actions and player event/control integration. |
-| Streaming | Local, online, torrent and debrid sources; unsupported WebView codec handoff to Media3; seek, pause/resume, source switching and recovery. |
+| Streaming | Local, online, torrent and debrid sources; unsupported WebView codec conversion and Media3 handoff; seek, pause/resume, source switching and recovery. |
 | Native player | Audio/subtitle selection, external SRT/VTT/ASS/SSA, style preferences, speed/volume/mute, screenshot destination, remote media keys, Home/return, failed-source retry and return to web playback. |
 | Advanced web player | Libass, subtitle translation, Anime4K, chapters/skip controls, screenshots, insight and plugin player actions using the WebView player. |
 | Transcoding | Packaged ffmpeg/ffprobe launch, metadata extraction, CPU fallback, supported hardware paths, seek, shutdown and staging-file cleanup. |
@@ -209,6 +229,9 @@ after returning from another screen/activity.
   files and app-cache staging cleanup after failure, cancellation and restart.
 - Leave the foreground during idle and active download work. Confirm that
   non-playback work pauses, queues persist, and foreground return resumes work.
+- Return immediately while canceled debrid/torrent workers or source encoders
+  are still stopping. Confirm one resumed worker per destination/session and
+  preservation of destination, queue metadata, playback position, and pause state.
 - Check the app while the native player, OAuth activity or document picker is
   foreground, including transitions back to the main WebView.
 
@@ -219,6 +242,12 @@ Include the minimum supported Android API 23, a current Android TV
 image, a 16 KiB target, hardware decoding/transcoding capabilities, and at least
 one real USB document provider. The in-memory test provider covers adapter
 contracts; real USB behavior requires the physical storage scenarios above.
+
+Recorded passing runs are still required for physical USB unplug/replug and
+revoked grants, representative 1080p/4K hardware, API 23 and a current Android TV
+API, 16 KiB runtime operation, and x86_64 runtime operation. Live online,
+torrent and debrid providers, AniList/MAL OAuth, and Nakama synchronization and
+reconnection also remain device acceptance gates.
 
 ## Commands
 
