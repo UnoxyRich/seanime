@@ -1,3 +1,4 @@
+import { keyboardClickable } from "@/lib/helpers/keyboard-clickable"
 import { Extension_Extension, Extension_InvalidExtension, ExtensionRepo_UpdateData } from "@/api/generated/types"
 import {
     useFetchExternalExtensionData,
@@ -192,6 +193,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
 
                     <div>
                         <p
+                            {...keyboardClickable(extension.type === "custom-source")}
                             className={cn(
                                 "font-semibold line-clamp-1 flex items-center gap-1",
                                 extension.type === "custom-source" && "cursor-pointer hover:underline hover:underline-offset-2 hover:decoration-2 hover:decoration-solid hover:decoration-gray-500",

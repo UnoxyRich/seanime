@@ -394,7 +394,9 @@ export function PlaybackManagerProgressTracking() {
                                 >Next: <span className="font-semibold">{playlistState?.next?.name}</span>
                                 </p>
                             </div>
-                            <div
+                            <button
+                                type="button"
+                                disabled={submittedPlaylistNext}
                                 data-progress-tracking-playlist-next-episode-button
                                 className={cn(
                                     "w-full rounded-[--radius-md] relative overflow-hidden",
@@ -423,7 +425,7 @@ export function PlaybackManagerProgressTracking() {
                                     <p data-progress-tracking-playlist-next-episode-button-text className="flex gap-2 items-center">
                                         <BiSolidSkipNextCircle className="block text-2xl" /> Play next</p>
                                 </div>
-                            </div>
+                            </button>
                             <div data-progress-tracking-playlist-next-episode-button-stop-button-container className="absolute -top-0.5 right-2">
                                 <IconButton
                                     intent="alert-subtle"

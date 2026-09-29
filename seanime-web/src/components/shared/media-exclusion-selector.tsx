@@ -366,7 +366,9 @@ function MediaExclusionItem(props: {
     const { entry, isSelected, onToggle, disabled } = props
 
     return (
-        <div
+        <button
+            type="button"
+            disabled={disabled} aria-pressed={isSelected} aria-label={`Exclude ${entry.media?.title?.userPreferred || entry.media?.title?.romaji || "media"}`}
             className={cn(
                 "col-span-1 aspect-[6/7] rounded-[--radius-md] overflow-hidden relative bg-[var(--background)] cursor-pointer transition-all select-none group",
                 disabled && "pointer-events-none opacity-50",
@@ -415,6 +417,6 @@ function MediaExclusionItem(props: {
             {!isSelected && (
                 <div className="z-[5] absolute top-0 w-full h-[80%] bg-gradient-to-b from-black/50 to-transparent opacity-100 group-hover:opacity-60 transition-opacity" />
             )}
-        </div>
+        </button>
     )
 }

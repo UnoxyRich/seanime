@@ -1,3 +1,4 @@
+import { keyboardClickable } from "@/lib/helpers/keyboard-clickable"
 import { AL_BaseAnime } from "@/api/generated/types"
 import { EpisodeCardImage } from "@/app/(main)/_features/anime/_components/episode-card-image"
 import { useServerStatus } from "@/app/(main)/_hooks/use-server-status"
@@ -133,6 +134,7 @@ export const EpisodeGridItem = React.memo((props: EpisodeGridItemProps & React.C
                 )}
             >
                 <div
+                    {...keyboardClickable(!!onClick && !disabled)}
                     data-episode-grid-item-image-container
                     className={cn(
                         "w-36 h-28 lg:w-44 lg:h-32",

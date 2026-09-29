@@ -13,12 +13,13 @@ import { Select } from "@/components/ui/select"
 import { TextInput } from "@/components/ui/text-input"
 import { useDebounce } from "@/hooks/use-debounce"
 import { getImageUrl } from "@/lib/server/assets"
+import { __isAndroidTV__ } from "@/types/constants"
 import { DndContext, DragEndEvent } from "@dnd-kit/core"
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers"
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import React from "react"
-import { BiPlus, BiTrash } from "react-icons/bi"
+import { BiDownArrowAlt, BiPlus, BiTrash, BiUpArrowAlt } from "react-icons/bi"
 import { IoLibrarySharp } from "react-icons/io5"
 import { toast } from "sonner"
 
@@ -76,14 +77,24 @@ export function PlaylistEditor(props: PlaylistEditorProps) {
     const handleDragEnd = React.useCallback((event: DragEndEvent) => {
         const { active, over } = event
 
-        if (active.id !== over?.id) {
+        if (over && active.id !== over.id) {
             setEpisodes((items) => {
                 const oldIndex = items.findIndex(item => playlist_getEpisodeKey(item) === active.id)
-                const newIndex = items.findIndex(item => playlist_getEpisodeKey(item) === over?.id)
+                const newIndex = items.findIndex(item => playlist_getEpisodeKey(item) === over.id)
 
+                if (oldIndex < 0 || newIndex < 0) return items
                 return arrayMove(items, oldIndex, newIndex)
             })
         }
+    }, [])
+
+    const handleMoveEpisode = React.useCallback((id: string, direction: -1 | 1) => {
+        setEpisodes(items => {
+            const currentIndex = items.findIndex(item => playlist_getEpisodeKey(item) === id)
+            const nextIndex = currentIndex + direction
+            if (currentIndex < 0 || nextIndex < 0 || nextIndex >= items.length) return items
+            return arrayMove(items, currentIndex, nextIndex)
+        })
     }, [])
 
     const [selectedCategory, setSelectedCategory] = React.useState("CURRENT")
@@ -117,7 +128,7 @@ export function PlaylistEditor(props: PlaylistEditorProps) {
                         leftIcon={<BiPlus className="text-2xl" />}
                         intent="white-subtle"
                         className="rounded-full"
-                        disabled={episodes.length >= 10}
+                        disabled={episodes.length >= MAX_PLAYLIST_EPISODES}
                     >Add episodes</Button>}
                 >
 
@@ -169,6 +180,9 @@ export function PlaylistEditor(props: PlaylistEditorProps) {
                                     id={playlist_getEpisodeKey(ep)}
                                     episode={ep}
                                     setEpisodes={setEpisodes}
+                                    canMoveUp={index > 0}
+                                    canMoveDown={index < episodes.length - 1}
+                                    onMove={direction => handleMoveEpisode(playlist_getEpisodeKey(ep), direction)}
                                 />
                             ))}
                         </ul>
@@ -193,9 +207,11 @@ function PlaylistMediaEntryTrigger(props: PlaylistMediaEntryTriggerProps) {
     const added = episodes.filter(n => n.episode?.baseAnime?.id === entry.mediaId)?.length ?? 0
 
     return (
-        <div
+        <button
+            type="button"
             key={entry.mediaId}
-            className="col-span-1 aspect-[7/7] rounded-md border overflow-hidden relative transition cursor-pointer bg-[--background] md:opacity-60 md:hover:opacity-100"
+            className="col-span-1 aspect-[7/7] rounded-md border overflow-hidden relative transition cursor-pointer bg-[--background] text-left md:opacity-60 md:hover:opacity-100 md:focus-visible:opacity-100"
+            aria-label={`Select ${entry.media?.title?.userPreferred || entry.media?.title?.romaji || "anime"}`}
             onClick={() => setSelectedMedia(entry.mediaId)}
         >
             {entry.libraryData && <div data-media-entry-card-body-library-badge className="absolute z-[1] left-0 top-0">
@@ -227,7 +243,7 @@ function PlaylistMediaEntryTrigger(props: PlaylistMediaEntryTriggerProps) {
             />
 
 
-        </div>
+        </button>
     )
 }
 
@@ -259,10 +275,13 @@ export function PlaylistMediaEntry(props: PlaylistMediaEntryProps) {
     </Modal>
 }
 
-function SortableItem({ id, episode, setEpisodes }: {
+function SortableItem({ id, episode, setEpisodes, canMoveUp, canMoveDown, onMove }: {
     id: string,
     episode: Anime_PlaylistEpisode
     setEpisodes: React.Dispatch<React.SetStateAction<Anime_PlaylistEpisode[]>>
+    canMoveUp: boolean
+    canMoveDown: boolean
+    onMove: (direction: -1 | 1) => void
 }) {
     const {
         attributes,
@@ -328,14 +347,15 @@ function SortableItem({ id, episode, setEpisodes }: {
     return (
         <li ref={setNodeRef} style={style}>
             <div
-                className="px-2.5 py-2 bg-gray-900 hover:bg-gray-900/80 rounded-xl border flex gap-3 relative cursor-move"
-                {...attributes} {...listeners}
+                className={cn("px-2.5 py-2 bg-gray-900 hover:bg-gray-900/80 rounded-xl border flex gap-3 relative", !__isAndroidTV__ && "cursor-move")}
+                {...(__isAndroidTV__ ? {} : attributes)} {...(__isAndroidTV__ ? {} : listeners)}
             >
                 <IconButton
                     className="absolute top-2 right-2 rounded-full cursor-pointer"
                     icon={<BiTrash />}
                     intent="alert-subtle"
                     size="sm"
+                    aria-label={`Remove episode ${episode.episode?.episodeNumber} from playlist`}
                     onClick={(e) => {
                         setEpisodes((prev: Anime_PlaylistEpisode[]) => prev.filter(n => !playlist_isSameEpisode(n, episode)))
                     }}
@@ -356,7 +376,7 @@ function SortableItem({ id, episode, setEpisodes }: {
                         )}
                     />}
                 </div>
-                <div className="max-w-full space-y-1">
+                <div className="max-w-full space-y-1 pr-8">
                     <p className="text-sm text-[--muted] font-medium">{episode.episode?.baseAnime?.title?.userPreferred}</p>
                     <p className="">{episode.episode?.baseAnime?.format !== "MOVIE"
                         ? `Episode ${episode.episode!.episodeNumber}`
@@ -364,8 +384,10 @@ function SortableItem({ id, episode, setEpisodes }: {
 
                     {(!episode.episode?.localFile && !episode.isNakama) && <div className="flex gap-1 flex-wrap">
                         {streamOptions.map(option => {
-                            return <div
+                            return <button
+                                type="button"
                                 key={option.value}
+                                aria-pressed={option.value === episode.watchType}
                                 className={cn(
                                     "text-sm flex w-fit py-1 px-2 rounded-xl hover:bg-[--subtle] text-[--muted] hover:text-[--foreground] transition border border-transparent cursor-pointer",
                                     option.value === episode.watchType && "border-white/20 bg-[--subtle] text-white hover:text-white",
@@ -389,7 +411,7 @@ function SortableItem({ id, episode, setEpisodes }: {
                                 }}
                             >
                                 {option.label}
-                            </div>
+                            </button>
                         })}
                     </div>}
 
@@ -397,6 +419,22 @@ function SortableItem({ id, episode, setEpisodes }: {
                         <div className="text-sm text-[--muted] line-clamp-1 tracking-wide">
                             {episode.episode?.localFile?.name}
                         </div>
+                    </div>}
+                    {__isAndroidTV__ && <div className="flex gap-2 pt-1">
+                        <Button
+                            size="sm"
+                            intent="gray-outline"
+                            leftIcon={<BiUpArrowAlt />}
+                            disabled={!canMoveUp}
+                            onClick={() => onMove(-1)}
+                        >Move up</Button>
+                        <Button
+                            size="sm"
+                            intent="gray-outline"
+                            leftIcon={<BiDownArrowAlt />}
+                            disabled={!canMoveDown}
+                            onClick={() => onMove(1)}
+                        >Move down</Button>
                     </div>}
                 </div>
             </div>
@@ -506,10 +544,12 @@ function EntryEpisodeList(props: EntryEpisodeListProps) {
             {data?.length === 0 && <p className="text-center text-sm text-[--muted]">No episodes found</p>}
             {episodes?.map(ep => {
                 return (
-                    <div
+                    <button
+                        type="button"
                         key={playlist_getEpisodeKey(ep)}
+                        aria-pressed={!!selectedEpisodes.find(n => playlist_isSameEpisode(ep, n))}
                         className={cn(
-                            "grid grid-cols-[auto,1fr] px-2.5 py-2 bg-[--background] rounded-md border cursor-pointer overflow-hidden items-center gap-3 opacity-80 max-w-full",
+                            "grid grid-cols-[auto,1fr] px-2.5 py-2 bg-[--background] rounded-md border cursor-pointer overflow-hidden items-center gap-3 opacity-80 max-w-full w-full text-left",
                             selectedEpisodes.find(n => playlist_isSameEpisode(ep, n))
                                 ? "bg-gray-800 opacity-100 text-white ring-1 ring-[--zinc]"
                                 : "hover:bg-[--subtle]",
@@ -537,7 +577,7 @@ function EntryEpisodeList(props: EntryEpisodeListProps) {
                                 <p className="text-xs text-[--muted] tracking-wide italic max-w-full line-clamp-2">{ep.episode!.localFile?.name}</p>}
 
                         </div>
-                    </div>
+                    </button>
                 )
             })}
         </div>

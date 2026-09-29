@@ -55,7 +55,9 @@ export function UndownloadedEpisodeList({ downloadInfo, media, watchedProgress, 
                             progressNumber={episode.progressNumber}
                             description={episode.episodeMetadata?.summary || episode.episodeMetadata?.overview}
                             action={<>
-                                {hasTorrentProvider && <div
+                                {hasTorrentProvider && <button
+                                    type="button"
+                                    aria-label={`Download episode ${episode.episodeNumber}`}
                                     data-undownloaded-episode-list-action-download-button
                                     onClick={() => {
                                         setTorrentSearchEpisode(episode.episodeNumber)
@@ -66,7 +68,7 @@ export function UndownloadedEpisodeList({ downloadInfo, media, watchedProgress, 
                                     className="inline-block text-orange-200 text-2xl animate-pulse cursor-pointer py-2"
                                 >
                                     <BiDownload />
-                                </div>}
+                                </button>}
 
                                 <EpisodeItemInfoModalButton episode={episode} />
 

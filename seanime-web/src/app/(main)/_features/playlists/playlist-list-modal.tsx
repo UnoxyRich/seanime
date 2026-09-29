@@ -185,14 +185,16 @@ function PlaylistLists({ libraryCollection }: { libraryCollection: Anime_Library
                                     {/*    trigger={*/}
                                     {/*        <FaCirclePlay className="block text-5xl cursor-pointer opacity-50 hover:opacity-100 transition-opacity" />}*/}
                                     {/*/>*/}
-                                    {!selectedMedia && <div
+                                    {!selectedMedia && <button
+                                        type="button"
+                                        aria-label={`Play playlist ${p.name}`}
                                         onClick={() => {
                                             startPlaylist(p)
                                             setModalOpen(false)
                                         }}
                                     >
                                         <FaCirclePlay className="block text-5xl cursor-pointer opacity-95 hover:opacity-70 hover:scale-[1.1] transition-all" />
-                                    </div>}
+                                    </button>}
                                 </div>
                                 <div className="absolute top-2 right-2 z-[6] flex items-center justify-center">
                                     <PlaylistEditorModal

@@ -39,7 +39,9 @@ function AutoDownloaderQueueItem(props: AutoDownloaderQueueItemProps) {
     return (
         <div className="rounded-[--radius] p-3 bg-gray-900">
             <div className="flex items-center gap-4">
-                <div
+                <button
+                    type="button"
+                    aria-label={`Preview ${media?.title?.userPreferred || "anime"}`}
                     onClick={() => setPreviewModalMediaId(item.mediaId, "anime")}
                     className="cursor-pointer size-10 rounded-full bg-gray-800 flex items-center justify-center relative overflow-hidden flex-none"
                 >
@@ -50,12 +52,13 @@ function AutoDownloaderQueueItem(props: AutoDownloaderQueueItemProps) {
                         fill
                         className="object-cover object-center"
                     />
-                </div>
+                </button>
                 <div>
-                    <h3
-                        className="text-sm font-medium tracking-wide cursor-pointer"
-                        onClick={() => openTab(item.link)}
-                    >{item.torrentName}</h3>
+                    <h3 className="text-sm font-medium tracking-wide">
+                        <button type="button" className="cursor-pointer text-left" onClick={() => openTab(item.link)}>
+                            {item.torrentName}
+                        </button>
+                    </h3>
                     <p className="text-md text-gray-400 flex gap-2 items-center">
                         {item.downloaded && <span className="text-green-200">File downloaded</span>}
                         {!item.downloaded && !item.isDelayed && <span className="text-blue-300 italic">Manual action required</span>}

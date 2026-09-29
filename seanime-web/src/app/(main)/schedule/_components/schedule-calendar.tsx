@@ -569,7 +569,9 @@ function CalendarDayBackground({ events, isToday, hoveredEventId, onClick }: Cal
                     data-schedule-calendar-day-background-image
                 />
             </div>
-            <div
+            <button
+                type="button"
+                aria-label="Open schedule day"
                 className={cn(
                     "absolute cursor-pointer left-0 bottom-0 z-[1] w-full h-full bg-gradient-to-t from-gray-950/100 via-gray-950/80 via-40% to-transparent transition-all duration-300",
                     isToday && "from-gray-950/90 via-gray-950/80 via-40%",

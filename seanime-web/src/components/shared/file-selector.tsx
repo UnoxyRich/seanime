@@ -217,7 +217,9 @@ const TreeNode: React.FC<TreeProps & { level: number }> = ({
                     isSelected && "bg-gray-800",
                 )}
             >
-                <div
+                <button
+                    type="button"
+                    disabled={!isSelectable} aria-pressed={isSelected}
                     className={cn(
                         "flex items-center gap-2 py-1 px-2 w-full",
                         isSelectable && "cursor-pointer",
@@ -236,7 +238,7 @@ const TreeNode: React.FC<TreeProps & { level: number }> = ({
                             isSelectable ? "cursor-pointer" : "cursor-default",
                         )}
                     >{data.name}</span>
-                </div>
+                </button>
 
                 <div className="flex flex-1"></div>
 

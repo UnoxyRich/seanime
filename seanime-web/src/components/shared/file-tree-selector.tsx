@@ -1,3 +1,4 @@
+import { keyboardClickable } from "@/lib/helpers/keyboard-clickable"
 import { cn } from "@/components/ui/core/styling"
 import { TextInput } from "@/components/ui/text-input"
 import { useDebounce } from "@/hooks/use-debounce"
@@ -129,6 +130,9 @@ const FileTreeNodeComponent: React.FC<FileTreeNodeProps> = ({
     return (
         <div>
             <div
+                {...keyboardClickable()}
+                aria-pressed={node.type === "file" ? !!isSelected : undefined}
+                aria-expanded={node.type === "directory" ? isOpen : undefined}
                 className={cn(
                     "flex items-center py-1.5 px-2 border border-transparent rounded-[--radius]",
                     node.type === "file" && "cursor-pointer",
@@ -368,6 +372,8 @@ const FileTreeMultiNodeComponent: React.FC<FileTreeMultiNodeProps> = ({
     return (
         <div>
             <div
+                {...keyboardClickable()}
+                aria-pressed={node.type === "file" ? isFileSelected : getDirectorySelectionState.isPartial ? "mixed" : getDirectorySelectionState.isSelected}
                 className={cn(
                     "flex items-center py-1.5 px-2 border rounded-[--radius] cursor-pointer transition-colors",
                     // File selection styles
@@ -392,7 +398,10 @@ const FileTreeMultiNodeComponent: React.FC<FileTreeMultiNodeProps> = ({
             >
                 <div className="flex items-center">
                     {node.type === "directory" && (
-                        <span
+                        <button
+                            type="button"
+                            aria-label={`${isOpen ? "Collapse" : "Expand"} ${node.name}`}
+                            aria-expanded={isOpen}
                             className="mr-1 cursor-pointer" onClick={(e) => {
                             e.stopPropagation()
                             toggleOpen(e)
@@ -403,7 +412,7 @@ const FileTreeMultiNodeComponent: React.FC<FileTreeMultiNodeProps> = ({
                             ) : (
                                 <FiChevronRight className="size-5" />
                             )}
-                        </span>
+                        </button>
                     )}
                     {node.type === "directory" ? (
                         <FcFolder

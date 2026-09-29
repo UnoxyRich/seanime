@@ -156,7 +156,9 @@ export function PluginTray(props: TrayPluginProps) {
 
     const TrayIcon = () => {
         return (
-            <div
+            <button
+                type="button"
+                aria-label={tooltipText}
                 data-plugin-tray-icon
                 className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-gray-800 cursor-pointer transition-all relative select-none"
                 onClick={handleClick}
@@ -181,7 +183,7 @@ export function PluginTray(props: TrayPluginProps) {
                 >
                     {badgeNumber}
                 </Badge>}
-            </div>
+            </button>
         )
     }
 

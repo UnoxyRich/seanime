@@ -1,3 +1,4 @@
+import { keyboardClickable } from "@/lib/helpers/keyboard-clickable"
 import { RenderPluginComponents } from "@/app/(main)/_features/plugin/components/registry"
 import { useWebsocketSender } from "@/app/(main)/_hooks/handle-websockets"
 import { Alert } from "@/components/ui/alert"
@@ -645,6 +646,7 @@ export function PluginDiv({ items = [], style, onClick, className }: DivProps) {
 
     return (
         <div
+            {...keyboardClickable(!!onClick)}
             className={cn("relative", className)}
             style={style}
             onClick={handleClick}

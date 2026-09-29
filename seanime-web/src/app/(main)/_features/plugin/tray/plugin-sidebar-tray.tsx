@@ -152,7 +152,8 @@ const ExtensionList = ({
                                 key={trayIcon.extensionId}
                                 className="flex items-center gap-2 justify-between bg-gray-900 hover:bg-[--subtle] transition-colors rounded-md px-2 py-1 max-w-full"
                             >
-                                <div
+                                <button
+                                    type="button"
                                     className="flex items-center gap-2 cursor-pointer min-w-0"
                                     onClick={() => {
                                         setUnpinnedTrayIconClicked(trayIcon)
@@ -183,7 +184,7 @@ const ExtensionList = ({
                                     >
                                         {trayIcon.badgeNumber}
                                     </Badge>}
-                                </div>
+                                </button>
                                 <div className="flex items-center gap-1">
                                     {/* <IconButton
                                      intent="gray-basic"

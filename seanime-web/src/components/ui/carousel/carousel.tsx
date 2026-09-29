@@ -1,3 +1,4 @@
+import { keyboardClickable } from "@/lib/helpers/keyboard-clickable"
 import { useThemeSettings } from "@/lib/theme/theme-hooks"
 import { cva } from "class-variance-authority"
 import { EmblaCarouselType } from "embla-carousel"
@@ -507,6 +508,7 @@ const DotButton = (props: React.ComponentPropsWithoutRef<"div">) => {
 
     return (
         <div
+            {...keyboardClickable()}
             className={cn(
                 "rounded-full px-[2.5px] size-5 lg:w-5 lg:h-4 group/dot-button flex items-center justify-center cursor-pointer",
             )}

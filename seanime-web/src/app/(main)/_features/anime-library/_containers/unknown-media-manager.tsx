@@ -115,12 +115,13 @@ export function UnknownMediaManager(props: UnknownMediaManagerProps) {
                                 <div className="flex items-center w-full justify-between">
                                     <h4 className="font-semibold flex gap-2 items-center">
                                         <span>Matched to{" "}</span>
-                                        <p
+                                        <button
+                                            type="button"
                                             className="underline cursor-pointer text-brand-200 flex gap-1.5 items-center"
                                             onClick={() => { setPreviewModalMediaId(group.mediaId, "anime") }}
                                         >
                                             {group.mediaId} <LuScanEye />
-                                        </p>
+                                        </button>
                                     </h4>
                                     <div className="flex gap-2 items-center">
                                         <Button

@@ -202,10 +202,11 @@ function LogModal(props: { filename: string }) {
 
     return (
         <>
-            <p
+            <button
+                type="button"
                 onClick={() => setOpen(true)}
-                className="cursor-pointer hover:text-[--muted]"
-            >{filename}</p>
+                className="cursor-pointer hover:text-[--muted] text-left"
+            >{filename}</button>
             <Modal
                 open={open}
                 title={filename}

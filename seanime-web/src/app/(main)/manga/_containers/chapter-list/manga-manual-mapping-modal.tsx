@@ -193,7 +193,9 @@ function Content({ entry }: { entry: Manga_Entry }) {
                         <>
                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
                                 {searchResults?.map(item => (
-                                    <div
+                                    <button
+                                        type="button"
+                                        disabled={!selectedProvider || previewLoading} aria-label={`Match ${item.title}`}
                                         key={item.id}
                                         className={cn(
                                             "group/sr-item col-span-1 aspect-[6/7] rounded-[--radius-md] relative bg-[--background] cursor-pointer transition-opacity",
@@ -250,7 +252,7 @@ function Content({ entry }: { entry: Manga_Entry }) {
                                         {/*        "z-[5] absolute top-0 w-full h-[80%] bg-gradient-to-b from-[--background] to-transparent transition-opacity",*/}
                                         {/*    )}*/}
                                         {/*/>*/}
-                                    </div>
+                                    </button>
                                 ))}
                             </div>
                         </>

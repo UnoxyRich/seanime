@@ -316,7 +316,8 @@ export function VideoCoreSettingsMenu() {
     return (
         <>
             {playbackRate !== 1 && (
-                <p
+                <button
+                    type="button"
                     className="text-sm text-[--muted] cursor-pointer" onClick={() => {
                     setMenuOpen("settings")
                     React.startTransition(() => {
@@ -325,7 +326,7 @@ export function VideoCoreSettingsMenu() {
                 }}
                 >
                     {`${(playbackRate).toFixed(2)}x`}
-                </p>
+                </button>
             )}
             <VideoCoreMenu
                 name="settings"
@@ -614,12 +615,13 @@ export function VideoCoreSettingsMenu() {
                         <div className="">
                             <p className="text-sm mb-2">Custom Font</p>
                             <p className="text-sm text-[--muted] mb-2">
-                                Place the font file in the <span
-                                className="text-indigo-300 cursor-pointer underline underline-offset-2"
-                                onClick={() => {
+                                Place the font file in the <button
+                                    type="button"
+                                    className="text-indigo-300 cursor-pointer underline underline-offset-2"
+                                    onClick={() => {
                                     openInExplorer({ path: upath.normalize(`${serverStatus?.dataDir}/assets`) })
                                 }}
-                            >Seanime assets directory</span>. The file name must match
+                            >Seanime assets directory</button>. The file name must match
                                 the font name exactly.
                             </p>
                             <div className="space-y-2">

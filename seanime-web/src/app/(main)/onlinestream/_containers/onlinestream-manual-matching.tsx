@@ -162,17 +162,18 @@ function Content({ entry, provider }: { entry: Anime_Entry, provider: string }) 
                                             "flex justify-between items-center",
                                         )}
                                     >
-                                        <p
+                                        <button
+                                            type="button"
                                             onClick={() => {
                                                 setAnimeId(item.id)
                                                 React.startTransition(() => {
                                                     confirmMatch.open()
                                                 })
                                             }}
-                                            className="cursor-pointer hover:underline"
+                                            className="cursor-pointer hover:underline text-left"
                                         >
                                             {item.title}
-                                        </p>
+                                        </button>
                                         <div>
                                             <SeaLink href={item.url} target="_blank">
                                                 <Tooltip

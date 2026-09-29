@@ -211,7 +211,8 @@ export function UnmatchedFileManager(props: UnmatchedFileManagerProps) {
                     >Next</Button>
                 </div>
 
-                <div
+                <button
+                    type="button"
                     className="bg-gray-900 border text-sm tracking-wide p-2 px-4 rounded-[--radius-md] line-clamp-1 flex gap-2 items-center cursor-pointer transition hover:bg-opacity-80"
                     onClick={() => openInExplorer({
                         path: currentGroup.dir,
@@ -219,7 +220,7 @@ export function UnmatchedFileManager(props: UnmatchedFileManagerProps) {
                 >
                     <FcFolder className="text-2xl" />
                     {currentGroup.dir}
-                </div>
+                </button>
 
                 <div className="flex items-center flex-wrap gap-2">
                     <div className="flex gap-2 items-center w-full">

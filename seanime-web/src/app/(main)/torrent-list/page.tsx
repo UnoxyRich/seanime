@@ -245,9 +245,10 @@ const TorrentItem = React.memo(function TorrentItem({ torrent, onTorrentAction, 
         )}
         >
             <div data-torrent-item-title-container className="w-full">
-                <div
+                <button
+                    type="button"
                     className={cn(
-                        "text-sm tracking-wide line-clamp-1 cursor-pointer hover:underline underline-offset-2 break-all",
+                        "text-sm tracking-wide line-clamp-1 cursor-pointer hover:underline underline-offset-2 break-all text-left w-full",
                         "group-hover/torrent-item:text-white",
                         { "opacity-50": torrent.status === "paused" })}
                     onClick={() => {
@@ -257,7 +258,7 @@ const TorrentItem = React.memo(function TorrentItem({ torrent, onTorrentAction, 
                             dir: !upath.extname(torrent.contentPath) ? torrent.contentPath : upath.dirname(torrent.contentPath),
                         })
                     }}
-                >{torrent.name}</div>
+                >{torrent.name}</button>
                 <div data-torrent-item-info className="text-[--muted]">
                     {torrent.error ? (
                         <span className="text-red-400 font-medium" title={torrent.error}>{torrent.error}</span>

@@ -1,3 +1,4 @@
+import { keyboardClickable } from "@/lib/helpers/keyboard-clickable"
 import { cn } from "@/components/ui/core/styling"
 import { __isDesktop__ } from "@/types/constants"
 import React from "react"
@@ -80,6 +81,7 @@ export function MediaCoreTopPlaybackInfoView(props: MediaCoreTopPlaybackInfoView
         >
             {animeTitle && (
                 <p
+                    {...keyboardClickable(!!onAnimeTitleClick)}
                     data-vc-element="top-playback-info-title"
                     className={cn(
                         "text-white/50 font-medium text-sm max-w-[400px] line-clamp-1",

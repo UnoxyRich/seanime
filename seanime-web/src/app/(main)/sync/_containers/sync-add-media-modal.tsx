@@ -367,7 +367,9 @@ function MediaItem(props: {
 
     return (
         <>
-            <div
+            <button
+                type="button"
+                disabled={isPending} aria-pressed={isSelected || isSaved} aria-label={`Offline data for ${entry.media?.title?.userPreferred || entry.media?.title?.romaji || "media"}`}
                 key={entry.mediaId}
                 className={cn(
                     "col-span-1 aspect-[6/7] rounded-[--radius-md] overflow-hidden relative bg-[var(--background)] cursor-pointer transition-opacity select-none",
@@ -421,7 +423,7 @@ function MediaItem(props: {
                         isSelected ? "opacity-0" : "opacity-100 hover:opacity-80",
                     )}
                 />
-            </div>
+            </button>
 
             <ConfirmationDialog {...confirmUntrack} />
         </>

@@ -1,3 +1,4 @@
+import { keyboardClickable } from "@/lib/helpers/keyboard-clickable"
 import { AL_BaseAnime, Anime_Episode, Habari_Metadata, HibikeTorrent_AnimeTorrent } from "@/api/generated/types"
 import {
     TorrentDebridInstantAvailabilityBadge,
@@ -266,6 +267,7 @@ const TorrentPreviewItem = memo((props: TorrentPreviewItemProps) => {
             {/*></div>*/}
 
             <div
+                {...keyboardClickable(!!onClick)}
                 data-torrent-preview-item-content
                 className={cn(
                     "flex gap-4 relative z-[2]",

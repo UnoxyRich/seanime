@@ -14,6 +14,7 @@ import android.webkit.WebView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.lifecycle.Lifecycle
 import app.seanime.tv.gomobile.mobile.Mobile
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -31,6 +32,90 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AndroidTvStartupTest {
+    @Test
+    fun remoteBackDismissesWebUiThenReturnsToTheFirstHistoryEntryAndExits() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        try {
+            assertTrue("Seanime server did not start", waitForServerStatus("ready", 60_000))
+            waitUntil("embedded UI for Back navigation", 30_000) {
+                evaluateJavascript(scenario,
+                    "document.readyState === 'complete' && window.AndroidTV?.serverStatus() === 'ready'") == "true"
+            }
+            scenario.onActivity { findWebView(it.window.decorView)?.clearHistory() }
+            assertEquals("true", evaluateJavascript(scenario,
+                """(() => {
+                    document.body.innerHTML = '<main id="tv-back-fixture"></main>';
+                    history.replaceState({}, '', '/#tv-back-root');
+                    history.pushState({}, '', '/#tv-back-first');
+                    history.pushState({}, '', '/#tv-back-second');
+                    const menu = document.createElement('div');
+                    menu.setAttribute('role', 'menu');
+                    menu.style.cssText = 'position:fixed;left:64px;top:64px;width:200px;height:80px';
+                    const item = document.createElement('button');
+                    item.textContent = 'Dismiss menu';
+                    item.addEventListener('keydown', event => {
+                        if (event.key === 'Escape') {
+                            event.preventDefault();
+                            window.__tvBackMenuDismissed = true;
+                            menu.remove();
+                        }
+                    });
+                    menu.appendChild(item);
+                    document.body.appendChild(menu);
+                    item.focus();
+                    return document.activeElement === item;
+                })()""".trimIndent()))
+
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            waitUntil("focused menu to consume Back", 5_000) {
+                evaluateJavascript(scenario,
+                    "window.__tvBackMenuDismissed === true && location.hash === '#tv-back-second'") == "true"
+            }
+            assertEquals("true", evaluateJavascript(scenario,
+                """(() => {
+                    window.__tvBackReader = event => {
+                        if (event.key === 'Escape') {
+                            event.preventDefault();
+                            window.__tvBackReaderDismissed = true;
+                            document.removeEventListener('keydown', window.__tvBackReader, true);
+                        }
+                    };
+                    document.addEventListener('keydown', window.__tvBackReader, true);
+                    return true;
+                })()""".trimIndent()))
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            waitUntil("reader Escape handler to consume Back", 5_000) {
+                evaluateJavascript(scenario,
+                    "window.__tvBackReaderDismissed === true && location.hash === '#tv-back-second'") == "true"
+            }
+            assertEquals("true", evaluateJavascript(scenario,
+                """(() => {
+                    const closedDialog = document.createElement('div');
+                    closedDialog.setAttribute('role', 'dialog');
+                    closedDialog.hidden = true;
+                    document.body.appendChild(closedDialog);
+                    return true;
+                })()""".trimIndent()))
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            waitUntil("Back to the previous same-document route", 5_000) {
+                evaluateJavascript(scenario, "location.hash === '#tv-back-first'") == "true"
+            }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            waitUntil("Back to the initial route", 5_000) {
+                evaluateJavascript(scenario,
+                    "location.hash === '#tv-back-root' && history.length > 1") == "true"
+            }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            waitUntil("Back to exit at the oldest history entry", 10_000) {
+                scenario.state == Lifecycle.State.DESTROYED
+            }
+        } finally {
+            scenario.close()
+        }
+        assertTrue("Seanime server did not stop after Back exit", waitForServerStatus("stopped", 20_000))
+    }
+
     @Test
     fun oauthWebViewResizesForTheTvKeyboard() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

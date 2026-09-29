@@ -149,7 +149,8 @@ export const StaticTabs = React.forwardRef<HTMLElement, StaticTabsProps>((props,
                     )}
                 </SeaLink>
             ) : (
-                <div
+                <button
+                    type="button"
                     key={tab.name}
                     className={cn(
                         StaticTabsAnatomy.trigger(),
@@ -198,7 +199,7 @@ export const StaticTabs = React.forwardRef<HTMLElement, StaticTabsProps>((props,
                             {tab.addon}
                         </>
                     )}
-                </div>
+                </button>
             ))}
         </nav>
     )

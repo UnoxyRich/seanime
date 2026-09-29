@@ -90,14 +90,16 @@ export const Slider: React.FC<SliderProps> = (props) => {
                 props.containerClassName,
             )}
         >
-            <div
+            <button
+                type="button"
+                aria-label="Scroll left"
                 onClick={slideLeft}
                 className={`flex items-center cursor-pointer hover:text-action absolute left-0 bg-gradient-to-r from-[--background] z-40 h-full w-16 hover:opacity-100 ${
                     !isScrolledToLeft ? "lg:visible" : "invisible"
                 }`}
             >
                 <MdChevronLeft className="w-7 h-7 stroke-2 mx-auto" />
-            </div>
+            </button>
             <div
                 onScroll={handleScroll}
                 className="flex max-w-full w-full space-x-3 overflow-x-scroll scrollbar-hide scroll"
@@ -106,7 +108,9 @@ export const Slider: React.FC<SliderProps> = (props) => {
             >
                 {children}
             </div>
-            <div
+            <button
+                type="button"
+                aria-label="Scroll right"
                 onClick={slideRight}
                 className={cn(
                     "flex items-center invisible cursor-pointer hover:text-action absolute right-0 bg-gradient-to-l from-[--background] z-40 h-full w-16 hover:opacity-100",
@@ -115,7 +119,7 @@ export const Slider: React.FC<SliderProps> = (props) => {
                     })}
             >
                 <MdChevronRight className="w-7 h-7 stroke-2 mx-auto" />
-            </div>
+            </button>
         </div>
     )
 }

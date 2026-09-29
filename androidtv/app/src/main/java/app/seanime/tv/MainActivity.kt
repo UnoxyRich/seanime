@@ -850,13 +850,26 @@ class MainActivity : Activity() {
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             webView.evaluateJavascript(
-                "(() => { const dialog = document.querySelector('[role=dialog],[role=alertdialog],[data-radix-dialog-content]'); " +
-                    "if (dialog) { document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true})); return 'dialog'; } " +
-                    "if (window.history.length > 1) { window.history.back(); return 'history'; } return 'exit'; })()",
+                """(() => {
+                    const visibleOverlay = Array.from(document.querySelectorAll(
+                        '[role=dialog],[role=alertdialog],[data-radix-dialog-content],[role=menu],[role=listbox]'
+                    )).some(element => element.getClientRects().length > 0 &&
+                        !element.closest('[hidden],[inert],[aria-hidden=true],[data-state=closed]') &&
+                        getComputedStyle(element).visibility !== 'hidden');
+                    const escape = new KeyboardEvent('keydown', {
+                        key:'Escape', code:'Escape', bubbles:true, cancelable:true
+                    });
+                    (document.activeElement || document).dispatchEvent(escape);
+                    return visibleOverlay || escape.defaultPrevented ? 'consumed' : 'navigate';
+                })()""".trimIndent(),
             ) { result ->
-                if (result?.contains("exit") == true && webView.canGoBack()) {
+                if (isFinishing || isDestroyed || result == "\"consumed\"") return@evaluateJavascript
+                // History.length also counts forward entries after returning to
+                // the first page. WebView tracks the current position, including
+                // TanStack's same-document pushState navigation.
+                if (webView.canGoBack()) {
                     webView.goBack()
-                } else if (result?.contains("exit") == true) {
+                } else {
                     finish()
                 }
             }

@@ -191,14 +191,15 @@ export const DirectorySelector = React.memo(React.forwardRef<HTMLInputElement, D
                     >
                         <div className="flex-none">Suggestions:</div>
                         {data.suggestions.map(folder => (
-                            <div
+                            <button
+                                type="button"
                                 key={folder.fullPath}
                                 className="py-1 flex items-center gap-2 text-sm px-3 rounded-[--radius-md] border flex-none cursor-pointer bg-gray-900 hover:bg-gray-800"
                                 onClick={() => setInput(folder.fullPath)}
                             >
                                 <FiFolder className="w-4 h-4 text-[--brand]" />
                                 <span className="break-normal">{folder.folderName}</span>
-                            </div>
+                            </button>
                         ))}
                     </div>}
 
@@ -208,14 +209,15 @@ export const DirectorySelector = React.memo(React.forwardRef<HTMLInputElement, D
                         className="h-60 rounded-[--radius-md] border !mt-0"
                     >
                         {data.content.map(folder => (
-                            <div
+                            <button
+                                type="button"
                                 key={folder.fullPath}
-                                className="flex items-center gap-2 py-2 px-3 cursor-pointer hover:bg-gray-800"
+                                className="flex items-center gap-2 py-2 px-3 cursor-pointer hover:bg-gray-800 w-full text-left"
                                 onClick={() => setInput(folder.fullPath)}
                             >
                                 <FiFolder className="w-4 h-4 text-[--brand]" />
                                 <span className="break-normal">{folder.folderName}</span>
-                            </div>
+                            </button>
                         ))}
                     </ScrollArea>}
             </Modal>

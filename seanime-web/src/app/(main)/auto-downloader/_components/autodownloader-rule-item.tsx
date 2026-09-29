@@ -1,3 +1,4 @@
+import { keyboardClickable } from "@/lib/helpers/keyboard-clickable"
 import {
     AL_BaseAnime,
     Anime_AutoDownloaderProfile,
@@ -44,9 +45,15 @@ export function AutoDownloaderRuleItem(props: AutoDownloaderRuleItemProps) {
     return (
         <>
             <div className="rounded-[--radius] bg-gray-900 hover:bg-gray-800/50 transition-colors">
-                <div className="flex justify-between p-3 gap-2 items-center cursor-pointer" onClick={() => modal.on()}>
+                <div
+                    {...keyboardClickable()}
+                    className="flex justify-between p-3 gap-2 items-center cursor-pointer"
+                    onClick={() => modal.on()}
+                >
 
-                    {media && <div
+                    {media && <button
+                        type="button"
+                        aria-label={`Preview ${media.title?.userPreferred || "anime"}`}
                         onClick={e => {
                             e.preventDefault()
                             e.stopPropagation()
@@ -61,7 +68,7 @@ export function AutoDownloaderRuleItem(props: AutoDownloaderRuleItemProps) {
                             fill
                             className="object-cover object-center"
                         />
-                    </div>}
+                    </button>}
                     <div className="space-y-1 w-full">
                         <p
                             className={cn(

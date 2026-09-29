@@ -1,3 +1,4 @@
+import { keyboardClickable } from "@/lib/helpers/keyboard-clickable"
 import { useGetLibraryExplorerFileTree, useRefreshLibraryExplorerFileTree } from "@/api/generated/library_explorer.hooks"
 import { AL_BaseAnime, Anime_LocalFile, Anime_LocalFileType, LibraryExplorer_FileTreeNodeJSON } from "@/api/generated/types"
 import { useOpenInExplorer } from "@/api/hooks/explorer.hooks"
@@ -1122,6 +1123,7 @@ const VirtualizedTreeNode = memo(({
             >
                 <ContextMenuTrigger>
                     <div
+                        {...keyboardClickable()}
                         className={cn(
                             "flex items-center px-2 h-10 rounded-md cursor-pointer select-none group/tree-node transition-all duration-150 border border-transparent",
                             !isSelected && "hover:bg-white/[0.03]",

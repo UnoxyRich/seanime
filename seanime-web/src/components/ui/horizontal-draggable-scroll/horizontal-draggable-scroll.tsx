@@ -159,7 +159,9 @@ export const HorizontalDraggableScroll = React.forwardRef<HTMLDivElement, Horizo
 
     return (
         <div ref={forwadedRef} className={cn(HorizontalDraggableScrollAnatomy.root(), className)}>
-            <div
+            <button
+                type="button"
+                aria-label="Scroll left"
                 onClick={slideLeft}
                 className={cn(HorizontalDraggableScrollAnatomy.chevronOverlay({ side: "left" }), chevronOverlayClass)}
                 data-state={isScrolledToLeft ? "hidden" : "visible"}
@@ -176,7 +178,7 @@ export const HorizontalDraggableScroll = React.forwardRef<HTMLDivElement, Horizo
                 >
                     <path d="m15 18-6-6 6-6" />
                 </svg>
-            </div>
+            </button>
             <div
                 onScroll={handleScroll}
                 className={cn(HorizontalDraggableScrollAnatomy.container(), containerClass)}
@@ -185,7 +187,9 @@ export const HorizontalDraggableScroll = React.forwardRef<HTMLDivElement, Horizo
             >
                 {children}
             </div>
-            <div
+            <button
+                type="button"
+                aria-label="Scroll right"
                 onClick={slideRight}
                 className={cn(HorizontalDraggableScrollAnatomy.chevronOverlay({ side: "right" }), chevronOverlayClass)}
                 data-state={!isScrolledToRight && showChevronRight ? "visible" : "hidden"}
@@ -202,7 +206,7 @@ export const HorizontalDraggableScroll = React.forwardRef<HTMLDivElement, Horizo
                 >
                     <path d="m9 18 6-6-6-6" />
                 </svg>
-            </div>
+            </button>
         </div>
     )
 })

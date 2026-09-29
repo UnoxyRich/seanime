@@ -119,7 +119,9 @@ export function DebridStreamOverlay() {
 
             {minimized && (
                 <div className="fixed z-[100] bottom-8 w-full h-fit flex justify-center">
-                    <div
+                    <button
+                        type="button"
+                        aria-label="Show Debrid stream status"
                         className="shadow-2xl p-4 bg-gray-900 border text-white rounded-3xl cursor-pointer hover:border-gray-600"
                         onClick={() => setMinimized(false)}
                     >
@@ -135,7 +137,7 @@ export function DebridStreamOverlay() {
                             </div>
                             <Spinner className="size-5" />
                         </div>
-                    </div>
+                    </button>
                 </div>
             )}
 

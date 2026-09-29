@@ -1,4 +1,5 @@
 import { DebridClient_StreamState, StreamAutoSelectStatusPayload, Torrentstream_TorrentStatus } from "@/api/generated/types"
+import { keyboardClickable } from "@/lib/helpers/keyboard-clickable"
 import { useDebridCancelStream } from "@/api/hooks/debrid.hooks"
 import { useTorrentstreamStopStream } from "@/api/hooks/torrentstream.hooks"
 import { mc_currentTime, mpvCore_stateAtom } from "@/app/(main)/_features/mpv-core/mpv-core.atoms"
@@ -422,6 +423,7 @@ export function PlaybackPlayPill({ isNativePlayerComponent, show }: {
                     {minimized ? (
                         <motion.div
                             key="minimized"
+                            {...keyboardClickable()}
                             layout="position"
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}

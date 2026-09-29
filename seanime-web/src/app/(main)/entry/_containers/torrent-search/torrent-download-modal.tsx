@@ -222,7 +222,8 @@ export function TorrentDownloadModal({ onToggleTorrent, media, entry }: {
                                 key={torrent.name}
                                 data-torrent-confirmation-modal-torrent-item
                             >
-                                <div
+                                <button
+                                    type="button"
                                     data-torrent-confirmation-modal-torrent-item-content
                                     className="flex flex-none items-center gap-2 w-[90%] cursor-pointer"
                                     onClick={() => openTab(torrent.link)}
@@ -234,7 +235,7 @@ export function TorrentDownloadModal({ onToggleTorrent, media, entry }: {
                                     <p className="line-clamp-1" data-torrent-confirmation-modal-torrent-item-name>
                                         {torrent.name}
                                     </p>
-                                </div>
+                                </button>
                                 <IconButton
                                     icon={<BiX />}
                                     className="absolute right-2 top-2 rounded-full"

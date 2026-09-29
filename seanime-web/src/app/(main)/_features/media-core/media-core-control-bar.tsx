@@ -569,7 +569,9 @@ export function MediaCoreTimestamp(props: MediaCoreTimestampProps) {
         : currentTime
 
     return (
-        <p
+        <button
+            type="button"
+            aria-label="Toggle elapsed or remaining time"
             data-vc-element="timestamp"
             data-vc-timestamp-type={timestampMode}
             className={cn(
@@ -580,7 +582,7 @@ export function MediaCoreTimestamp(props: MediaCoreTimestampProps) {
         >
             {timestampMode === "remaining" ? "-" : ""}
             {formatTime(Math.max(0, Math.min(duration, timeToShow)))} / {formatTime(duration)}
-        </p>
+        </button>
     )
 }
 

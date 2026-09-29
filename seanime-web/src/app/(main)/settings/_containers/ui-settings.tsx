@@ -667,7 +667,9 @@ export function UISettings() {
                                 {f.watch("enableColorSettings") && (
                                     <div className="flex flex-wrap gap-3 w-full">
                                         {THEME_COLOR_BANK.map((opt) => (
-                                            <div
+                                            <button
+                                                type="button"
+                                                aria-label={`Apply ${opt.name} colors`}
                                                 key={opt.name}
                                                 className={cn(
                                                     "flex gap-3 items-center w-fit rounded-full border p-1 cursor-pointer",
@@ -708,7 +710,7 @@ export function UISettings() {
                                                         style={{ backgroundColor: opt.accentColor }}
                                                     />
                                                 </div>
-                                            </div>
+                                            </button>
                                         ))}
                                     </div>
                                 )}

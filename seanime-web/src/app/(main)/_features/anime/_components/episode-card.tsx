@@ -1,3 +1,4 @@
+import { keyboardClickable } from "@/lib/helpers/keyboard-clickable"
 import { Anime_Episode } from "@/api/generated/types"
 import { EpisodeCardImage } from "@/app/(main)/_features/anime/_components/episode-card-image"
 import { SeaContextMenu } from "@/app/(main)/_features/context-menu/sea-context-menu"
@@ -207,6 +208,7 @@ export function EpisodeCard(props: EpisodeCardProps) {
         >
             <ContextMenuTrigger>
                 <div
+                    {...keyboardClickable(!!onClick)}
                     ref={mRef}
                     className={cn(
                         "rounded-xl space-y-2 flex-none group/episode-card cursor-pointer",
