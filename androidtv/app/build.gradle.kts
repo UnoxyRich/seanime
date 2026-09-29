@@ -209,8 +209,8 @@ val initGoMobile by tasks.registering(Exec::class) {
 
 val bindGoMobile by tasks.registering(Exec::class) {
     dependsOn(embedAndroidWeb, initGoMobile)
-    inputs.dir(repoRoot.resolve("mobile"))
-    inputs.dir(repoRoot.resolve("internal"))
+    inputs.files(fileTree(repoRoot.resolve("mobile")) { exclude("**/*_test.go") })
+    inputs.files(fileTree(repoRoot.resolve("internal")) { exclude("**/*_test.go") })
     inputs.file(repoRoot.resolve("go.mod"))
     inputs.file(repoRoot.resolve("go.sum"))
     inputs.property("versionName", androidVersionName)
