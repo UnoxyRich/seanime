@@ -219,6 +219,12 @@ func SetAppInForeground(foreground bool) {
 	if app.MangaDownloader != nil {
 		app.MangaDownloader.ResumeChapterDownloadQueueFromBackground()
 	}
+	if app.DebridClientRepository != nil {
+		app.DebridClientRepository.SetDownloadsSuspended(false)
+	}
+	if app.MediastreamRepository != nil {
+		app.MediastreamRepository.SuspendAndroidTVSourceTranscodes(true)
+	}
 	resumePausedTorrents(instance, app)
 	jobsCtx, cancelJobs := context.WithCancel(context.Background())
 	serverLifecycle.Lock()
@@ -241,6 +247,15 @@ func suspendAppBackgroundWork(instance *serverInstance, app *core.App) {
 	}
 	if app.MangaDownloader != nil {
 		app.MangaDownloader.PauseChapterDownloadQueueForBackground()
+	}
+	if app.DebridClientRepository != nil {
+		app.DebridClientRepository.SetDownloadsSuspended(true)
+	}
+	if app.MediastreamRepository != nil {
+		// All TV activities, including the decoder, have stopped before this
+		// transition. Keep source sessions for foreground resume, but release
+		// their encoders and segment caches while the WebView is paused.
+		app.MediastreamRepository.SuspendAndroidTVSourceTranscodes(false)
 	}
 	if app.TorrentClientRepository == nil {
 		return
