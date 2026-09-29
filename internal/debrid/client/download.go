@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/debrid/debrid"
 	"seanime/internal/events"
 	"seanime/internal/hook"
@@ -259,7 +260,14 @@ func (r *Repository) downloadFile(ctx context.Context, tId string, downloadUrl s
 		return false
 	}
 
-	if isMobile {
+	if androidtvstorage.IsPath(destination) {
+		if err := androidtvstorage.MkdirAll(destination); err != nil {
+			r.logger.Err(err).Str("destination", destination).Msg("debrid: Failed to create destination folder")
+			r.wsEventManager.SendEvent(events.ErrorToast, fmt.Sprintf("debrid: Failed to create destination folder: %v", err))
+			r.sendDownloadCancelledEvent(tId, downloadUrl, downloadMap)
+			return false
+		}
+	} else if isMobile {
 		if err := os.MkdirAll(destination, os.ModePerm); err != nil {
 			r.logger.Err(err).Str("destination", destination).Msg("debrid: Failed to create destination folder")
 			r.wsEventManager.SendEvent(events.ErrorToast, fmt.Sprintf("debrid: Failed to create destination folder: %v", err))
@@ -456,15 +464,15 @@ func (r *Repository) downloadFile(ctx context.Context, tId string, downloadUrl s
 	var extractedDir string
 	switch ext {
 	case ".zip":
-		extractedDir, err = unzipFile(tmpDownloadedFilePath, tmpDirPath)
+		extractedDir, err = unzipFileContext(ctx, tmpDownloadedFilePath, tmpDirPath)
 		r.logger.Debug().Str("extractedDir", extractedDir).Msg("debrid: Extracted zip file")
 	case ".rar":
-		extractedDir, err = unrarFile(tmpDownloadedFilePath, tmpDirPath)
+		extractedDir, err = unrarFileContext(ctx, tmpDownloadedFilePath, tmpDirPath)
 		r.logger.Debug().Str("extractedDir", extractedDir).Msg("debrid: Extracted rar file")
 	default:
 		// No extraction needed which means we downloaded a file.
 		r.logger.Debug().Str("tmpDownloadedFilePath", tmpDownloadedFilePath).Str("destination", destination).Msg("debrid: No extraction needed, moving file directly")
-		err = moveDownloadedContentsTo(filepath.Dir(tmpDownloadedFilePath), destination, isMobile)
+		err = moveDownloadedContentsToContext(ctx, filepath.Dir(tmpDownloadedFilePath), destination, isMobile)
 		if err != nil {
 			r.logger.Err(err).Str("tmpDownloadedFilePath", tmpDownloadedFilePath).Str("destination", destination).Msg("debrid: Failed to move downloaded file")
 			r.wsEventManager.SendEvent(events.ErrorToast, fmt.Sprintf("debrid: Failed to move downloaded file: %v", err))
@@ -492,7 +500,7 @@ func (r *Repository) downloadFile(ctx context.Context, tId string, downloadUrl s
 	r.logger.Debug().Str("extractedDir", extractedDir).Str("destination", destination).Msg("debrid: Moving extracted files to destination")
 
 	// Move the extracted files to the destination.
-	err = moveDownloadedContentsTo(extractedDir, destination, isMobile)
+	err = moveDownloadedContentsToContext(ctx, extractedDir, destination, isMobile)
 	if err != nil {
 		r.logger.Err(err).Str("extractedDir", extractedDir).Str("destination", destination).Msg("debrid: Failed to move downloaded files")
 		r.wsEventManager.SendEvent(events.ErrorToast, fmt.Sprintf("debrid: Failed to move downloaded files: %v", err))
@@ -504,13 +512,28 @@ func (r *Repository) downloadFile(ctx context.Context, tId string, downloadUrl s
 }
 
 func createDownloadTempDir(destination string) (string, error) {
-	if isMobileDownload() {
+	if isMobileDownload() || androidtvstorage.IsPath(destination) {
 		return os.MkdirTemp("", "seanime-debrid-")
 	}
 	return os.MkdirTemp(destination, ".tmp-")
 }
 
 func moveDownloadedContentsTo(src, dest string, isMobile bool) error {
+	return moveDownloadedContentsToContext(context.Background(), src, dest, isMobile)
+}
+
+func moveDownloadedContentsToContext(ctx context.Context, src, dest string, isMobile bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if androidtvstorage.IsPath(dest) {
+		return moveContentsToWith(src, dest, func(source, destination string) error {
+			if err := copyLocalPathToSAF(ctx, source, filepath.ToSlash(filepath.Join(destination, filepath.Base(source)))); err != nil {
+				return err
+			}
+			return os.RemoveAll(source)
+		})
+	}
 	if isMobile {
 		return moveContentsToMobile(src, dest)
 	}

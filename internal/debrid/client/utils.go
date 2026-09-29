@@ -2,10 +2,12 @@ package debrid_client
 
 import (
 	"archive/zip"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"seanime/internal/androidtvstorage"
 	"seanime/internal/util"
 
 	"github.com/nwaples/rardecode/v2"
@@ -19,6 +21,13 @@ var renamePath = os.Rename
 //	If "file.zip" contains `folder>file.text`, the file will be extracted to "/path/to/dest/{TMP}/folder/file.txt"
 //	unzipFile("file.zip", "/path/to/dest")
 func unzipFile(src, dest string) (string, error) {
+	return unzipFileContext(context.Background(), src, dest)
+}
+
+func unzipFileContext(ctx context.Context, src, dest string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return "", fmt.Errorf("failed to open zip file: %w", err)
@@ -33,6 +42,9 @@ func unzipFile(src, dest string) (string, error) {
 
 	// Iterate through the files in the archive
 	for _, f := range r.File {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		mode := f.Mode()
 		if mode&os.ModeSymlink != 0 || (!mode.IsRegular() && !f.FileInfo().IsDir()) {
 			return "", fmt.Errorf("%w: %s", util.ErrUnsupportedArchiveEntry, f.Name)
@@ -65,7 +77,7 @@ func unzipFile(src, dest string) (string, error) {
 		}
 
 		// Copy the file from the archive to the destination
-		_, err = io.Copy(outFile, rc)
+		_, err = io.Copy(outFile, &downloadContextReader{ctx: ctx, source: rc})
 		_ = outFile.Close()
 		_ = rc.Close()
 
@@ -82,6 +94,13 @@ func unzipFile(src, dest string) (string, error) {
 //	If "file.rar" contains a folder "folder" with a file "file.txt", the file will be extracted to "/path/to/dest/{TM}/folder/file.txt"
 //	unrarFile("file.rar", "/path/to/dest")
 func unrarFile(src, dest string) (string, error) {
+	return unrarFileContext(context.Background(), src, dest)
+}
+
+func unrarFileContext(ctx context.Context, src, dest string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	r, err := rardecode.OpenReader(src)
 	if err != nil {
 		return "", fmt.Errorf("failed to open rar file: %w", err)
@@ -96,6 +115,9 @@ func unrarFile(src, dest string) (string, error) {
 
 	// Iterate through the files in the archive
 	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		header, err := r.Next()
 		if err == io.EOF {
 			break
@@ -126,7 +148,7 @@ func unrarFile(src, dest string) (string, error) {
 		}
 
 		// Copy the file from the archive to the destination
-		_, err = io.Copy(outFile, r)
+		_, err = io.Copy(outFile, &downloadContextReader{ctx: ctx, source: r})
 		outFile.Close()
 
 		if err != nil {
@@ -228,7 +250,13 @@ func moveContentsToWith(src, dest string, move func(string, string) error) error
 	if _, err := os.Stat(src); os.IsNotExist(err) {
 		return fmt.Errorf("source directory does not exist: %s", src)
 	}
-	_ = os.MkdirAll(dest, os.ModePerm)
+	if androidtvstorage.IsPath(dest) {
+		if err := androidtvstorage.MkdirAll(dest); err != nil {
+			return err
+		}
+	} else {
+		_ = os.MkdirAll(dest, os.ModePerm)
+	}
 
 	srcEntries, err := os.ReadDir(src)
 	if err != nil {
@@ -330,6 +358,63 @@ func copyPath(src, dest string) error {
 		return copyDir(src, dest, info.Mode())
 	}
 	return copyFile(src, dest, info.Mode())
+}
+
+// SAF writes commit through the host adapter only after the whole file is copied.
+// The source stays in app storage until commit succeeds, so failed/canceled copies
+// leave the queue retryable without replacing an existing destination with a partial file.
+func copyLocalPathToSAF(ctx context.Context, src, dest string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
+		return fmt.Errorf("unsupported download entry: %s", src)
+	}
+	if info.IsDir() {
+		if err := androidtvstorage.MkdirAll(dest); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if err := copyLocalPathToSAF(ctx, filepath.Join(src, entry.Name()), filepath.ToSlash(filepath.Join(dest, entry.Name()))); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := androidtvstorage.MkdirAll(filepath.ToSlash(filepath.Dir(dest))); err != nil {
+		return err
+	}
+	file, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = androidtvstorage.WriteFrom(dest, &downloadContextReader{ctx: ctx, source: file}, true)
+	return err
+}
+
+type downloadContextReader struct {
+	ctx    context.Context
+	source io.Reader
+}
+
+func (r *downloadContextReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.source.Read(buffer)
+	if cancelErr := r.ctx.Err(); cancelErr != nil {
+		return n, cancelErr
+	}
+	return n, err
 }
 
 func copyDir(src, dest string, mode os.FileMode) error {
