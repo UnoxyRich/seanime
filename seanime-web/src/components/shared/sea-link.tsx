@@ -13,6 +13,8 @@ import {
 import { Link } from "@tanstack/react-router"
 import { useAtomValue } from "jotai/react"
 import React from "react"
+import { handleSeaLinkClick, isExternalSeaLinkHref } from "@/lib/sea-link"
+import { __isAndroidTV__ } from "@/types/constants"
 
 type SeaLinkProps = React.ComponentPropsWithRef<"a"> & {
     href: string | undefined
@@ -40,7 +42,7 @@ export const SeaLink = React.forwardRef<HTMLAnchorElement, SeaLinkProps>((props,
 
     // const navigate = useNavigate()
 
-    const isExternal = href?.startsWith("http") || href?.startsWith("mailto")
+    const isExternal = isExternalSeaLinkHref(href)
     const isSimulatedUser = useIsSimulatedUser()
     const navigationPreloadMode = useAtomValue(__navigationPreloadModeAtom)
     const preload = getNavigationRoutePreload(navigationPreloadMode, isSimulatedUser)
@@ -128,6 +130,15 @@ export const SeaLink = React.forwardRef<HTMLAnchorElement, SeaLinkProps>((props,
         onFocus?.(event)
     }, [isSimulatedUser, navigationPreloadMode, onFocus, warmEntry])
 
+    const handleClick = React.useCallback((event: React.MouseEvent<HTMLAnchorElement>) => {
+        handleSeaLinkClick(
+            event,
+            href,
+            onClick,
+            __isAndroidTV__ ? window.AndroidTV?.openExternalUrl : undefined,
+        )
+    }, [href, onClick])
+
     const handleTouchStart = React.useCallback((event: React.TouchEvent<HTMLAnchorElement>) => {
         warmEntry()
         onTouchStart?.(event)
@@ -145,7 +156,7 @@ export const SeaLink = React.forwardRef<HTMLAnchorElement, SeaLinkProps>((props,
                 ref={ref}
                 href={href}
                 className={cn("cursor-pointer", className)}
-                onClick={onClick}
+                onClick={handleClick}
                 onFocus={onFocus}
                 onMouseDown={onMouseDown}
                 onMouseEnter={onMouseEnter}
