@@ -2,6 +2,7 @@ package debrid_client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"seanime/internal/api/anilist"
@@ -23,9 +24,11 @@ import (
 	"seanime/internal/torrents/torrent"
 	"seanime/internal/util"
 	"seanime/internal/util/result"
+	"sync"
 
 	"github.com/rs/zerolog"
 	"github.com/samber/mo"
+	"gorm.io/gorm"
 )
 
 var (
@@ -41,6 +44,11 @@ type (
 		wsEventManager         events.WSEventManagerInterface
 		ctxMap                 *result.Map[string, context.CancelFunc]
 		downloadLoopCancelFunc context.CancelFunc
+		downloadMu             sync.Mutex
+		downloadsSuspended     bool
+		downloadLoopWake       chan struct{}
+		downloadIntents        map[string]*models.DebridTorrentItem
+		suspendedDownloadIDs   map[string]bool
 		torrentRepository      *torrent.Repository
 		directStreamManager    *directstream.Manager
 		dummyDebridEnabled     bool
@@ -108,16 +116,116 @@ func NewRepository(opts *NewRepositoryOptions) (ret *Repository) {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func (r *Repository) startOrStopDownloadLoop() {
+	r.downloadMu.Lock()
+	defer r.downloadMu.Unlock()
+	r.startOrStopDownloadLoopLocked()
+}
+
+func (r *Repository) startOrStopDownloadLoopLocked() {
 	// Cancel the previous download loop if it's running
 	if r.downloadLoopCancelFunc != nil {
 		r.downloadLoopCancelFunc()
+		r.downloadLoopCancelFunc = nil
 	}
 
 	// Start the download loop if the provider is set and enabled
-	if r.settings.Enabled && r.provider.IsPresent() {
+	if !r.downloadsSuspended && r.settings != nil && r.settings.Enabled && r.provider.IsPresent() {
+		// A canceled loop may still be returning from a provider lookup. Give
+		// each loop its own channel so it cannot consume its successor's wake.
+		r.downloadLoopWake = make(chan struct{}, 1)
 		ctx, cancel := context.WithCancel(context.Background())
 		r.downloadLoopCancelFunc = cancel
-		r.launchDownloadLoop(ctx)
+		r.launchDownloadLoop(ctx, r.provider.MustGet(), r.downloadLoopWake)
+	}
+}
+
+// SetDownloadsSuspended pauses local downloads while retaining their destination
+// intent. Streaming remains available for playback while the app is backgrounded.
+func (r *Repository) SetDownloadsSuspended(suspended bool) {
+	r.downloadMu.Lock()
+	defer r.downloadMu.Unlock()
+	if r.downloadsSuspended == suspended {
+		return
+	}
+	r.downloadsSuspended = suspended
+	if !suspended {
+		r.startOrStopDownloadLoopLocked()
+		return
+	}
+	if r.downloadLoopCancelFunc != nil {
+		r.downloadLoopCancelFunc()
+		r.downloadLoopCancelFunc = nil
+	}
+	if r.suspendedDownloadIDs == nil {
+		r.suspendedDownloadIDs = make(map[string]bool)
+	}
+	if r.ctxMap != nil {
+		r.ctxMap.Range(func(id string, cancel context.CancelFunc) bool {
+			r.suspendedDownloadIDs[id] = true
+			// Keep auto-download metadata while preserving the active user's
+			// destination/provider, which a manual request may have overridden.
+			if intent := r.downloadIntents[id]; r.db != nil && intent != nil {
+				existing, err := r.db.GetDebridTorrentItemByTorrentItemId(id)
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					err = r.db.UpsertDebridTorrentItem(intent)
+				} else if err == nil && (existing.Destination != intent.Destination || existing.Provider != intent.Provider) {
+					existing.Destination, existing.Provider = intent.Destination, intent.Provider
+					err = r.db.UpsertDebridTorrentItem(existing)
+				}
+				if err != nil {
+					r.logger.Error().Err(err).Str("torrentItemId", id).Msg("debrid: Failed to preserve suspended download")
+				}
+			}
+			if cancel != nil {
+				cancel()
+			}
+			return true
+		})
+	}
+}
+
+func (r *Repository) downloadsAllowed(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	r.downloadMu.Lock()
+	defer r.downloadMu.Unlock()
+	return !r.downloadsSuspended && ctx.Err() == nil
+}
+
+func (r *Repository) registerDownload(id, destination, providerID string, cancel context.CancelFunc) error {
+	r.downloadMu.Lock()
+	defer r.downloadMu.Unlock()
+	if r.downloadsSuspended {
+		return ErrDownloadsSuspended
+	}
+	if r.ctxMap == nil {
+		r.ctxMap = result.NewMap[string, context.CancelFunc]()
+	}
+	if _, loaded := r.ctxMap.LoadOrStore(id, cancel); loaded {
+		return ErrDownloadAlreadyActive
+	}
+	if r.downloadIntents == nil {
+		r.downloadIntents = make(map[string]*models.DebridTorrentItem)
+	}
+	r.downloadIntents[id] = &models.DebridTorrentItem{TorrentItemID: id, Destination: destination, Provider: providerID}
+	return nil
+}
+
+func (r *Repository) finishDownload(id string) {
+	r.downloadMu.Lock()
+	defer r.downloadMu.Unlock()
+	if r.ctxMap != nil {
+		r.ctxMap.Delete(id)
+	}
+	delete(r.downloadIntents, id)
+	resume := r.suspendedDownloadIDs[id]
+	delete(r.suspendedDownloadIDs, id)
+	if resume && !r.downloadsSuspended && r.downloadLoopWake != nil {
+		select {
+		case r.downloadLoopWake <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -181,9 +289,7 @@ func (r *Repository) InitializeProvider(settings *models.DebridSettings) error {
 		r.logger.Err(err).Msg("debrid: Failed to authenticate")
 		r.provider = mo.None[debrid.Provider]()
 		// Cancel the download loop if it's running
-		if r.downloadLoopCancelFunc != nil {
-			r.downloadLoopCancelFunc()
-		}
+		r.startOrStopDownloadLoop()
 		return err
 	}
 
@@ -234,6 +340,9 @@ func (s *premiumizeHashStore) Delete(transferId string) {
 
 // AddAndQueueTorrent adds a torrent to the debrid service and queues it for automatic download
 func (r *Repository) AddAndQueueTorrent(opts debrid.AddTorrentOptions, destination string, mId int) (string, error) {
+	if !r.downloadsAllowed(context.Background()) {
+		return "", ErrDownloadsSuspended
+	}
 	hTorrentItemId, err := triggerOnAddTorrentRequestedHook(&opts, &destination, &mId)
 	if err != nil {
 		return "", err
@@ -332,6 +441,8 @@ func (r *Repository) GetSettings() *models.DebridSettings {
 }
 
 func (r *Repository) IsDownloadActive(itemID string) bool {
+	r.downloadMu.Lock()
+	defer r.downloadMu.Unlock()
 	if r.ctxMap == nil {
 		return false
 	}
@@ -341,6 +452,11 @@ func (r *Repository) IsDownloadActive(itemID string) bool {
 
 // CancelDownload cancels the download for the given item ID
 func (r *Repository) CancelDownload(itemID string) error {
+	r.downloadMu.Lock()
+	defer r.downloadMu.Unlock()
+	if r.ctxMap == nil {
+		return fmt.Errorf("no download found for item ID: %s", itemID)
+	}
 	cancelFunc, found := r.ctxMap.Get(itemID)
 	if !found {
 		return fmt.Errorf("no download found for item ID: %s", itemID)
@@ -351,7 +467,8 @@ func (r *Repository) CancelDownload(itemID string) error {
 		cancelFunc()
 	}
 
-	r.ctxMap.Delete(itemID)
+	// Keep the active marker until the worker has stopped, so a fresh request
+	// cannot race its cleanup or write to the same destination concurrently.
 
 	// Notify that the download has been cancelled
 	r.wsEventManager.SendEvent(events.DebridDownloadProgress, map[string]interface{}{

@@ -28,32 +28,43 @@ var (
 	DownloadAttempts         = 3
 	DownloadRetryDelay       = func(n int) time.Duration { return time.Duration(n) * 2 * time.Second }
 	ErrDownloadAlreadyActive = errors.New("debrid: download already active")
+	ErrDownloadsSuspended    = errors.New("debrid: downloads are suspended while the app is in the background")
 	isMobileDownload         = util.IsMobile
 )
 
-func (r *Repository) launchDownloadLoop(ctx context.Context) {
+func (r *Repository) launchDownloadLoop(ctx context.Context, provider debrid.Provider, wake <-chan struct{}) {
 	r.logger.Trace().Msg("debrid: Starting download loop")
 	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
 		for {
+			if ctx.Err() != nil {
+				return
+			}
+			r.processQueuedDownloadsContext(ctx, provider)
+			if ctx.Err() != nil {
+				return
+			}
 			select {
 			case <-ctx.Done():
 				r.logger.Trace().Msg("debrid: Download loop destroy request received")
 				// Destroy the loop
 				return
-			case <-time.After(time.Minute * 1):
-				provider, found := r.provider.Get()
-				if !found {
-					continue
-				}
-
-				r.processQueuedDownloads(provider)
-
+			case <-ticker.C:
+			case <-wake:
 			}
 		}
 	}()
 }
 
 func (r *Repository) processQueuedDownloads(provider debrid.Provider) {
+	r.processQueuedDownloadsContext(context.Background(), provider)
+}
+
+func (r *Repository) processQueuedDownloadsContext(ctx context.Context, provider debrid.Provider) {
+	if !r.downloadsAllowed(ctx) {
+		return
+	}
 	dbItems, err := r.db.GetDebridTorrentItems()
 	if err != nil {
 		r.logger.Err(err).Msg("debrid: Failed to get debrid torrent items")
@@ -62,13 +73,14 @@ func (r *Repository) processQueuedDownloads(provider debrid.Provider) {
 
 	providerId := provider.GetSettings().ID
 	for _, dbItem := range dbItems {
+		if !r.downloadsAllowed(ctx) {
+			return
+		}
 		if dbItem.Provider != "" && dbItem.Provider != providerId {
 			continue
 		}
-		if r.ctxMap != nil {
-			if _, found := r.ctxMap.Get(dbItem.TorrentItemID); found {
-				continue
-			}
+		if r.IsDownloadActive(dbItem.TorrentItemID) {
+			continue
 		}
 
 		item, err := provider.GetTorrent(dbItem.TorrentItemID)
@@ -76,7 +88,7 @@ func (r *Repository) processQueuedDownloads(provider debrid.Provider) {
 			r.logger.Err(err).Str("torrentItemId", dbItem.TorrentItemID).Msg("debrid: Failed to get queued torrent")
 			continue
 		}
-		if item == nil || !item.IsReady {
+		if item == nil || !item.IsReady || !r.downloadsAllowed(ctx) {
 			continue
 		}
 
@@ -118,25 +130,24 @@ func (r *Repository) downloadTorrentItem(tId string, torrentName string, destina
 func (r *Repository) downloadTorrentItemThen(tId string, torrentName string, destination string, onDone func(bool)) (err error) {
 	defer util.HandlePanicInModuleWithError("debrid/client/downloadTorrentItem", &err)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	if r.ctxMap != nil {
-		if _, loaded := r.ctxMap.LoadOrStore(tId, cancel); loaded {
-			cancel()
-			return ErrDownloadAlreadyActive
-		}
-	}
-	defer func() {
-		if err != nil {
-			cancel()
-			if r.ctxMap != nil {
-				r.ctxMap.Delete(tId)
-			}
-		}
-	}()
-
 	provider, err := r.GetProvider()
 	if err != nil {
 		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := r.registerDownload(tId, destination, provider.GetSettings().ID, cancel); err != nil {
+		cancel()
+		return err
+	}
+	asyncStarted := false
+	defer func() {
+		if !asyncStarted {
+			cancel()
+			r.finishDownload(tId)
+		}
+	}()
+	if !r.downloadsAllowed(ctx) {
+		return context.Canceled
 	}
 
 	r.logger.Debug().Str("torrentName", torrentName).Str("destination", destination).Msg("debrid: Downloading torrent")
@@ -147,6 +158,9 @@ func (r *Repository) downloadTorrentItemThen(tId string, torrentName string, des
 	})
 	if err != nil {
 		return err
+	}
+	if !r.downloadsAllowed(ctx) {
+		return context.Canceled
 	}
 	if downloadUrl == "" {
 		return fmt.Errorf("debrid: download URL is empty")
@@ -161,6 +175,9 @@ func (r *Repository) downloadTorrentItemThen(tId string, torrentName string, des
 	if err != nil {
 		return err
 	}
+	if !r.downloadsAllowed(ctx) {
+		return context.Canceled
+	}
 
 	if event.DefaultPrevented {
 		r.logger.Debug().Msg("debrid: Download prevented by hook")
@@ -171,17 +188,14 @@ func (r *Repository) downloadTorrentItemThen(tId string, torrentName string, des
 	}
 
 	if err := r.sendDownloadStartedEvent(tId, torrentName, destination, downloadUrl); err != nil {
-		cancel()
-		if r.ctxMap != nil {
-			r.ctxMap.Delete(tId)
-		}
 		return err
 	}
 
+	asyncStarted = true
 	go func(ctx context.Context) {
 		defer func() {
 			cancel()
-			r.ctxMap.Delete(tId)
+			r.finishDownload(tId)
 		}()
 
 		var failed bool
@@ -208,7 +222,7 @@ func (r *Repository) downloadTorrentItemThen(tId string, torrentName string, des
 		failedMu.Lock()
 		hasFailed := failed
 		failedMu.Unlock()
-		if hasFailed {
+		if hasFailed || !r.downloadsAllowed(ctx) {
 			r.logger.Warn().Str("torrentItemId", tId).Msg("debrid: Download did not complete")
 			if onDone != nil {
 				onDone(false)
@@ -250,6 +264,9 @@ func (r *Repository) downloadFile(ctx context.Context, tId string, downloadUrl s
 	defer util.HandlePanicInModuleThen("debrid/client/downloadFile", func() {
 		ok = false
 	})
+	if !r.downloadsAllowed(ctx) {
+		return false
+	}
 
 	isMobile := isMobileDownload()
 
@@ -296,6 +313,10 @@ func (r *Repository) downloadFile(ctx context.Context, tId string, downloadUrl s
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			r.sendDownloadCancelledEvent(tId, downloadUrl, downloadMap)
+			return false
+		}
 		r.logger.Err(err).Str("downloadUrl", downloadUrl).Msg("debrid: Failed to execute request")
 		r.wsEventManager.SendEvent(events.ErrorToast, fmt.Sprintf("debrid: Failed to execute download request: %v", err))
 		return false
@@ -315,7 +336,7 @@ func (r *Repository) downloadFile(ctx context.Context, tId string, downloadUrl s
 
 	// Try to get the file name from the Content-Disposition header
 	// Probably doesn't work for any provider
-	hFilename, err := getFilenameFromHeaders(downloadUrl)
+	hFilename, err := getFilenameFromHeadersContext(ctx, downloadUrl)
 	if err == nil {
 		r.logger.Warn().Str("newFilename", hFilename).Str("defaultFilename", filename).Msg("debrid: Filename found in headers, overriding default")
 		filename = hFilename
@@ -440,6 +461,10 @@ func (r *Repository) downloadFile(ctx context.Context, tId string, downloadUrl s
 	}
 
 	_ = file.Close()
+	if !r.downloadsAllowed(ctx) {
+		r.sendDownloadCancelledEvent(tId, downloadUrl, downloadMap)
+		return false
+	}
 
 	downloadMap.Delete(downloadUrl)
 
@@ -591,7 +616,15 @@ func (r *Repository) sendDownloadCompletedEvent(tId string, torrentName string, 
 }
 
 func getFilenameFromHeaders(url string) (string, error) {
-	resp, err := http.Head(url)
+	return getFilenameFromHeadersContext(context.Background(), url)
+}
+
+func getFilenameFromHeadersContext(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}
