@@ -1,5 +1,6 @@
 import { getServerBaseUrl } from "@/api/client/server-url"
 import { API_ENDPOINTS } from "@/api/generated/endpoints"
+import type { MKVParser_ChapterInfo } from "@/api/generated/types"
 import { useHandleCurrentMediaContinuity } from "@/api/hooks/continuity.hooks"
 import { attachAndroidTVPlayer, pauseAndroidTVBrowserPlayer, type AndroidTVPlayerSnapshot } from "@/lib/android-tv-player"
 import { useDirectstreamConvertSubs } from "@/api/hooks/directstream.hooks"
@@ -743,6 +744,7 @@ export interface VideoCoreProps {
     id: string
     state: VideoCoreLifecycleState
     aniSkipData?: NormalizedSkipData | undefined
+    chapters?: MKVParser_ChapterInfo[]
     onTerminateStream: () => void
     onEnded?: () => void
     onCompleted?: () => void
@@ -776,6 +778,7 @@ export function VideoCore(props: VideoCoreProps) {
     const {
         state,
         aniSkipData,
+        chapters,
         onTerminateStream: _onTerminateStream,
         onEnded,
         onPlay,
@@ -1833,10 +1836,14 @@ export function VideoCore(props: VideoCoreProps) {
 
     const chapterCues = useMemo(() => {
             if (!duration || duration <= 1) return []
-            // If we have MKV chapters, use them
-            if (state.playbackInfo?.mkvMetadata?.chapters?.length) {
-                const cues = vc_createChapterCues(state.playbackInfo.mkvMetadata.chapters, duration)
-                log.info("Chapter cues from MKV", cues)
+            // Keep embedded chapters ahead of AniSkip, including ffprobe
+            // chapters from the local direct-play and transcoding surface.
+            const embeddedChapters = state.playbackInfo?.mkvMetadata?.chapters?.length
+                ? state.playbackInfo.mkvMetadata.chapters
+                : chapters
+            if (embeddedChapters?.length) {
+                const cues = vc_createChapterCues(embeddedChapters, duration)
+                log.info("Chapter cues from media", cues)
                 return cues
             }
 
@@ -1853,6 +1860,7 @@ export function VideoCore(props: VideoCoreProps) {
         },
         [
             state.playbackInfo?.mkvMetadata?.chapters,
+            chapters,
             resolvedSkipData?.op?.interval,
             resolvedSkipData?.ed?.interval,
             duration,

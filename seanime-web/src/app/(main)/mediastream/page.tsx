@@ -6,6 +6,7 @@ import { useGetMediastreamSettings, useMediastreamShutdownTranscodeStream, useRe
 import { EpisodeGridItem } from "@/app/(main)/_features/anime/_components/episode-grid-item"
 import { MediaEpisodeInfoModal } from "@/app/(main)/_features/media/_components/media-episode-info-modal"
 import { EpisodePillsGrid } from "@/app/(main)/_features/video-core/_components/episode-pills-grid"
+import { useSkipData } from "@/app/(main)/_features/video-core/_lib/aniskip"
 import { useIsCodecSupported } from "@/app/(main)/_features/video-core/_lib/hooks"
 import { VideoCore, VideoCoreProvider } from "@/app/(main)/_features/video-core/video-core"
 import { vc_isFullscreen } from "@/app/(main)/_features/video-core/video-core-atoms.ts"
@@ -89,6 +90,7 @@ function MediastreamPage() {
 
     const episodeNumber = currentEpisode?.episodeNumber ?? 1
     const progress = animeEntry?.listData?.progress ?? 0
+    const { data: aniSkipData } = useSkipData(media?.idMal, currentEpisode?.progressNumber ?? -1)
 
     React.useEffect(() => {
         if (!pathname.startsWith("/mediastream")) return
@@ -298,6 +300,13 @@ function MediastreamPage() {
         }
     }
 
+    const chapters = React.useMemo(() => mediaContainer?.mediaInfo?.chapters?.map((chapter, index) => ({
+        uid: index,
+        start: chapter.startTime,
+        end: chapter.endTime > chapter.startTime ? chapter.endTime : undefined,
+        text: chapter.name,
+    })), [mediaContainer?.mediaInfo?.chapters])
+
     const state = React.useMemo(() => {
         return {
             active: true,
@@ -388,6 +397,8 @@ function MediastreamPage() {
                                     id="mediastream"
                                     mRef={playerRef}
                                     state={state}
+                                    aniSkipData={aniSkipData}
+                                    chapters={chapters}
                                     inline
                                     onError={onFatalError}
                                     onHlsFatalError={(e) => onFatalError(e)}

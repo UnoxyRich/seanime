@@ -4,18 +4,26 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import React, { act } from "react"
 import { createRoot, Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import type { NormalizedSkipData } from "@/app/(main)/_features/video-core/_lib/aniskip.utils"
 import Page from "./page"
 
 const fixtures = vi.hoisted(() => ({
     androidTV: true,
     settings: { transcodeEnabled: false, disableAutoSwitchToDirectPlay: true },
-    entry: { media: { id: 1 }, episodes: [] },
-    container: { streamType: "direct", streamUrl: "/stream?file=episode", mediaInfo: { mimeCodec: "video/mp4" } },
+    entry: { media: { id: 1, idMal: 10 }, episodes: [] as Array<{ localFile: { path: string }; episodeNumber: number; progressNumber: number }> },
+    container: {
+        streamType: "direct",
+        streamUrl: "/stream?file=episode",
+        mediaInfo: { mimeCodec: "video/mp4", chapters: [] as Array<{ startTime: number; endTime: number; name: string }> },
+    },
     requestContainer: vi.fn(),
     shutdown: vi.fn(),
     getToken: vi.fn(async () => ""),
     codecSupported: () => true,
     unmounted: vi.fn(),
+    skipRequest: vi.fn(),
+    skipData: undefined as NormalizedSkipData | undefined,
+    playerProps: vi.fn(),
 }))
 
 vi.mock("@/types/constants", () => ({ get __isAndroidTV__() { return fixtures.androidTV } }))
@@ -41,12 +49,19 @@ vi.mock("@/app/(main)/mediastream/_lib/mediastream.atoms", () => ({
 vi.mock("@/app/(main)/_features/video-core/_lib/hooks", () => ({
     useIsCodecSupported: () => ({ isCodecSupported: fixtures.codecSupported }),
 }))
+vi.mock("@/app/(main)/_features/video-core/_lib/aniskip", () => ({
+    useSkipData: (id: number | undefined, episode: number) => {
+        fixtures.skipRequest(id, episode)
+        return { data: fixtures.skipData }
+    },
+}))
 vi.mock("@/app/(main)/_features/video-core/video-core", () => ({
     VideoCoreProvider: ({ children }: React.PropsWithChildren) => children,
     // Exercise the real page's error callbacks and state without mounting a
     // decoder. A stable video node also verifies that native event listeners
     // owned by VideoCore would survive the parent's error transition.
-    VideoCore: ({ state, onError, onHlsFatalError }: any) => {
+    VideoCore: ({ state, onError, onHlsFatalError, aniSkipData, chapters }: any) => {
+        fixtures.playerProps({ state, aniSkipData, chapters })
         React.useEffect(() => () => { fixtures.unmounted() }, [])
         return <div data-testid="player">
             <video src={state.playbackInfo?.streamUrl} onError={onError} />
@@ -118,6 +133,9 @@ beforeEach(() => {
     fixtures.androidTV = true
     fixtures.settings.transcodeEnabled = false
     fixtures.container.streamType = "direct"
+    fixtures.container.mediaInfo.chapters = []
+    fixtures.entry.episodes = []
+    fixtures.skipData = undefined
     fixtures.getToken.mockResolvedValue("")
     fixtures.requestContainer.mockReset().mockImplementation(async () => ({ ...fixtures.container }))
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -134,6 +152,44 @@ afterEach(async () => {
 })
 
 describe("mediastream playback recovery", () => {
+    it.each([
+        [true, "direct"],
+        [true, "transcode"],
+        [false, "direct"],
+        [false, "transcode"],
+    ] as const)("preserves embedded chapters for AndroidTV=%s local %s playback", async (androidTV, streamType) => {
+        fixtures.androidTV = androidTV
+        fixtures.settings.transcodeEnabled = streamType === "transcode"
+        fixtures.container.streamType = streamType
+        fixtures.container.mediaInfo.chapters = [
+            { startTime: 0, endTime: 90, name: "Opening" },
+            { startTime: 90, endTime: 0, name: "Episode" },
+        ]
+        await renderPage()
+        await until(() => expect(host.querySelector("video")?.src).toContain("/stream?file=episode"))
+
+        const player = fixtures.playerProps.mock.lastCall?.[0]
+        expect(player.chapters).toEqual([
+            { uid: 0, start: 0, end: 90, text: "Opening" },
+            { uid: 1, start: 90, end: undefined, text: "Episode" },
+        ])
+        expect(player.state.playbackInfo.streamType).toBe(streamType === "transcode" ? "hls" : "native")
+        expect(player.state.playbackInfo.mkvMetadata).toBeUndefined()
+    })
+
+    it("loads and forwards opening and ending skip times for the local episode", async () => {
+        fixtures.entry.episodes = [{ localFile: { path: "/episode.mp4" }, episodeNumber: 8, progressNumber: 3 }]
+        fixtures.skipData = {
+            op: { interval: { startTime: 0, endTime: 90 } },
+            ed: { interval: { startTime: 1200, endTime: 1290 } },
+        }
+        await renderPage()
+        await until(() => expect(host.querySelector("video")?.src).toContain("/stream?file=episode"))
+
+        expect(fixtures.skipRequest).toHaveBeenLastCalledWith(10, 3)
+        expect(fixtures.playerProps.mock.lastCall?.[0].aniSkipData).toEqual(fixtures.skipData)
+    })
+
     it.each(["video", "hls"])("retains the TV player and source after a %s error", async errorType => {
         fixtures.settings.transcodeEnabled = true
         fixtures.container.streamType = "transcode"
