@@ -42,30 +42,73 @@ class AndroidTvStartupTest {
                 evaluateJavascript(scenario,
                     "document.readyState === 'complete' && window.AndroidTV?.serverStatus() === 'ready'") == "true"
             }
+            // Use a separate document so first-run React redirects cannot replace
+            // the history fixture while the native Back callbacks are in flight.
+            scenario.onActivity {
+                val view = requireNotNull(findWebView(it.window.decorView))
+                val originalClient = view.webViewClient
+                view.webViewClient = object : android.webkit.WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        webView: WebView?, request: android.webkit.WebResourceRequest?,
+                    ): android.webkit.WebResourceResponse? {
+                        if (request?.url?.path == "/_tv-back-test") {
+                            val html = "<!doctype html><title>TV Back fixture</title><main id='tv-back-fixture'></main>"
+                            return android.webkit.WebResourceResponse("text/html", "UTF-8",
+                                java.io.ByteArrayInputStream(html.toByteArray()))
+                        }
+                        return originalClient.shouldInterceptRequest(webView, request)
+                    }
+                }
+                // A real URL load participates in native WebView history, unlike
+                // loadDataWithBaseURL's synthetic document on older WebViews.
+                view.loadUrl("http://127.0.0.1:43211/_tv-back-test")
+            }
+            waitUntil("isolated Back navigation document", 10_000) {
+                evaluateJavascript(scenario,
+                    "document.readyState === 'complete' && document.title === 'TV Back fixture'") == "true"
+            }
             scenario.onActivity { findWebView(it.window.decorView)?.clearHistory() }
             assertEquals("true", evaluateJavascript(scenario,
                 """(() => {
                     document.body.innerHTML = '<main id="tv-back-fixture"></main>';
-                    history.replaceState({}, '', '/#tv-back-root');
-                    history.pushState({}, '', '/#tv-back-first');
-                    history.pushState({}, '', '/#tv-back-second');
-                    const menu = document.createElement('div');
-                    menu.setAttribute('role', 'menu');
-                    menu.style.cssText = 'position:fixed;left:64px;top:64px;width:200px;height:80px';
-                    const item = document.createElement('button');
-                    item.textContent = 'Dismiss menu';
-                    item.addEventListener('keydown', event => {
-                        if (event.key === 'Escape') {
-                            event.preventDefault();
-                            window.__tvBackMenuDismissed = true;
-                            menu.remove();
-                        }
+                    const navigate = document.createElement('button');
+                    navigate.textContent = 'Open route';
+                    navigate.style.cssText = 'position:fixed;left:64px;top:64px;width:200px;height:80px';
+                    navigate.addEventListener('click', () => {
+                        history.replaceState({}, '', '/#tv-back-root');
+                        history.pushState({}, '', '/#tv-back-first');
+                        history.pushState({}, '', '/#tv-back-second');
+                        navigate.remove();
+                        const menu = document.createElement('div');
+                        menu.setAttribute('role', 'menu');
+                        menu.style.cssText = 'position:fixed;left:64px;top:64px;width:200px;height:80px';
+                        const item = document.createElement('button');
+                        item.textContent = 'Dismiss menu';
+                        item.addEventListener('keydown', event => {
+                            if (event.key === 'Escape') {
+                                event.preventDefault();
+                                window.__tvBackMenuDismissed = true;
+                                menu.remove();
+                            }
+                        });
+                        menu.appendChild(item);
+                        document.body.appendChild(menu);
+                        item.focus();
                     });
-                    menu.appendChild(item);
-                    document.body.appendChild(menu);
-                    item.focus();
-                    return document.activeElement === item;
+                    document.body.appendChild(navigate);
+                    navigate.focus();
+                    return document.activeElement === navigate;
                 })()""".trimIndent()))
+
+            // Chromium skips script-created history entries without a user
+            // gesture. Create the fixture routes using the same trusted remote
+            // activation as the app's links instead of evaluateJavascript.
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+            waitUntil("native history to receive same-document navigation", 5_000) {
+                var canGoBack = false
+                scenario.onActivity { canGoBack = findWebView(it.window.decorView)?.canGoBack() == true }
+                canGoBack
+            }
 
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             waitUntil("focused menu to consume Back", 5_000) {
