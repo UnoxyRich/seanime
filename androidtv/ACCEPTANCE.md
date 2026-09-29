@@ -23,10 +23,11 @@ and device model with each result.
   commit, commands, scope, and remaining acceptance gates.
 - The current ARM64 and x86_64 debug APKs build in 2 minutes 52 seconds and
   pass signature verification and native-library 16 KiB ELF/ZIP alignment.
-  Two targeted startup/bridge/lifecycle and trusted remote-Back tests pass on
-  the fresh ARM64 APK using the API 31 TV emulator with WebView 91 and 4 KiB
-  pages. The full earlier instrumentation result below retains its original
-  revision. APK hashes and current test scope are in the parity batch report.
+  All 23 current Android instrumentation tests pass on the fresh ARM64 APK
+  using the API 31 TV emulator with WebView 91 and 4 KiB pages, including startup,
+  bridge/lifecycle, D-pad Back, SAF adapter, native playback and media tools.
+  APK hashes and scope are in the parity batch report. Physical USB acceptance
+  remains pending.
 - All six Go packages touched by the parity batch pass their complete test
   suites on the final checkout, including streaming, handlers, debrid, built-in
   torrents, and mobile lifecycle. See the parity batch report for the command.

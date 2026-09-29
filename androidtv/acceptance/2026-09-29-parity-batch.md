@@ -60,8 +60,16 @@ Both Go bindings target API 23. These are debug-signed development APKs.
 - The Back test verifies trusted D-pad activation, overlay dismissal, reader
   Escape handling, hidden-dialog filtering, SPA history traversal and exit at
   the oldest entry. The startup test verifies the embedded UI, host bridge,
-  lifecycle and focus restoration. The full instrumentation suite was not
-  rerun for this batch; its earlier result is recorded separately below.
+  lifecycle and focus restoration. Both also passed as part of the full suite
+  recorded below.
+- The complete current Android instrumentation suite then passed: **23 tests,
+  zero skips, zero failures/errors** on the same emulator and APK. Gradle
+  completed in 47 seconds with 2 tasks executed and 67 reused. The XML report
+  records 23.289 seconds of test execution. This fresh run covers all six
+  instrumentation classes, including SAF adapter, native player, playback
+  recovery, bundled media tools, external-player return, startup and D-pad
+  Back. USB grant tests use the in-memory provider described by the acceptance
+  records; they do not prove behavior with a physical USB provider.
 - A static emitted-asset check verified 135 distinct local targets with zero
   missing references. Runtime filename maps covered 105 async JS and 18 async
   CSS chunks; all 107 bundled JS and 19 CSS files retain hashed filenames.
