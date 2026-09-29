@@ -156,3 +156,16 @@ recorded in the
   [the acceptance scenarios](../ACCEPTANCE.md#feature-scenarios), including
   populated libraries, manga/offline content, extensions, settings and reports.
 - A persistent release signing key and a verified same-key release upgrade.
+
+## Test host inventory after this run
+
+- The full suite ran on the API 31 ARM64 Android TV image. That image remains
+  installed in the SDK. The temporary `seanime-tv-api31-batch` virtual-device
+  data was removed after the run, reclaiming 1,218,338,816 allocated bytes;
+  the device can be recreated from the installed image.
+- The SDK manager lists no other installed system image. The API 36 TV ARM64
+  and x86_64 directories inspected on this host contain only 156-byte
+  `.installer` markers, not runnable images. No physical Android device is
+  currently connected over ADB.
+- At the last disk check, 3.2 GiB was available. The Gradle and Go build caches
+  used for the verified 2m52s build were retained.
