@@ -81,7 +81,8 @@ internal fun nativeAnimeLinks(media: MediaCard): List<NativeAnimeLink> = buildLi
 }
 
 /** Supplemental facts are a separate response; reject a mismatched title before presentation. */
-internal fun parseNativeAnimeSupplement(raw: JSONObject, expectedId: Long): NativeAnimeSupplement {
+internal fun parseNativeAnimeSupplement(raw: JSONObject, expectedId: Long,
+    providerResult: Boolean = isCustomSourceMediaId(expectedId)): NativeAnimeSupplement {
     require(raw.optMediaId() == expectedId && expectedId > 0) { "The server returned metadata for a different or missing title. Try again." }
     fun linked(node: JSONObject?): MediaCard? {
         node ?: return null
@@ -90,7 +91,10 @@ internal fun parseNativeAnimeSupplement(raw: JSONObject, expectedId: Long): Nati
         val title = node.optJSONObject("title")
         if (listOf("userPreferred", "english", "romaji", "native").none { title?.stringOrNull(it) != null } &&
             (node.opt("title") as? String).isNullOrBlank()) return null
-        return SeanimeJson.media(node, node.stringOrNull("type") == "MANGA")
+        return SeanimeJson.media(node, node.stringOrNull("type") == "MANGA").let {
+            // Custom details may reference AniList IDs; those image fields still came from the provider.
+            if (providerResult) it.copy(artworkOrigin = MediaArtworkOrigin.PROVIDER) else it
+        }
     }
     val relations = raw.optJSONObject("relations").objects("edges").mapNotNull { edge ->
         if (edge.stringOrNull("relationType") == "CHARACTER") return@mapNotNull null

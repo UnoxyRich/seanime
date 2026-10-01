@@ -14,7 +14,7 @@ import okhttp3.Request
 /** A reader-owned image transport. Redirects never acquire another image's or server's authority. */
 class NativeImageTransport internal constructor(private val api: SeanimeApiClient, private val providerDns: Dns = ProviderUrlPolicy.publicDns()) : Call.Factory, Closeable {
     /** Coil forwards this tag to OkHttp without putting these values on the request itself. */
-    class SourceHeaders(headers: Map<String, String>, internal val providerResult: Boolean = false) {
+    class SourceHeaders(headers: Map<String, String>, internal val providerResult: Boolean = false, internal val offlineAssetMediaId: Long? = null) {
         internal val values = headers.filterKeys { it.lowercase() !in TRANSPORT_HEADERS }.toMap()
         override fun toString(): String = "SourceHeaders(redacted)"
     }
@@ -23,11 +23,11 @@ class NativeImageTransport internal constructor(private val api: SeanimeApiClien
         override fun toString(): String = "ImageSource(redacted)"
     }
     private val closed = AtomicBoolean(false)
-    private fun client(providerResult: Boolean) = OkHttpClient.Builder()
+    private fun client(providerResult: Boolean, followRedirects: Boolean = true) = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
         .dispatcher(Dispatcher().apply { maxRequests = 4; maxRequestsPerHost = 4 })
         .connectionPool(ConnectionPool(4, 1, TimeUnit.MINUTES))
-        .followRedirects(true).followSslRedirects(false)
+        .followRedirects(followRedirects).followSslRedirects(false)
         .addNetworkInterceptor { chain ->
             val request = chain.request()
             val source = requireNotNull(request.tag(Source::class.java))
@@ -47,20 +47,35 @@ class NativeImageTransport internal constructor(private val api: SeanimeApiClien
         }.apply { if (providerResult) { ProviderUrlPolicy.secureClient(this); dns(providerDns) } }.build()
     private val http = client(false)
     private val providerHttp = client(true)
+    private val offlineAssetHttp = client(false, followRedirects = false)
 
     override fun newCall(request: Request): Call {
         check(!closed.get()) { "Image transport is closed" }
         val policy = request.tag(SourceHeaders::class.java)
         val providerResult = policy?.providerResult == true
+        val offlineAssetMediaId = policy?.offlineAssetMediaId
         if (providerResult) ProviderUrlPolicy.requirePublicUrl(request.url.toString())
-        val sourceHeaders = policy?.values.orEmpty()
-        val source = Source(request.url, sourceHeaders, !providerResult && api.isServerUrl(request.url.toString()))
-        return (if (providerResult) providerHttp else http).newCall(request.newBuilder().tag(Source::class.java, source).build())
+        if (offlineAssetMediaId != null) {
+            val segments = request.url.pathSegments
+            require(!providerResult && request.method == "GET" && request.body == null &&
+                offlineAssetMediaId in 1L..MAX_NATIVE_MEDIA_ID && api.isServerUrl(request.url.toString()) &&
+                request.url.username.isEmpty() && request.url.password.isEmpty() && request.url.query == null && request.url.fragment == null &&
+                segments.size == 3 && segments[0] == "offline-assets" && segments[1] == offlineAssetMediaId.toString() &&
+                MediaArtworkOrigin.isAssetFilename(segments[2]) && request.url.encodedPath == "/offline-assets/$offlineAssetMediaId/${segments[2]}") {
+                "Invalid offline artwork asset"
+            }
+        }
+        val sourceHeaders = if (offlineAssetMediaId != null) emptyMap() else policy?.values.orEmpty()
+        val source = Source(request.url, sourceHeaders, offlineAssetMediaId == null && !providerResult && api.isServerUrl(request.url.toString()))
+        return (if (offlineAssetMediaId != null) offlineAssetHttp else if (providerResult) providerHttp else http)
+            .newCall(request.newBuilder().apply {
+                if (offlineAssetMediaId != null) headers(okhttp3.Headers.Builder().build())
+            }.tag(Source::class.java, source).build())
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        for (client in listOf(http, providerHttp)) {
+        for (client in listOf(http, providerHttp, offlineAssetHttp)) {
             client.dispatcher.cancelAll()
             client.dispatcher.executorService.shutdown()
             client.connectionPool.evictAll()

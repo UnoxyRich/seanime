@@ -890,6 +890,90 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
                     self.assertEqual(clean["externalAnonymousGoRanges"], 3)
                     self.assertTrue(clean["externalReturnPaused"])
 
+    def external_resolution(self):
+        return {"sdk": 36, "scheme": "http", "mimeType": "video/*", "candidateCount": 1,
+                "targetContextOwnsCallerUid": True, "testContextOwnsCallerUid": False,
+                "targetAndTestPackagesDiffer": True, "componentEnabledSetting": 0, "applicationEnabledSetting": 0,
+                "receiver": {"enabled": True, "exported": True, "applicationEnabled": True,
+                             "receiverOwnsCallerUid": False, "receiverOwnsTestUid": True,
+                             "testOnly": False, "stopped": True},
+                "scopedWildcardResolves": False, "concreteVideoResolves": False,
+                "scopedConcreteVideoResolves": False, "declaredFilterMatches": True}
+
+    def test_external_resolution_failure_facts_survive_owned_fixture_capture(self):
+        invocation = "owned-external-player"
+        manifest = self.owned_manifest(invocation)
+        manifest.update(outcome="failed", failedAt="signed-go-native-frame-pause-seek-verified",
+                        externalResolution=self.external_resolution())
+        directory = manifest["root"].rsplit("/", 1)[1]
+        path = self.root / "device/files" / directory / "fixture.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(manifest))
+        files, state = evidence.collect_owned_manifest(invocation)
+        self.assertEqual(state["outcome"], "failed")
+        raw = files[f"fixtures/{invocation}.json"]
+        clean = json.loads(raw)
+        self.assertEqual(clean["externalResolution"], manifest["externalResolution"])
+        self.assertEqual(clean["failedAt"], manifest["failedAt"])
+        for excluded in (b"PRIVATE_SENTINEL", b"https://", b"/data/user/", b"Authorization", b"streamUrl", b"processId"):
+            self.assertNotIn(excluded, raw)
+
+    def test_external_resolution_retains_only_normalized_probe_unavailability(self):
+        data = self.external_resolution()
+        for key in ("receiver", "componentEnabledSetting", "applicationEnabledSetting", "scopedWildcardResolves",
+                    "concreteVideoResolves", "scopedConcreteVideoResolves", "declaredFilterMatches"):
+            data[key] = "unavailable"
+        self.assertEqual(evidence.sanitize_external_resolution(data), data)
+
+    def test_external_resolution_rejects_unknown_fields_values_and_type_confusion(self):
+        base = self.external_resolution()
+        private = "https://private.invalid/video?token=PRIVATE_SENTINEL"
+        header = "Authorization: PRIVATE_SENTINEL"
+        cases = [(key, value) for key in ("sdk", "candidateCount")
+                 for value in (True, "36", -1, 10_000, float("nan"), float("inf"), None)]
+        cases += [("sdk", 22), ("candidateCount", 4097)]
+        cases += [(key, value) for key in ("scheme", "mimeType")
+                  for value in (private, header, [], {}, True, None)]
+        cases += [(key, value) for key in ("targetContextOwnsCallerUid", "testContextOwnsCallerUid", "targetAndTestPackagesDiffer")
+                  for value in (1, 0, "true", "unavailable", private, header, None)]
+        cases += [(key, value) for key in ("scopedWildcardResolves", "concreteVideoResolves",
+                                         "scopedConcreteVideoResolves", "declaredFilterMatches")
+                  for value in (1, 0, "false", "NameNotFoundException", private, header, {}, None)]
+        cases += [(key, value) for key in ("componentEnabledSetting", "applicationEnabledSetting")
+                  for value in (True, False, -1, 5, 0.0, "0", "SecurityException", private, header, None)]
+        cases += [("receiver", value) for value in ([], {}, True, private, header, "NameNotFoundException", None)]
+        for field, value in cases:
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                evidence.sanitize_external_resolution({**base, field: value})
+        for field in base:
+            data = dict(base)
+            del data[field]
+            with self.subTest(missing=field), self.assertRaises(ValueError):
+                evidence.sanitize_external_resolution(data)
+        for field in ("source", "url", "headers", "component", "exception"):
+            for nested in (False, True):
+                data = copy.deepcopy(base)
+                (data["receiver"] if nested else data)[field] = private
+                with self.subTest(extra=field, nested=nested), self.assertRaises(ValueError):
+                    evidence.sanitize_external_resolution(data)
+        for field in base["receiver"]:
+            for value in (1, "true", "unavailable", private, header, {}, None):
+                data = copy.deepcopy(base)
+                data["receiver"][field] = value
+                with self.subTest(receiver=field, value=value), self.assertRaises(ValueError):
+                    evidence.sanitize_external_resolution(data)
+
+    def test_external_resolution_is_limited_to_failed_external_fixture(self):
+        for invocation in evidence.OWNED_FIXTURES:
+            for outcome in ("passed", "running", "failed"):
+                if invocation == "owned-external-player" and outcome == "failed":
+                    continue
+                manifest = self.owned_manifest(invocation)
+                manifest.update(outcome=outcome, externalResolution=self.external_resolution())
+                directory = manifest["root"].rsplit("/", 1)[1]
+                with self.subTest(invocation=invocation, outcome=outcome), self.assertRaises(ValueError):
+                    evidence.sanitize_owned_manifest(manifest, directory, invocation)
+
     def test_new_owned_manifests_reject_path_schema_type_and_enum_confusion(self):
         for invocation in list(evidence.OWNED_FIXTURES)[1:]:
             base = self.owned_manifest(invocation)

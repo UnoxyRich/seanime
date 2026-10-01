@@ -32,6 +32,7 @@ import androidx.tv.material3.Border
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import app.seanime.tv.data.MediaCard
+import app.seanime.tv.data.MediaArtworkOrigin
 import app.seanime.tv.data.SeanimeRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -66,7 +67,8 @@ internal fun NativeAnimeMetadataScreen(media: MediaCard, repo: SeanimeRepository
     }
     LaunchedEffect(repo, media.id, retry) {
         loading = true; failed = false
-        try { supplement = parseNativeAnimeSupplement(repo.animeMetadata(media.id), media.id) }
+        try { supplement = parseNativeAnimeSupplement(repo.animeMetadata(media.id), media.id,
+            providerResult = media.artworkOrigin != MediaArtworkOrigin.SERVER) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { failed = true }
         finally { loading = false }
@@ -103,7 +105,7 @@ internal fun NativeAnimeMetadataScreen(media: MediaCard, repo: SeanimeRepository
         LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth().testTag("anime-information-list"),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             media.bannerUrl?.let { banner -> item(key = "banner") {
-                NativeArtwork(banner, "${media.title} banner", Modifier.fillMaxWidth().height(120.dp), ContentScale.Crop)
+                NativeArtwork(media, "${media.title} banner", Modifier.fillMaxWidth().height(120.dp), ContentScale.Crop, url = banner)
             } }
             items(facts, key = { "fact:${it.label}" }) { fact -> NativeAnimeFactRow(fact) }
             if (nativeAnimeScore(media) != null) item(key = "score-reveal") {
@@ -147,7 +149,8 @@ internal fun NativeAnimeMetadataScreen(media: MediaCard, repo: SeanimeRepository
                     items(data.characters, key = { "character:${it.id}" }) { character ->
                         NativeAnimeInformationPanel(Modifier.testTag("anime-information-character-${character.id}")) {
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                NativeArtwork(character.image, character.name, Modifier.size(58.dp, 76.dp), ContentScale.Crop)
+                                NativeArtwork(character.image, character.name, Modifier.size(58.dp, 76.dp), ContentScale.Crop,
+                                    providerResult = media.artworkOrigin != MediaArtworkOrigin.SERVER)
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(character.name, style = MaterialTheme.typography.titleMedium)
                                     Text(character.role, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -221,7 +224,7 @@ private fun NativeAnimeRelatedRow(item: NativeAnimeRelated, modifier: Modifier, 
         shape = ButtonDefaults.shape(RoundedCornerShape(12.dp)),
         border = ButtonDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary), shape = RoundedCornerShape(12.dp)))) {
         Row(Modifier.fillMaxWidth().padding(6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            NativeArtwork(item.media.imageUrl, item.media.title, Modifier.size(60.dp, 84.dp), ContentScale.Crop)
+            NativeArtwork(item.media, item.media.title, Modifier.size(60.dp, 84.dp), ContentScale.Crop)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(item.media.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(listOf(item.relation, if (item.media.isManga) "Manga" else "Anime").filter(String::isNotBlank).joinToString(" · "))

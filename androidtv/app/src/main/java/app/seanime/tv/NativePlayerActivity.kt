@@ -53,6 +53,7 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import app.seanime.tv.data.ProviderUrlPolicy
 import app.seanime.tv.data.ProviderMediaContext
+import app.seanime.tv.data.NativeNetworkFailure
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.analytics.AnalyticsListener
@@ -308,6 +309,11 @@ class NativePlayerActivity : ComponentActivity() {
         })
         exoPlayer.addListener(object : Player.Listener {
             private fun ownsPlayer() = this@NativePlayerActivity.player === exoPlayer
+
+            override fun onPlayerError(error: PlaybackException) {
+                if (ownsPlayer()) NativeNetworkFailure.logDebug(this@NativePlayerActivity,
+                    NativeNetworkFailure.Surface.PLAYER, error, error.errorCode)
+            }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (!ownsPlayer()) return

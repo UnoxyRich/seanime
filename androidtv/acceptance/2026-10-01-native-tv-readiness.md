@@ -2,7 +2,7 @@
 
 **Historical artifact checkpoint.** The subsequent TV layout, focus, thumbnail
 and live-data corrections are recorded in the
-[current correction report](2026-10-01-tv-layout-and-live-data.md). The APKs and
+[current per-source device review](2026-10-01-remote-ui-review.md). The APKs and
 315-test results below belong only to `5a90fdfe` and are not the revised UI.
 
 **The native rewrite is ready for source/build review. Full device acceptance is

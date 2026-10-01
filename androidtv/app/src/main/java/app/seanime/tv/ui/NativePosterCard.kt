@@ -19,7 +19,7 @@ import app.seanime.tv.data.personalCollectionStatusLabel
 @Composable
 internal fun NativePosterCard(media: MediaCard, posterHeight: Dp, modifier: Modifier = Modifier,
     artwork: @Composable (Modifier) -> Unit = { imageModifier ->
-        NativeArtwork(media.imageUrl, media.title, imageModifier, ContentScale.Crop)
+        NativeArtwork(media, media.title, imageModifier, ContentScale.Crop)
     }, onClick: () -> Unit) {
     Card(onClick = onClick, scale = CardDefaults.scale(focusedScale = 1f),
         border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary), shape = RoundedCornerShape(12.dp))),

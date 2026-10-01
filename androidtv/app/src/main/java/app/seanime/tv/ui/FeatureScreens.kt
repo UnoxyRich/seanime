@@ -372,6 +372,7 @@ internal fun TextEntryDialog(
 private fun OfflineScreen(repo: SeanimeRepository) {
     val action = rememberFeatureAction()
     var tracked by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var trackedArtwork by remember { mutableStateOf<Map<Long, MediaCard>>(emptyMap()) }
     var loaded by remember { mutableStateOf(false) }
     var accountStatus by remember { mutableStateOf<ServerStatus?>(null) }
     val offline = accountStatus?.offline == true
@@ -397,6 +398,9 @@ private fun OfflineScreen(repo: SeanimeRepository) {
     }
     suspend fun reload() {
         tracked = repo.request("GET", "/api/v1/local/track").jsonObjects()
+        trackedArtwork = tracked.mapNotNull { entry ->
+            (entry.optJSONObject("animeEntry") ?: entry.optJSONObject("mangaEntry"))?.optJSONObject("media")?.let { SeanimeJson.media(it).withLocalArtwork() }
+        }.associateBy { it.id }
         size = repo.request("GET", "/api/v1/local/storage/size")?.toString().orEmpty()
         pending = repo.request("GET", "/api/v1/local/updated") == true
         accountStatus = repo.status()
@@ -487,7 +491,8 @@ private fun OfflineScreen(repo: SeanimeRepository) {
             val media = (entry.optJSONObject("animeEntry") ?: entry.optJSONObject("mangaEntry"))?.optJSONObject("media")
             FeaturePanel(media?.mediaTitle("Title ${entry.optLong("mediaId")}") ?: "Title ${entry.optLong("mediaId")}", humanizeField(entry.text("type"))) {
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    NativeArtwork(media?.let { SeanimeJson.media(it).imageUrl }, media?.mediaTitle("Offline title"),
+                    val artwork = trackedArtwork[media?.optMediaId()] ?: media?.let { SeanimeJson.media(it) }
+                    NativeArtwork(artwork ?: MediaCard(0L, "Offline title"), media?.mediaTitle("Offline title"),
                         Modifier.size(64.dp, 90.dp), ContentScale.Crop)
                     ActionButton("Remove offline metadata", !action.busy) { confirm = entry }
                 }
@@ -532,7 +537,7 @@ private fun PlaylistsScreen(repo: SeanimeRepository, onPlay: (PlaybackRequest) -
                 else {
                     // This event precedes the Go manager's asynchronous database
                     // save, so display its authoritative snapshot directly.
-                    val updated = SeanimeJson.playlist(raw)
+                    val updated = repo.authorizePlaylistArtwork(listOf(SeanimeJson.playlist(raw))).single()
                     playlists = if (playlists.any { it.id == updated.id }) playlists.map { if (it.id == updated.id) updated else it }
                         else playlists + updated
                 }
@@ -573,8 +578,9 @@ private fun PlaylistsScreen(repo: SeanimeRepository, onPlay: (PlaybackRequest) -
                 val media = episodeJson.optJSONObject("baseAnime") ?: JSONObject()
                 val number = episodeJson.optInt("episodeNumber")
                 FeaturePanel(media.mediaTitle("Episode $number"), "Episode $number · ${if (entry.completed) "Watched" else "Unwatched"} · ${entry.watchType.ifBlank { "Choose a playback source in Library" }}") {
-                    NativeArtwork(entry.episode?.imageUrl ?: SeanimeJson.media(media).imageUrl,
-                        "${media.mediaTitle("Episode $number")} episode $number thumbnail", Modifier.size(160.dp, 90.dp), ContentScale.Crop)
+                    NativeArtwork(SeanimeJson.media(media).copy(artworkOrigin = entry.artworkOrigin),
+                        "${media.mediaTitle("Episode $number")} episode $number thumbnail", Modifier.size(160.dp, 90.dp), ContentScale.Crop,
+                        url = entry.episode?.imageUrl ?: SeanimeJson.media(media).imageUrl)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = ActionRowContentPadding) {
                         item { ActionButton("Play", entry.episode != null && !action.busy) {
                             onPlay(PlaybackRequest(mediaId = media.optLong("id"), episode = entry.episode, title = media.mediaTitle(),

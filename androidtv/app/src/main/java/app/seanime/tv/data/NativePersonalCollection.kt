@@ -180,8 +180,11 @@ private data class CollectionSortValue(val number: Double? = null, val text: Str
         else -> text.orEmpty().compareTo(other.text.orEmpty())
     }
 }
-internal suspend fun loadPersonalCollection(repo: SeanimeRepository, manga: Boolean = false, library: Boolean = true): PersonalCollection =
-    parsePersonalCollection(repo.request("GET", when { manga -> "/api/v1/manga/collection"; library -> "/api/v1/library/collection"; else -> "/api/v1/anilist/collection/raw" }), manga)
+internal suspend fun loadPersonalCollection(repo: SeanimeRepository, manga: Boolean = false, library: Boolean = true): PersonalCollection {
+    val collection = parsePersonalCollection(repo.request("GET", when { manga -> "/api/v1/manga/collection"; library -> "/api/v1/library/collection"; else -> "/api/v1/anilist/collection/raw" }), manga)
+    val artwork = repo.authorizeOfflineArtwork(collection.entries.map { it.media }).associateBy { it.id }
+    return collection.copy(entries = collection.entries.map { it.copy(media = artwork.getValue(it.media.id)) })
+}
 internal suspend fun loadPersonalCollectionSortContext(repo: SeanimeRepository, sort: PersonalCollectionSort): PersonalCollectionSortContext {
     suspend fun read(path: String) = repo.request("GET", path) as? JSONObject ?: error("Couldn't load collection sort data")
     return when {

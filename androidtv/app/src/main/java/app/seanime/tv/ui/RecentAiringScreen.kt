@@ -88,7 +88,7 @@ internal fun RecentAiringScreen(repo: SeanimeRepository, initial: RecentAiringFi
                     contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(loaded.items, key = { it.key }) { item ->
                         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            NativeArtwork(item.media.imageUrl, item.media.title, Modifier.size(64.dp, 90.dp), ContentScale.Crop)
+                            NativeArtwork(item.media, item.media.title, Modifier.size(64.dp, 90.dp), ContentScale.Crop)
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Episode ${item.episode} · ${airingDate(item.airingAt, true)}")
                                 ActionButton(item.media.title, modifier = Modifier.testTag("airing-title-${item.media.id}-${item.episode}")

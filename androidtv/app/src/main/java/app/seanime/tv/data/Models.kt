@@ -15,6 +15,7 @@ data class MediaCard(
     val totalEpisodes: Int? = null,
     val isManga: Boolean = false,
     val raw: JSONObject = JSONObject(),
+    val artworkOrigin: MediaArtworkOrigin = MediaArtworkOrigin.forMedia(id),
 )
 
 data class MediaDetails(val media: MediaCard, val episodes: List<Episode> = emptyList(), val raw: JSONObject = JSONObject())
@@ -44,7 +45,8 @@ data class ServerStatus(
 data class MangaChapter(val id: String, val title: String, val number: String, val provider: String, val raw: JSONObject = JSONObject())
 data class MangaPage(val index: Int, val url: String, val headers: Map<String, String> = emptyMap(), val raw: JSONObject = JSONObject(), val providerResult: Boolean = false)
 data class Playlist(val id: Int, val name: String, val episodes: List<PlaylistEpisode> = emptyList(), val raw: JSONObject = JSONObject())
-data class PlaylistEpisode(val episode: Episode?, val completed: Boolean = false, val watchType: String = "localfile", val raw: JSONObject = JSONObject())
+data class PlaylistEpisode(val episode: Episode?, val completed: Boolean = false, val watchType: String = "localfile", val raw: JSONObject = JSONObject(),
+    val artworkOrigin: MediaArtworkOrigin = MediaArtworkOrigin.forMedia(episode?.raw?.optJSONObject("baseAnime")?.optMediaId() ?: 0L))
 data class ExtensionItem(
     val id: String,
     val name: String,

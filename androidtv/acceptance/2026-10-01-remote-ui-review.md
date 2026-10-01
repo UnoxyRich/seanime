@@ -1,12 +1,17 @@
 # Remote UI review — October 1, 2026
 
-R26 passes **383 JVM tests**, **34 unchanged-reference layout comparisons**,
-lint with zero errors (87 warnings), both ABI builds and instrumentation packaging.
-No R26 device pass is claimed. The latest
-completed Android TV run has **170 ordinary passes, 8 failures and 5 intentional
-isolated skips**, plus one passing and three incomplete isolated workflows.
-The playback portion of the real remote Library journey now has verified video,
-seek, audio-track, subtitle and picture-mode evidence. Full parity remains open.
+Current published R27 source `8f2b7800` has **178 ordinary device passes,
+zero failures and five explicit isolated skips** across 183 unique cases.
+The complete owned-media journey and independent signed Go media route pass;
+isolated filename editing and external-player handoff still fail. The Mac's
+installed R27 ARM64 build loads real AniList anime/manga covers and Bloom Into
+You metadata, but live AnimeHeaven playback has a transport error. Manga reading
+is not yet verified. Full parity and public release remain open.
+
+Local R30 includes the R28 custom-artwork correction, R29 harness repairs and
+bounded diagnostic evidence. It passes **441 JVM tests, 34 unchanged-reference
+comparisons**, lint and both ABI builds. It has not run on a device. The per-source results below must not be transferred
+to newer APKs.
 
 ## Actual R25 emulator evidence
 
@@ -102,7 +107,7 @@ identity verified. Two passed and two failed:
 | Library → Files → native player → Explorer → native player | **Passed completely**: real D-pad navigation, signed Go ranges, decoded frame/audio, 10-second seek, visible embedded subtitle on/off, Mode C/direct rendering round-trip, same-file focus restored from both routes | Owned generated 320×240 multitrack media, not live anime or representative hardware decoding |
 | Independent raw Go media route | **Passed** signed 206/range/boundary checks, native playback, pause/seek and recovery | Generated owned silent media |
 | Library management | Import, two-file selection, bulk ignore and signed readback passed | Filename editor remained open with Save focused after an IME transition; timeout before parent preview/rename/delete completion |
-| External player | Raw media subflow passed | HTTP-only receiver was not visible to the app's MIME-only package query; guard failed before native More/chooser navigation |
+| External player | Raw media subflow passed | Implicit HTTP receiver query returned no matching test player; guard failed before native More/chooser navigation |
 
 The journey's canonical root and exact Explorer index membership checks passed;
 the fixture observed Android's app-files alias. This verifies the R26 canonical
@@ -113,11 +118,12 @@ track `fr` decoded 15 buffers. Mode C/direct aspect checks retained 4:3 content
 with 240-pixel side bars in the 1920×1080 viewport. Twelve actual journey PNGs,
 the bounded silent recording and a typed manifest were retained.
 
-The external-player issue also affects production discovery of network-only
-players: Android's `parseQueries` supplies the content scheme for MIME-only
-queries. Explicit HTTP/HTTPS queries are required alongside existing content
-queries. The HTTP-only test receiver remains unchanged as the regression
-case. The management recording narrows its failure to the filename editor's
+A source review found that Android's `parseQueries` supplies the content
+scheme for MIME-only visibility queries, so R27 adds explicit HTTP/HTTPS
+queries alongside content queries. This is not a proven explanation of the
+isolated failure: R27 still fails that assertion, and AOSP separately makes an
+instrumentation package visible to its target. Actual package-state diagnostics
+remain necessary. The HTTP-only test receiver keeps its original filter. The management recording narrows its failure to the filename editor's
 completion boundary; it does not demonstrate failed restoration after a
 successful save.
 
@@ -154,14 +160,15 @@ This process-local build configuration changes no app or server networking.
 
 | Scope | Status |
 | --- | --- |
-| Current R26 local aggregate | Passed:383 JVM,34 visual,48 collector regressions; APK signatures/alignment/API boundaries verified |
-| R26 actual TV automation | Four isolated cases: two pass, two fail. Ordinary 183-case invocation never started because emulator action unlock failed |
-| Library Explorer | Complete generated-media D-pad playback and same-file return focus passed at R26 |
-| Library management and external handoff | Partial subflows passed; filename editor completion and network-only player discovery require corrections/rerun |
-| Settings reentry and other failed ordinary cases | Corrections/diagnostics retain exact assertions; require native confirmation |
-| Live AniList metadata/covers, metadata-assisted scan and Bloom streaming | Recorded HTTP 403 still blocks these; no proxy, alternate route or synthetic catalog |
+| Current local R30 aggregate | Passed:441 JVM,34 visual,52 collector tests; APK signatures/alignment/API boundaries verified |
+| Published R27 TV automation |178 ordinary passes,0 failures,5 isolated skips; two isolated passes and two isolated failures |
+| Library Explorer / native owned playback | Complete generated-media D-pad journey, seek, decoded audio, subtitle pixels, picture round-trip and same-file return focus pass |
+| Library management and external handoff | Partial subflows pass; filename-editor physical footer transition and real standalone player acceptance remain open |
+| Settings reentry and previous ordinary failures | All ordinary methods pass at R27; this does not validate later source |
+| Live AniList metadata and covers | R27 ARM64 native Discover and Bloom details work on the authorized Mac TV emulator; prior cloud403 remains historical environment evidence |
+| Live Bloom streaming / English manga | AnimeHeaven source resolves but native playback has a transport error; AniDB subbed episode1 has no result; manga reader acceptance pending |
 | Browser-DOM-only plugin presentation and independent MAL capabilities | Previously documented partial/missing API capabilities remain |
-| Physical TV/USB, device codecs/GPU/HDR, API 23, ARM64/16 KiB runtime, accounts/providers, two Nakama peers and release signing | Unverified; source/host/emulator evidence cannot replace them |
+| Physical TV/USB, device codecs/GPU/HDR, API23,16KiB runtime, accounts/providers, two Nakama peers and release signing | Unverified; source/host/emulator evidence cannot replace them |
 
 Feature-level gates remain in the [layout and live-data matrix](2026-10-01-tv-layout-and-live-data.md).
 The [device inventory](2026-10-01-remote-ui-device-plan.json) contains 183 methods.
@@ -221,7 +228,164 @@ API28 test fixture; both were corrected before the successful checks.
 | Instrumentation | `03baba7e740a884c16aca9945e97b6b35106ed1ae63c0bd3919c5ccf0726a5b0` |
 
 This is a physical-computer test candidate, not a release-final build. Its
-device flows and live providers are unverified. Custom-source catalog artwork
+subsequent exact-source device and live-provider results are recorded below. Custom-source catalog artwork
 is guarded, but propagation into shared detail/library artwork still needs a
 narrow follow-up; none of the three bundled providers is a custom-source
 provider. R26's device results cannot be transferred to these new bytes.
+
+## R28 custom artwork candidate
+
+The [custom artwork correction](2026-10-01-custom-artwork-origin.md) closes the
+R27 propagation gap across shared detail, metadata, related/list cards,
+playlist thumbnails and episode fallback images. Explicit Offline/downloaded
+contexts preserve own-title cached covers online and offline through a
+credential-free, redirect-disabled static asset request. Direct provider URLs
+and forged API/local paths retain provider restrictions. Go remains unchanged.
+
+The frozen aggregate passed uninterrupted in **233 seconds** using a 2 GiB
+Gradle daemon: **430 JVM tests, 34 unchanged visual comparisons, zero lint
+errors and 88 warnings**, both main APKs plus instrumentation, signatures,
+ZIP/native 16 KiB alignment and all 17 source/APK contracts. The extra lint
+warning reports a newer Compose test dependency; dependencies were not changed.
+All 297 Android source/asset hashes and all reference PNGs stayed unchanged.
+Source digest:
+`0960019685dacfcd36e9f60c60e957211352b2e6e503320b82b0f4a034933bba`.
+The unchanged collector retains its 48-test R27 result.
+
+| Local R28 artifact | SHA-256 |
+| --- | --- |
+| ARM64 | `2f1fac14373db23aebe37012c6849f49a1479ae3ae9a1900000778c27572e3ae` |
+| x86_64 | `fa9bbe71e5a85ea2bbacf63b525042aa91c6024efb54c48bcb6bbbee2572460d` |
+| Instrumentation | `02b8f285ede14ac961c992f632704e9e00deb489a1c51532c316330cb6c714f9` |
+
+R28 device execution is pending. R27 CI and the Mac's installed R27 pair have
+their own immutable identities; their results must not be relabeled as R28
+passes. A public release remains held while required live/device flows are open.
+
+## R27 terminal Android TV result and live Mac check
+
+[Run36893231348](https://github.com/UnoxyRich/seanime/actions/runs/36893231348)
+tested published commit `8f2b780025cbc334b24a00c1756683e1ab133e0f`, with the
+same Git tree as local `2b0683dc`. Sanitized JUnit has **183 unique ordinary
+class/method identities:178 passed,0 failed,0 errors,5 skipped**. All five
+invocations have verified runner-built/installed APK identity. The four isolated
+cases contain two passes and two failures, with no skips:
+
+| Isolated flow | Exact result |
+| --- | --- |
+| Library→Files→player→Explorer→player | Passed the complete owned-media journey, including real decoded pixels, audio-track selection, subtitle on/off, picture-mode round-trip and restored file focus |
+| Independent signed Go media route | Passed ranges, boundary rejection, native playback, pause/seek and recovery |
+| Library management | Failed the first physical Down→Cancel focus assertion after filename editing; preview/save/rename/delete completion remains unverified |
+| External player | Failed the installed implicit HTTP receiver query before More/chooser; external UID streaming and paused return were not reached |
+
+The artifact includes79 ordinary screenshots,12 journey screenshots and one
+screenshot from each other isolated invocation. Its SHA-256 is
+`34db43b72ede702a31a422bb6b2924ab28c7a629bd39cd0175f2ad0f7f93218e`
+(artifact11180033029). Runner main APK SHA-256:
+`f7e280a78384d8a9437613ed1d19cdfba5b1f27bfbb2d255da3eb782360dfd49`;
+runner test APK:
+`ad3349e0807d423c7e048eedc630218542a5be4c10042b856e1dd7d52ea45451`.
+These differ from the local R27 pair installed on the Mac.
+
+On the authorized Mac's isolated official API36 ARM64 Android TV emulator,
+the exact local R27 pair listed above was installed after byte verification.
+Real native Discover anime/manga covers load. Searching Bloom Into You returns
+Yagate Kimi ni Naru with its real cover, synopsis and episode1. AniDB's subbed
+episode1 selection has no result. AnimeHeaven resolves an auto source, but
+native playback reports that the source connection was interrupted; one retry
+remains black. Back twice recovers the detail screen. A screen-recording file is
+not proof that an anime frame decoded; no live playback success is claimed.
+The existing Media3 exception chain is being collected before changing transport.
+Atsumaru returns 108 raw chapters (61 after deduplication) and 49 pages for chapter 1 through the existing HTTP200 pages API, but the first two page images fail to load. No real manga page pixels are verified. This Mac result supersedes a blanket claim
+that all live AniList access is blocked; it does not erase the earlier cloud403.
+
+The next harness correction is intentionally distinct from a production fix:
+Compose's pinned TV editor handler ignores virtual-keyboard Center events, so
+filename testing must physically activate an enumerated nonvirtual D-pad,
+observe the IME shown, invoke Done, then observe it gone before retaining the
+original single Down→Cancel→Right→Save assertions. Separately the test-only
+external receiver references Kotlin/AndroidX classes omitted from its standalone
+APK; a framework/Java-only receiver preserves the same implicit intent filter,
+separate UID, anonymous range reads and paused return. That dependency finding
+does not itself explain the earlier resolver failure. No production workaround
+or relaxed resolver assertion is justified without runtime evidence.
+
+## R29 harness validation checkpoint
+
+R29 preserves the exact R28 main APK bytes and changes only instrumentation and
+acceptance evidence. The receiver's three compiled classes reference only Java,
+Android framework and their own classes; the packaged test manifest is identical
+to R27, including its HTTP-only filter, exported activity and separate process.
+The filename test now establishes a real shown-to-hidden IME transition before
+its unchanged physical footer assertions. These are validated harness changes,
+not a claim that either previously failing device flow now passes.
+
+The corrected combined aggregate passed in 80 seconds: **430 JVM tests, 34
+unchanged visual comparisons, lint with zero errors and 88 warnings**, both main
+APKs and instrumentation, signatures, alignment, exact provider/shader assets and
+all 17 source/APK boundary checks. All 298 source/asset files, now explicitly
+including Java, remained unchanged during the run. Source digest:
+`ac737187514630062815268e5f760712b26f2719fdb30856efca58c7b8e711cb`.
+Test APK SHA-256:
+`e7571b5d41556c31b6d7e7cfa7131d8c3e830f3033cbdf117fe9e70cc66aaf52`.
+The first 87-second attempt passed all 430 host tests then failed lint on the
+legacy pre-33 receiver overload. A narrowly scoped documented annotation on that
+legacy helper preserves explicit exported registration on API33+; no lint
+baseline, AndroidX dependency, runtime security change or old evidence was removed.
+
+Mac shell package queries resolve the installed R27 test player, but shell UID
+visibility does not prove what the app UID sees. The original app query remains
+asserted, with bounded failure-only package facts in R29. Being stopped alone is
+not sufficient to explain it: the fresh VIEW intent does not exclude stopped
+packages. Device execution of R29 is pending.
+
+The exact R27 APK also confirms why the live transport error is still
+undetermined: Media3's `Log.getThrowableString` replaces any cause-chain
+`UnknownHostException` with the literal `UnknownHostException (no network)`.
+That text is not the original platform or provider-policy exception message.
+Narrow debug-only failure categories are the next diagnostic change; no proxy,
+DNS override, repeated source request or guard relaxation follows from this log.
+
+## R30 safe live-failure diagnostics
+
+R30 adds failure-only `SeanimeNetworkFailure` diagnostics for the native player's
+error callback and manga reader's existing image-error callback. Debuggable
+builds emit a fixed surface/category, at most eight restricted class identifiers,
+cycle/truncation flags and optional numeric player code, HTTP status, operation
+and public errno. Nondebuggable builds emit nothing. URLs, origins, headers,
+request/response bodies, exception messages and stack traces are never emitted.
+Even throwing exception introspection falls back to a fixed diagnostic-unavailable
+category rather than crashing the actual failure handler.
+
+Provider DNS/proxy/redirect/URL policy categories require the known fixed message
+and the policy's throwing-frame provenance; platform DNS remains distinguishable.
+The implementation changes neither transport nor guard decisions, does not retry
+requests and does not change Go. Eleven focused tests cover redaction, identical
+platform/policy message text, HTTP metadata, errno, cycles/depth, unknown causes,
+release suppression and throwing introspection.
+
+The external-player resolver now saves fixed typed failure facts in its owned
+manifest. The collector accepts exact bounded numbers, enums and booleans only,
+including a seven-boolean receiver state or fixed unavailable value. Unexpected
+keys, nested fields, URLs/headers, arbitrary exception text and type confusion
+are rejected. The 52-test collector suite passes; sanitized JUnit continues to
+omit assertion text and raw logs. The resolver assertion and original fixture
+stage vocabulary are unchanged.
+
+The aggregate passed uninterrupted in **216 seconds**: **441 JVM tests, 34
+unchanged visual comparisons, lint with zero errors and 88 warnings**, both main
+APKs and instrumentation, signature/ZIP/native 16KiB alignment, unchanged bundled
+provider/shader bytes and all 17 source/APK boundaries. All 300 Android source
+and asset hashes, both collector script hashes and all 34 reference images
+remained unchanged. Source digest:
+`ecbfeb715bbf38d6cf2cf10109a95cee3154940f282cdfbd4ae3899499ca00ba`.
+
+| Local R30 artifact | SHA-256 |
+| --- | --- |
+| ARM64 | `445dc2bd84cb51e98b3f44cd7e53b3971cf128c1a844b41d65d5373e20f3dc3b` |
+| x86_64 | `7c6cf6f28bcf3814f9aca9bbaea8a273391ed71662a41f495a3317a0062de10b` |
+| Instrumentation | `d83b1ea2f7ff3b7468772e1e8d432dd8739ef2229340a213765f5703bb80ca23` |
+
+These are a new diagnostic candidate, not a live playback or manga fix. R27's
+actual device passes and failures remain tied to its exact APKs; R30 device and
+live-provider results are pending. Public release remains held.

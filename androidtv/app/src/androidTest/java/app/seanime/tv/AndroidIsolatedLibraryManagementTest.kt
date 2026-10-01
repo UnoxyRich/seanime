@@ -18,7 +18,7 @@ import app.seanime.tv.data.SeanimeApiClient
 import app.seanime.tv.data.SeanimeRepository
 import app.seanime.tv.gomobile.mobile.Mobile
 import app.seanime.tv.ui.performTvClick
-import app.seanime.tv.ui.performTvImeDone
+import app.seanime.tv.ui.enterTvTextAndDismissIme
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
@@ -193,8 +193,7 @@ class AndroidIsolatedLibraryManagementTest {
             awaitFocused("library-rename-edit")
             remote(KeyEvent.KEYCODE_DPAD_CENTER)
             awaitFocused("library-rename-input")
-            compose.onNodeWithTag("library-rename-input").performTextReplacement(renamed.name)
-            compose.performTvImeDone("library-rename-input")
+            compose.enterTvTextAndDismissIme("library-rename-input", renamed.name)
             compose.onNodeWithTag("library-rename-input").assertTextContains(renamed.name)
             remote(KeyEvent.KEYCODE_DPAD_DOWN)
             compose.onNodeWithTag("text-entry-cancel").assertIsFocused()

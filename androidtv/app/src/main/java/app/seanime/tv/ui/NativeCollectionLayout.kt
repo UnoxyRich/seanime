@@ -61,7 +61,7 @@ internal fun NativeCollectionGrid(media: List<MediaCard>, state: LazyGridState =
     cardModifier: @Composable (Long) -> Modifier = { Modifier }, onCardFocused: (Long) -> Unit = {},
     cardActions: @Composable (MediaCard) -> Unit = {},
     artwork: @Composable (MediaCard, Modifier) -> Unit = { card, imageModifier ->
-        NativeArtwork(card.imageUrl, card.title, imageModifier, ContentScale.Crop)
+        NativeArtwork(card, card.title, imageModifier, ContentScale.Crop)
     }, onDetails: (Long) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize().testTag("collection-viewport")) {
         // Bound width and height together: widening the screen cannot turn four

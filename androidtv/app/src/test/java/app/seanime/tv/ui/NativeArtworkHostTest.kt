@@ -19,7 +19,9 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
 import app.seanime.tv.data.SeanimeApiClient
 import app.seanime.tv.data.NativeImageTransport
+import app.seanime.tv.data.MAX_NATIVE_MEDIA_ID
 import okhttp3.Dns
+import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -51,6 +53,142 @@ import java.util.concurrent.CopyOnWriteArrayList
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class NativeArtworkHostTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test fun customDetailMetadataAndRelatedCoversDecodeAtApiOriginWithoutItsCredentials() = fixture(apiHost = "api.example") { api, server, requests, show ->
+        val id = MAX_NATIVE_MEDIA_ID
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                requests += request
+                return when (request.path) {
+                    "/api/v1/library/anime-entry/$id" -> json(org.json.JSONObject("""{"media":{"id":$id,"title":"Custom detail","coverImage":{"large":"${api.baseUrl}/cover.png"},"bannerImage":"${api.baseUrl}/banner.png"},"episodes":[{"episodeNumber":1,"episodeTitle":"Cover fallback"}]}"""))
+                    "/api/v1/anilist/media-details/$id" -> json(org.json.JSONObject("""{"id":$id,"characters":{"edges":[{"role":"MAIN","node":{"id":1,"name":{"full":"Custom character"},"image":{"large":"${api.baseUrl}/character.png"}}}]},"relations":{"edges":[{"node":{"id":21,"type":"ANIME","title":"AniList relation","siteUrl":"https://anilist.co/anime/21","coverImage":{"large":"${api.baseUrl}/related.png"}}}]}}"""))
+                    "/cover.png" -> image(Color.RED)
+                    "/banner.png", "/related.png" -> image(Color.GREEN)
+                    "/character.png" -> image(Color.BLUE)
+                    else -> json(org.json.JSONObject())
+                }
+            }
+        }
+        show { AnimeDetailScreen(id, app.seanime.tv.data.SeanimeRepository(api), {}, {}) }
+        awaitImageDescription("Custom detail"); assertDescriptionPixel("Custom detail", Color.RED)
+        awaitImageDescription("Cover fallback thumbnail")
+        compose.onNodeWithContentDescription("Cover fallback thumbnail", useUnmergedTree = true).performScrollTo()
+        assertDescriptionPixel("Cover fallback thumbnail", Color.RED)
+        compose.onNodeWithTag("anime-more-information").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
+        awaitImageDescription("Custom detail banner"); assertDescriptionPixel("Custom detail banner", Color.GREEN)
+        awaitImageDescription("Custom character")
+        compose.onNodeWithContentDescription("Custom character", useUnmergedTree = true).performScrollTo()
+        assertDescriptionPixel("Custom character", Color.BLUE)
+        compose.onNodeWithTag("anime-information-relation:anime:21").performScrollTo()
+        awaitImageDescription("AniList relation"); assertDescriptionPixel("AniList relation", Color.GREEN)
+        val images = requests.filter { it.path?.endsWith(".png") == true }
+        assertEquals(setOf("/cover.png", "/banner.png", "/character.png", "/related.png"), images.map { it.path }.toSet())
+        images.forEach(::assertNoServerAuthority)
+        assertTrue(requests.filter { it.path?.startsWith("/api/") == true }.all { it.getHeader("X-Seanime-Token") == "fixture-native-token" })
+        capture("custom-detail-metadata-public-artwork")
+    }
+
+    @Test fun customDetailRejectsLocalUrlsAndForgedOfflineMarkersAcrossMetadata() = fixture { api, server, requests, show ->
+        val id = 4_294_967_297L
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                requests += request
+                return when (request.path) {
+                    "/api/v1/library/anime-entry/$id" -> json(org.json.JSONObject("""{"media":{"id":$id,"title":"Blocked custom","artworkOrigin":"SERVER","isDownloaded":true,"coverImage":{"large":"${server.url("/private-cover.png")}"},"bannerImage":"{{LOCAL_ASSETS}}/$id/banner.png"},"episodes":[{"episodeNumber":1,"episodeTitle":"Blocked episode","episodeMetadata":{"image":"{{LOCAL_ASSETS}}/$id/episode.png"}}]}"""))
+                    "/api/v1/status" -> json(org.json.JSONObject("""{"isOffline":false}"""))
+                    "/api/v1/anilist/media-details/$id" -> json(org.json.JSONObject("""{"id":$id,"characters":{"edges":[{"role":"MAIN","node":{"id":1,"name":{"full":"Blocked character"},"image":{"large":"${server.url("/private-character.png")}"}}}]},"relations":{"edges":[{"node":{"id":21,"type":"ANIME","title":"Blocked relation","coverImage":{"large":"${server.url("/private-related.png")}"}}}]}}"""))
+                    else -> json(org.json.JSONObject())
+                }
+            }
+        }
+        show { AnimeDetailScreen(id, app.seanime.tv.data.SeanimeRepository(api), {}, {}) }
+        awaitDescriptionPhase("Blocked custom", "Image unavailable")
+        awaitDescriptionPhase("Blocked episode thumbnail", "Image unavailable")
+        compose.onNodeWithTag("anime-more-information").performSemanticsAction(SemanticsActions.OnClick) { it() }
+        awaitDescriptionPhase("Blocked custom banner", "Image unavailable")
+        awaitDescriptionPhase("Blocked character", "Image unavailable")
+        compose.onNodeWithTag("anime-information-relation:anime:21").performScrollTo()
+        awaitDescriptionPhase("Blocked relation", "Image unavailable")
+        assertFalse(requests.any { it.path?.endsWith(".png") == true })
+        capture("custom-detail-metadata-rejected-local-artwork")
+    }
+
+    @Test fun verifiedOfflineCustomDetailStillDecodesServerSnapshotCoverAndEpisode() = fixture { api, server, requests, show ->
+        val id = 2_147_483_648L
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                requests += request
+                return when (request.path) {
+                    "/api/v1/library/anime-entry/$id" -> json(org.json.JSONObject("""{"media":{"id":$id,"title":"Offline custom","coverImage":{"large":"{{LOCAL_ASSETS}}/$id/cover.png"}},"episodes":[{"episodeNumber":1,"episodeTitle":"Offline episode","episodeMetadata":{"image":"{{LOCAL_ASSETS}}/$id/episode.png"}}]}"""))
+                    "/api/v1/status" -> json(org.json.JSONObject("""{"isOffline":true}"""))
+                    "/offline-assets/$id/cover.png" -> image(Color.GREEN)
+                    "/offline-assets/$id/episode.png" -> image(Color.BLUE)
+                    else -> json(org.json.JSONObject())
+                }
+            }
+        }
+        show { AnimeDetailScreen(id, app.seanime.tv.data.SeanimeRepository(api), {}, {}) }
+        awaitImageDescription("Offline custom"); assertDescriptionPixel("Offline custom", Color.GREEN)
+        awaitImageDescription("Offline episode thumbnail")
+        compose.onNodeWithContentDescription("Offline episode thumbnail", useUnmergedTree = true).performScrollTo()
+        assertDescriptionPixel("Offline episode thumbnail", Color.BLUE)
+        val images = requests.filter { it.path?.endsWith(".png") == true }
+        assertEquals(2, images.size)
+        images.forEach(::assertNoServerAuthority)
+        capture("custom-offline-detail-snapshot-artwork")
+    }
+
+    @Test fun trackedAndDownloadedCustomSnapshotsLoadOnlineAndOfflineWithoutCredentialsOrProviderCacheLeakage() = fixture { api, server, requests, show ->
+        val id = 4_294_967_297L
+        val offline = java.util.concurrent.atomic.AtomicBoolean(false)
+        var route by mutableIntStateOf(0)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                requests += request
+                return when (request.path) {
+                    "/api/v1/local/track" -> json(org.json.JSONArray().put(org.json.JSONObject("""{"mediaId":$id,"type":"manga","mangaEntry":{"media":{"id":$id,"title":"Tracked custom","coverImage":{"large":"{{LOCAL_ASSETS}}/$id/cover.png"}}}}""")))
+                    "/api/v1/manga/downloads" -> json(org.json.JSONArray().put(org.json.JSONObject("""{"mediaId":$id,"media":{"id":$id,"title":"Downloaded custom","isDownloaded":true,"coverImage":{"large":"{{LOCAL_ASSETS}}/$id/cover.png"}}}""")))
+                    "/api/v1/local/storage/size" -> json("1 MB")
+                    "/api/v1/local/updated" -> json(false)
+                    "/api/v1/status" -> json(org.json.JSONObject("""{"serverReady":true,"isOffline":${offline.get()},"user":{"isSimulated":false}}"""))
+                    "/api/v1/manga/source-refresh" -> json(org.json.JSONObject.NULL)
+                    "/offline-assets/$id/cover.png" -> image(Color.GREEN)
+                    else -> json(org.json.JSONObject())
+                }
+            }
+        }
+        show { key(route) {
+            val repo = remember { app.seanime.tv.data.SeanimeRepository(api) }
+            if (route < 2) FeatureScreen(TvFeature.OFFLINE, repo, {}, {})
+            else if (route < 4) MangaScreen(repo, initialMode = "downloaded")
+            else NativeArtwork(app.seanime.tv.data.MediaCard(id, "Direct provider", imageUrl = "{{LOCAL_ASSETS}}/$id/cover.png"),
+                "Direct provider", Modifier.size(100.dp))
+        } }
+        fun scrollTracked() {
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("1 tracked titles · 1 MB stored").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+                .performScrollToNode(hasContentDescription("Tracked custom"))
+        }
+        scrollTracked(); awaitImageDescription("Tracked custom"); assertDescriptionPixel("Tracked custom", Color.GREEN)
+        assertEquals(1, requests.count { it.path?.endsWith(".png") == true })
+        capture("custom-online-tracked-snapshot-artwork")
+        offline.set(true); compose.runOnIdle { route = 1 }
+        scrollTracked(); awaitImageDescription("Tracked custom"); assertDescriptionPixel("Tracked custom", Color.GREEN)
+        capture("custom-offline-tracked-snapshot-artwork")
+        offline.set(false); compose.runOnIdle { route = 2 }
+        awaitImageDescription("Downloaded custom cover"); assertDescriptionPixel("Downloaded custom cover", Color.GREEN)
+        // Coil may decode another size for the downloaded card's larger bounds.
+        assertTrue(requests.any { it.path?.endsWith(".png") == true })
+        capture("custom-online-downloaded-snapshot-artwork")
+        offline.set(true); compose.runOnIdle { route = 3 }
+        awaitImageDescription("Downloaded custom cover"); assertDescriptionPixel("Downloaded custom cover", Color.GREEN)
+        requests.filter { it.path?.endsWith(".png") == true }.forEach(::assertNoServerAuthority)
+        capture("custom-offline-downloaded-snapshot-artwork")
+        val assetRequestCount = requests.count { it.path?.endsWith(".png") == true }
+        compose.runOnIdle { route = 4 }
+        awaitDescriptionPhase("Direct provider", "Image unavailable")
+        assertEquals(assetRequestCount, requests.count { it.path?.endsWith(".png") == true })
+    }
 
     @Test fun featureActionsResumeHttpWorkOnAndroidMainThread() = fixture { api, server, requests, show ->
         val completed = java.util.concurrent.atomic.AtomicBoolean()
@@ -397,6 +535,16 @@ class NativeArtworkHostTest {
         }
         compose.waitForIdle()
     }
+    private fun awaitDescriptionPhase(description: String, phase: String) {
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithContentDescription(description, useUnmergedTree = true).fetchSemanticsNodes().singleOrNull()
+                ?.config?.getOrNull(SemanticsProperties.StateDescription) == phase
+        }
+    }
+    private fun assertNoServerAuthority(request: RecordedRequest) {
+        for (name in listOf("X-Seanime-Token", "X-Seanime-Client-Id", "X-Seanime-Client-Id-Proof", "Authorization", "Cookie", "Origin", "Referer"))
+            assertNull(name, request.getHeader(name))
+    }
     private fun assertDescriptionPixel(description: String, expected: Int) {
         val node = compose.onNodeWithContentDescription(description, useUnmergedTree = true).fetchSemanticsNode()
         val view = (node.root as ViewRootForTest).view
@@ -452,10 +600,13 @@ class NativeArtworkHostTest {
         bitmap.recycle()
         return MockResponse().setHeader("Content-Type", "image/png").setHeader("Cache-Control", "max-age=3600").setBody(Buffer().write(bytes))
     }
-    private fun fixture(test: (SeanimeApiClient, MockWebServer, CopyOnWriteArrayList<RecordedRequest>, (@Composable () -> Unit) -> Unit) -> Unit) {
+    private fun fixture(apiHost: String? = null, test: (SeanimeApiClient, MockWebServer, CopyOnWriteArrayList<RecordedRequest>, (@Composable () -> Unit) -> Unit) -> Unit) {
         MockWebServer().use { server ->
             server.start(InetAddress.getByName("127.0.0.1"), 0)
-            SeanimeApiClient(server.url("/").toString(), "fixture-native-token").use { api ->
+            val serverUrl = server.url("/").newBuilder().apply { apiHost?.let(::host) }.build().toString()
+            val apiHttp = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
+                .dns(object : Dns { override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1")) }).build()
+            SeanimeApiClient(serverUrl, "fixture-native-token", apiHttp).use { api ->
                 val requests = CopyOnWriteArrayList<RecordedRequest>()
                 var showing by mutableStateOf(true)
                 try {

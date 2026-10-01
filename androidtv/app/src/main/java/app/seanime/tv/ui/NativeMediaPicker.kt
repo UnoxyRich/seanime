@@ -103,7 +103,7 @@ internal fun NativeMediaPickerDialog(
                     androidx.tv.material3.Button(onClick = { onSelect(media); onDismiss() },
                         modifier = Modifier.fillMaxWidth().testTag("media-picker-${media.id}")) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            NativeArtwork(media.imageUrl, null, Modifier.size(48.dp, 68.dp), ContentScale.Crop)
+                            NativeArtwork(media, null, Modifier.size(48.dp, 68.dp), ContentScale.Crop)
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(media.title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                                 val progress = if (manga) "Chapter ${media.progress}" else "Episode ${media.progress}"

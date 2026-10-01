@@ -7,6 +7,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NativeAnimeMetadataModelsTest {
+    @Test fun customMetadataCannotLaunderRelatedArtworkThroughAnAniListIdentity() {
+        val id = MAX_NATIVE_MEDIA_ID
+        val node = jsonObject("id" to 21, "type" to "ANIME", "title" to "Related AniList title",
+            "siteUrl" to "https://anilist.co/anime/21", "coverImage" to jsonObject("large" to "/private-cover.png"))
+        val raw = jsonObject("id" to id,
+            "relations" to jsonObject("edges" to JSONArray().put(jsonObject("node" to node))),
+            "recommendations" to jsonObject("edges" to JSONArray().put(jsonObject("node" to jsonObject("mediaRecommendation" to node)))))
+        val supplement = parseNativeAnimeSupplement(raw, id)
+        (supplement.relations + supplement.recommendations).forEach {
+            assertEquals(21L, it.media.id)
+            assertEquals(MediaArtworkOrigin.PROVIDER, it.media.artworkOrigin)
+            assertTrue(it.media.providerArtwork())
+        }
+    }
+
     @Test fun baseFactsPreserveMissingAndPartialValuesAndTheScorePreference() {
         val media = SeanimeJson.media(jsonObject("id" to 1, "title" to jsonObject("userPreferred" to "Fixture title", "romaji" to "Other title"),
             "status" to "FINISHED", "season" to "FALL", "seasonYear" to 2018, "duration" to 24,

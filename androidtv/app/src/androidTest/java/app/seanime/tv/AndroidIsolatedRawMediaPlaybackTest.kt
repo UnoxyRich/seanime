@@ -2,6 +2,7 @@ package app.seanime.tv
 
 import android.content.Intent
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.IntentFilter
 import android.content.pm.PackageManager
@@ -294,12 +295,18 @@ class AndroidIsolatedRawMediaPlaybackTest {
             .setPackage(instrumentation.context.packageName).putExtra("source", uri.toString()).putExtra("finish", finish))
         ContextCompat.registerReceiver(context, receiver, IntentFilter(TestStreamingExternalPlayerActivity.RESULT), ContextCompat.RECEIVER_EXPORTED)
         try {
+            val handoff = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/*")
             val candidates = context.packageManager.queryIntentActivities(
-                Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/*"), PackageManager.MATCH_DEFAULT_ONLY)
-            assertTrue("The installed test APK must resolve the actual HTTP video handoff", candidates.any {
+                handoff, PackageManager.MATCH_DEFAULT_ONLY)
+            val resolvesOwnedPlayer = candidates.any {
                 it.activityInfo.packageName == instrumentation.context.packageName &&
                     it.activityInfo.name == TestStreamingExternalPlayerActivity::class.java.name
-            })
+            }
+            // The existing failure/finally checkpoints persist this typed object for
+            // the evidence collector, which intentionally strips assertion messages.
+            val resolutionFailure = if (resolvesOwnedPlayer) null else externalResolutionDiagnostics(handoff, candidates.size)
+                .also { manifest.put("externalResolution", it) }
+            assertTrue("The installed test APK must resolve the actual HTTP video handoff; $resolutionFailure", resolvesOwnedPlayer)
             // The raw-route exercise leaves the real timeline focused. Reach
             // More and its last choice through the remote, waiting for the
             // exact focused Android window before sending Select.
@@ -379,6 +386,58 @@ class AndroidIsolatedRawMediaPlaybackTest {
             NativeScreenshotEvidence.capture("isolated-go-external-return-paused")
             manifest.put("externalReturnPaused", true).put("externalHostReleased", true)
         } finally { command(finish = true); context.unregisterReceiver(receiver) }
+    }
+
+    /** Failure-only facts about this known test receiver; never include the scoped URI or other apps. */
+    private fun externalResolutionDiagnostics(handoff: Intent, candidateCount: Int): JSONObject {
+        val context = instrumentation.targetContext
+        val testContext = instrumentation.context
+        val pm = context.packageManager
+        val component = ComponentName(testContext.packageName, TestStreamingExternalPlayerActivity::class.java.name)
+        val facts = JSONObject()
+            .put("sdk", Build.VERSION.SDK_INT)
+            .put("scheme", when (val scheme = handoff.scheme) {
+                "http", "https", "content", "file" -> scheme
+                null -> "missing"
+                else -> "other"
+            })
+            .put("mimeType", if (handoff.type == "video/*") "video/*" else "other")
+            .put("candidateCount", candidateCount)
+            .put("targetContextOwnsCallerUid", context.applicationInfo.uid == Process.myUid())
+            .put("testContextOwnsCallerUid", testContext.applicationInfo.uid == Process.myUid())
+            .put("targetAndTestPackagesDiffer", context.packageName != testContext.packageName)
+        fun probe(name: String, block: () -> Any?) {
+            try { facts.put(name, block() ?: JSONObject.NULL) }
+            catch (_: Exception) { facts.put(name, "unavailable") }
+        }
+        probe("receiver") {
+            @Suppress("DEPRECATION")
+            val info = pm.getActivityInfo(component, PackageManager.MATCH_DISABLED_COMPONENTS)
+            JSONObject().put("enabled", info.enabled).put("exported", info.exported)
+                .put("applicationEnabled", info.applicationInfo.enabled)
+                .put("receiverOwnsCallerUid", info.applicationInfo.uid == Process.myUid())
+                .put("receiverOwnsTestUid", info.applicationInfo.uid == testContext.applicationInfo.uid)
+                .put("testOnly", info.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_TEST_ONLY != 0)
+                .put("stopped", info.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_STOPPED != 0)
+        }
+        probe("componentEnabledSetting") { pm.getComponentEnabledSetting(component) }
+        probe("applicationEnabledSetting") { pm.getApplicationEnabledSetting(component.packageName) }
+        fun matches(intent: Intent) = pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY).any {
+            it.activityInfo.packageName == component.packageName && it.activityInfo.name == component.className
+        }
+        probe("scopedWildcardResolves") { matches(Intent(handoff).setPackage(component.packageName)) }
+        probe("concreteVideoResolves") { matches(Intent(handoff).setDataAndType(handoff.data, "video/mp4")) }
+        probe("scopedConcreteVideoResolves") {
+            matches(Intent(handoff).setDataAndType(handoff.data, "video/mp4").setPackage(component.packageName))
+        }
+        probe("declaredFilterMatches") {
+            IntentFilter(Intent.ACTION_VIEW).apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+                addDataScheme("http")
+                addDataType("video/*")
+            }.match(handoff.action, handoff.type, handoff.scheme, handoff.data, handoff.categories, "NativeGoRawFixture") >= 0
+        }
+        return facts.also { Log.i("NativeGoRawFixture", "external-resolution=$it") }
     }
 
     private fun hasNativeFocus(tag: String): Boolean =

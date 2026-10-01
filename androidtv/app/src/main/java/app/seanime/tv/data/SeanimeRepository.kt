@@ -22,9 +22,9 @@ class SeanimeRepository(val client: SeanimeApiClient = SeanimeApiClient()) {
     }
 
     suspend fun status(): ServerStatus = SeanimeJson.status(get("/status").objectValue("/status"))
-    suspend fun library(): List<MediaCard> = SeanimeJson.collection(get("/library/collection"))
-    suspend fun animeList(refresh: Boolean = false): List<MediaCard> = SeanimeJson.collection(if (refresh) post("/anilist/collection/raw") else get("/anilist/collection/raw"))
-    suspend fun mangaList(): List<MediaCard> = SeanimeJson.collection(get("/manga/collection"), true)
+    suspend fun library(): List<MediaCard> = authorizeOfflineArtwork(SeanimeJson.collection(get("/library/collection")))
+    suspend fun animeList(refresh: Boolean = false): List<MediaCard> = authorizeOfflineArtwork(SeanimeJson.collection(if (refresh) post("/anilist/collection/raw") else get("/anilist/collection/raw")))
+    suspend fun mangaList(): List<MediaCard> = authorizeOfflineArtwork(SeanimeJson.collection(get("/manga/collection"), true))
     suspend fun search(query: String, manga: Boolean = false, page: Int = 1): List<MediaCard> {
         val body = jsonObject("page" to page, "perPage" to 40, "sort" to JSONArray(listOf(if (query.isBlank()) "TRENDING_DESC" else "SEARCH_MATCH")))
         if (query.isNotBlank()) body.put("search", query)
@@ -41,14 +41,27 @@ class SeanimeRepository(val client: SeanimeApiClient = SeanimeApiClient()) {
     }
     suspend fun animeDetails(id: Long): MediaDetails {
         val raw = get("/library/anime-entry/$id").objectValue("/library/anime-entry")
-        return MediaDetails(nativeResponseEntry(raw, id, "/api/v1/library/anime-entry/$id"),
-            nativeResponseObjects(raw.opt("episodes"), "/api/v1/library/anime-entry/$id", "episodes").map(SeanimeJson::episode), raw)
+        val episodes = nativeResponseObjects(raw.opt("episodes"), "/api/v1/library/anime-entry/$id", "episodes").map(SeanimeJson::episode)
+        val media = nativeResponseEntry(raw, id, "/api/v1/library/anime-entry/$id")
+        return MediaDetails(authorizeOfflineArtwork(listOf(media), episodes.mapNotNull { it.imageUrl }).single(), episodes, raw)
     }
     suspend fun animeMetadata(id: Long): JSONObject = get("/anilist/media-details/$id").objectValue("/anilist/media-details")
     suspend fun episodeCollection(id: Long): List<Episode> = get("/anime/episode-collection/$id").objectValue("/anime/episode-collection").objects("episodes").map(SeanimeJson::episode)
     suspend fun mangaDetails(id: Long): MediaDetails {
         val raw = get("/manga/entry/$id").objectValue("/manga/entry")
-        return MediaDetails(nativeResponseEntry(raw, id, "/api/v1/manga/entry/$id", true), raw = raw)
+        return MediaDetails(authorizeOfflineArtwork(listOf(nativeResponseEntry(raw, id, "/api/v1/manga/entry/$id", true))).single(), raw = raw)
+    }
+
+    /** Call only for active-platform media routes, never direct custom catalog/plugin results. */
+    internal suspend fun authorizeOfflineArtwork(media: List<MediaCard>, episodeImages: List<String> = emptyList()): List<MediaCard> {
+        val snapshots = media.filter { card -> card.artworkOrigin == MediaArtworkOrigin.PROVIDER &&
+            (listOfNotNull(card.imageUrl, card.bannerUrl) + episodeImages).any { MediaArtworkOrigin.isSnapshotAsset(it, card.id) } }.map { it.id }.toSet()
+        if (snapshots.isEmpty()) return media
+        // Fail closed for artwork without turning a status-read failure into a missing library.
+        val offline = try { status().offline }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { false }
+        return if (!offline) media else media.map { if (it.id in snapshots) it.withLocalArtwork() else it }
     }
     suspend fun editListEntry(mediaId: Long, status: String, progress: Int, score: Int? = null, manga: Boolean = false): Any? =
         post("/anilist/list-entry", jsonObject("mediaId" to mediaId, "status" to status, "progress" to progress, "type" to if (manga) "manga" else "anime").apply { score?.let { put("score", it) } })
@@ -156,7 +169,29 @@ class SeanimeRepository(val client: SeanimeApiClient = SeanimeApiClient()) {
     suspend fun trackOffline(mediaId: Long, manga: Boolean = false): Any? = post("/local/track", jsonObject("media" to JSONArray().put(jsonObject("mediaId" to mediaId, "type" to if (manga) "manga" else "anime"))))
     suspend fun syncOffline(): Any? = post("/local/local")
 
-    suspend fun playlists(): List<Playlist> = get("/playlists").objectList().map(SeanimeJson::playlist)
+    suspend fun playlists(): List<Playlist> = authorizePlaylistArtwork(get("/playlists").objectList().map(SeanimeJson::playlist))
+    internal suspend fun authorizePlaylistArtwork(playlists: List<Playlist>): List<Playlist> {
+        // Playlists retain old provider objects. Verify snapshot images against a fresh active
+        // platform entry before enabling even the bounded, credential-free local asset route.
+        val snapshots = mutableMapOf<Long, Set<String>>()
+        for (item in playlists.flatMap { it.episodes }) {
+            val media = item.episode?.raw?.optJSONObject("baseAnime")?.let { SeanimeJson.media(it) } ?: continue
+            val image = item.episode?.imageUrl ?: media.imageUrl
+            if (media.artworkOrigin != MediaArtworkOrigin.PROVIDER || !MediaArtworkOrigin.isSnapshotAsset(image, media.id) || media.id in snapshots) continue
+            snapshots[media.id] = try {
+                val details = animeDetails(media.id)
+                if (details.media.artworkOrigin == MediaArtworkOrigin.LOCAL_ASSET)
+                    (listOfNotNull(details.media.imageUrl, details.media.bannerUrl) + details.episodes.mapNotNull { it.imageUrl }).toSet()
+                else emptySet()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { emptySet() }
+        }
+        return playlists.map { playlist -> playlist.copy(episodes = playlist.episodes.map { item ->
+            val media = item.episode?.raw?.optJSONObject("baseAnime")?.let { SeanimeJson.media(it) }
+            val image = item.episode?.imageUrl ?: media?.imageUrl
+            if (image != null && image in snapshots[media?.id].orEmpty()) item.copy(artworkOrigin = MediaArtworkOrigin.LOCAL_ASSET) else item
+        }) }
+    }
     suspend fun createPlaylist(name: String, episodes: List<PlaylistEpisode> = emptyList()): Playlist =
         SeanimeJson.playlist(post("/playlist", jsonObject("name" to name, "episodes" to playlistEpisodesJson(episodes))).objectValue("/playlist"))
     suspend fun updatePlaylist(playlist: Playlist): Playlist = SeanimeJson.playlist(request("PATCH", "/api/v1/playlist", jsonObject("dbId" to playlist.id, "name" to playlist.name, "episodes" to playlistEpisodesJson(playlist.episodes))).objectValue("/playlist"))

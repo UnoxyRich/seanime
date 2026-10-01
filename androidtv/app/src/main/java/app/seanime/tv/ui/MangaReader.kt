@@ -45,7 +45,7 @@ import org.json.JSONObject
 internal fun MangaScreen(repo: SeanimeRepository, initialMode: String = "library", initialQuery: String = "", initialMediaId: Long = 0L,
     initialDiscovery: AnimeDiscoveryFilters? = null, initialDiscoveryPage: Int = 1) {
     var directMediaId by rememberSaveable { mutableLongStateOf(initialMediaId) }
-    if (directMediaId > 0) { NativeMangaEntryRoute(repo, directMediaId) { directMediaId = 0L }; return }
+    if (directMediaId > 0) { NativeMangaEntryRoute(repo, directMediaId, onBack = { directMediaId = 0L }); return }
     val action = rememberFeatureAction()
     var catalogTitles by remember { mutableStateOf<List<MediaCard>>(emptyList()) }
     var collection by remember { mutableStateOf(PersonalCollection()) }
@@ -93,7 +93,7 @@ internal fun MangaScreen(repo: SeanimeRepository, initialMode: String = "library
         } else catalogTitles = when (mode) {
             "downloaded" -> repo.mangaDownloads().map { item ->
                 val media = item.optJSONObject("media") ?: JSONObject().put("id", item.optMediaId("mediaId")).put("title", "Manga ${item.optMediaId("mediaId")}")
-                SeanimeJson.media(media, manga = true)
+                SeanimeJson.media(media, manga = true).withLocalArtwork()
             }
             else -> emptyList()
         }
@@ -133,7 +133,7 @@ internal fun MangaScreen(repo: SeanimeRepository, initialMode: String = "library
         return
     }
     if (mode == "search") {
-        if (discoveryMediaId > 0L) NativeMangaEntryRoute(repo, discoveryMediaId) { discoveryMediaId = 0L }
+        if (discoveryMediaId > 0L) NativeMangaEntryRoute(repo, discoveryMediaId, onBack = { discoveryMediaId = 0L })
         else discoveryStates.SaveableStateProvider("manga-catalog") {
             AnimeDiscoveryScreen(repo, onDetails = { discoveryMediaId = it }, onBack = { mode = "library"; discoveryGranted.value = false },
                 initialFilters = initialDiscovery ?: AnimeDiscoveryFilters(search = query, manga = true), initialPage = initialDiscoveryPage)
@@ -178,7 +178,7 @@ internal fun MangaScreen(repo: SeanimeRepository, initialMode: String = "library
         items(titles, key = { it.id }) { manga ->
             FeaturePanel(manga.title, listOf(personalCollectionStatusLabel(manga.status, true), "Chapter ${manga.progress}${manga.totalEpisodes?.let { " / $it" }.orEmpty()}").filter(String::isNotBlank).joinToString(" · ")) {
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    NativeArtwork(url = manga.imageUrl, contentDescription = "${manga.title} cover", modifier = Modifier.size(86.dp, 124.dp), contentScale = ContentScale.Crop)
+                    NativeArtwork(media = manga, contentDescription = "${manga.title} cover", modifier = Modifier.size(86.dp, 124.dp), contentScale = ContentScale.Crop)
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.weight(1f)) {
                         if (manga.description.isNotBlank()) Text(rememberNativeSynopsis(manga.description), maxLines = 3, overflow = TextOverflow.Ellipsis)
                         ActionButton("Chapters", modifier = Modifier.testTag("manga-collection-${manga.id}")
@@ -203,7 +203,7 @@ internal fun MangaScreen(repo: SeanimeRepository, initialMode: String = "library
 }
 
 @Composable
-internal fun NativeMangaEntryRoute(repo: SeanimeRepository, id: Long, onBack: () -> Unit) {
+internal fun NativeMangaEntryRoute(repo: SeanimeRepository, id: Long, onBack: () -> Unit, artworkFromProvider: Boolean = false) {
     var media by remember { mutableStateOf<MediaCard?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
@@ -211,7 +211,9 @@ internal fun NativeMangaEntryRoute(repo: SeanimeRepository, id: Long, onBack: ()
     BackHandler(onBack = onBack)
     LaunchedEffect(repo, id, retry) {
         error = null
-        try { media = repo.mangaDetails(id).media }
+        try { media = repo.mangaDetails(id).media.let {
+            if (artworkFromProvider) it.copy(artworkOrigin = MediaArtworkOrigin.PROVIDER) else it
+        } }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = e.message ?: "Couldn't open this manga" }
     }
@@ -627,7 +629,10 @@ internal fun MangaReader(
                                         modifier = Modifier.fillMaxSize(), onLoading = { imageLoading = true; imageFailed = false; renderedPages = renderedPages - index },
                                         onSuccess = { result -> recordDimensions(index, result.result.drawable.intrinsicWidth, result.result.drawable.intrinsicHeight)
                                             imageLoading = false; imageFailed = false; renderedPages = renderedPages + index },
-                                        onError = { imageLoading = false; imageFailed = true; renderedPages = renderedPages - index })
+                                        onError = { result ->
+                                            imageLoading = false; imageFailed = true; renderedPages = renderedPages - index
+                                            NativeNetworkFailure.logDebug(context, NativeNetworkFailure.Surface.MANGA_IMAGE, result.result.throwable)
+                                        })
                                     if (imageLoading) CircularProgressIndicator()
                                     if (imageFailed) Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("Page ${index + 1} couldn't load")

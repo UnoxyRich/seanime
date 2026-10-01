@@ -1,5 +1,10 @@
 # Native TV layout and live-data correction — October 1, 2026
 
+**Historical R21 checkpoint.** The source, APK hashes, counts and uses of
+"current" below refer to the retained R21 candidate. Subsequent actual emulator
+results, fixes and provider-enabled candidates are recorded in the
+[current per-source device review](2026-10-01-remote-ui-review.md).
+
 This records the correction following feedback that the previous UI was not
 usable enough on TV. It supersedes the presentation claims in the earlier
 [review handoff](2026-10-01-native-tv-readiness.md), whose APKs are historical.

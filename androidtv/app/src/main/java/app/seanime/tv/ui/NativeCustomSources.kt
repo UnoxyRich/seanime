@@ -15,6 +15,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import app.seanime.tv.data.ExtensionItem
 import app.seanime.tv.data.MediaCard
+import app.seanime.tv.data.MediaArtworkOrigin
 import app.seanime.tv.data.SeanimeJson
 import app.seanime.tv.data.SeanimeRepository
 import kotlinx.coroutines.CancellationException
@@ -36,7 +37,7 @@ internal suspend fun loadNativeCustomSourcePage(repo: SeanimeRepository, provide
     // The Go response declares a nullable slice without omitempty: null is a
     // legitimate empty page, while a missing field or another type is invalid.
     check(raw.has("media") && (raw.isNull("media") || raw.optJSONArray("media") != null)) { "The provider did not return a media list" }
-    val media = raw.optJSONArray("media").uiObjects().map { SeanimeJson.media(it, type == "manga") }
+    val media = raw.optJSONArray("media").uiObjects().map { SeanimeJson.media(it, type == "manga").copy(artworkOrigin = MediaArtworkOrigin.PROVIDER) }
     check(media.all { it.id > 0 } && media.map { it.id }.distinct().size == media.size) { "The provider returned missing or duplicate media identities" }
     return NativeCustomSourcePage(media, page, raw.optInt("totalPages", 1).coerceAtLeast(page))
 }
@@ -90,8 +91,8 @@ internal fun NativeCustomSources(repo: SeanimeRepository, initialProvider: Strin
     }
     fun returnFromDetail() { selectedId = 0L; cardGranted.value = false }
     if (selectedId > 0L) {
-        if (type == "manga") NativeMangaEntryRoute(repo, selectedId, ::returnFromDetail)
-        else AnimeDetailScreen(selectedId, repo, onPlay, ::returnFromDetail)
+        if (type == "manga") NativeMangaEntryRoute(repo, selectedId, ::returnFromDetail, artworkFromProvider = true)
+        else AnimeDetailScreen(selectedId, repo, onPlay, ::returnFromDetail, artworkFromProvider = true)
         return
     }
     BackHandler(onBack = onBack)

@@ -215,7 +215,7 @@ internal fun NativeDiscoveryContent(
     cardModifier: @Composable (MediaCard) -> Modifier = { Modifier },
     cardActions: @Composable (MediaCard) -> Unit = {},
     artwork: @Composable (MediaCard, Modifier) -> Unit = { media, imageModifier ->
-        NativeArtwork(media.imageUrl, media.title, imageModifier, ContentScale.Crop)
+        NativeArtwork(media, media.title, imageModifier, ContentScale.Crop)
     },
 ) {
     Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {

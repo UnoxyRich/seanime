@@ -641,7 +641,52 @@ def sanitize_journey_manifest(data, directory):
     return clean
 
 
+def sanitize_external_resolution(data):
+    relationships = ("targetContextOwnsCallerUid", "testContextOwnsCallerUid", "targetAndTestPackagesDiffer")
+    matches = ("scopedWildcardResolves", "concreteVideoResolves", "scopedConcreteVideoResolves", "declaredFilterMatches")
+    settings = ("componentEnabledSetting", "applicationEnabledSetting")
+    keys = {"sdk", "scheme", "mimeType", "candidateCount", "receiver", *relationships, *matches, *settings}
+    if type(data) is not dict or set(data) != keys:
+        raise ValueError("Invalid external resolution schema")
+    clean = {}
+    for key, minimum, maximum in (("sdk", 23, 1000), ("candidateCount", 0, 4096)):
+        if type(data[key]) is not int or not minimum <= data[key] <= maximum:
+            raise ValueError("Invalid external resolution number")
+        clean[key] = data[key]
+    for key, allowed in (("scheme", {"http", "https", "content", "file", "missing", "other"}),
+                         ("mimeType", {"video/*", "other"})):
+        if type(data[key]) is not str or data[key] not in allowed:
+            raise ValueError("Invalid external resolution enum")
+        clean[key] = data[key]
+    for key in relationships:
+        if type(data[key]) is not bool:
+            raise ValueError("Invalid external resolution relationship")
+        clean[key] = data[key]
+    for key in matches:
+        if not (type(data[key]) is bool or type(data[key]) is str and data[key] == "unavailable"):
+            raise ValueError("Invalid external resolution match")
+        clean[key] = data[key]
+    for key in settings:
+        if not (type(data[key]) is int and 0 <= data[key] <= 4
+                or type(data[key]) is str and data[key] == "unavailable"):
+            raise ValueError("Invalid external resolution setting")
+        clean[key] = data[key]
+    receiver = data["receiver"]
+    receiver_keys = {"enabled", "exported", "applicationEnabled", "receiverOwnsCallerUid",
+                     "receiverOwnsTestUid", "testOnly", "stopped"}
+    if type(receiver) is str and receiver == "unavailable":
+        clean["receiver"] = receiver
+    elif (type(receiver) is dict and set(receiver) == receiver_keys
+          and all(type(value) is bool for value in receiver.values())):
+        clean["receiver"] = {key: receiver[key] for key in sorted(receiver_keys)}
+    else:
+        raise ValueError("Invalid external resolution receiver")
+    return clean
+
+
 def sanitize_owned_manifest(data, directory, invocation):
+    if isinstance(data, dict) and "externalResolution" in data and invocation != "owned-external-player":
+        raise ValueError("External resolution belongs only to its owned fixture")
     if invocation == "owned-library-journey":
         return sanitize_journey_manifest(data, directory)
     if not isinstance(data, dict):
@@ -684,6 +729,10 @@ def sanitize_owned_manifest(data, directory, invocation):
         raise ValueError("Invalid fixture stage or outcome")
     clean = {"kind": spec["kind"], "root": directory, **paths, "stage": data["stage"], "outcome": data["outcome"],
              "scope": "owned generated media and isolated native fixtures; no live-service or retained-state-restoration claim"}
+    if "externalResolution" in data:
+        if data["outcome"] != "failed":
+            raise ValueError("External resolution is failure-only evidence")
+        clean["externalResolution"] = sanitize_external_resolution(data["externalResolution"])
     for key, allowed in (("hostStatusAfterRun", {"stopped", "starting", "ready", "running", "stopping", "error"}),
                          ("failedAt", stages)):
         if key in data:

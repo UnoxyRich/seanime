@@ -403,7 +403,7 @@ private fun BrowseScreen(feature: TvFeature, repo: SeanimeRepository, onDetails:
 @Composable
 internal fun AnimeDetailScreen(id: Long, repo: SeanimeRepository, onPlay: (PlaybackRequest) -> Unit, onBack: () -> Unit,
     initialSourceMode: String? = null, initialEpisode: Int = 1,
-    navigationOwnsFocus: Boolean = LocalNativeNavigationOwnsFocus.current) {
+    navigationOwnsFocus: Boolean = LocalNativeNavigationOwnsFocus.current, artworkFromProvider: Boolean = false) {
     var showInformation by rememberSaveable(id) { mutableStateOf(false) }
     var details by remember { mutableStateOf<MediaDetails?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -445,7 +445,9 @@ internal fun AnimeDetailScreen(id: Long, repo: SeanimeRepository, onPlay: (Playb
     }
     LaunchedEffect(id, reload) {
         error = null
-        try { details = repo.animeDetails(id) }
+        try { details = repo.animeDetails(id).let {
+            if (artworkFromProvider) it.copy(media = it.media.copy(artworkOrigin = MediaArtworkOrigin.PROVIDER)) else it
+        } }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = e.message ?: "Couldn't load this show" }
     }
@@ -464,7 +466,7 @@ internal fun AnimeDetailScreen(id: Long, repo: SeanimeRepository, onPlay: (Playb
         else -> LazyColumn(state = detailListState, verticalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxSize().testTag("anime-detail-content")) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
-                    NativeArtwork(data.media.imageUrl, data.media.title, contentScale = ContentScale.Crop,
+                    NativeArtwork(data.media, data.media.title, contentScale = ContentScale.Crop,
                         modifier = Modifier.width(150.dp).height(215.dp).background(Panel, RoundedCornerShape(12.dp)))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(data.media.title, style = MaterialTheme.typography.headlineMedium)
@@ -495,8 +497,8 @@ internal fun AnimeDetailScreen(id: Long, repo: SeanimeRepository, onPlay: (Playb
                     modifier = Modifier.fillMaxWidth().testTag("episode-${episode.number}")
                         .then(if (!navigationOwnsFocus && episodeIdentity(episode) == sourceOpener) Modifier.initialTvFocus(episodeReturnFocus, episodeReturnGranted) else Modifier)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        NativeArtwork(episode.imageUrl ?: data.media.imageUrl, "${episode.title} thumbnail",
-                            Modifier.size(112.dp, 63.dp), ContentScale.Crop)
+                        NativeArtwork(data.media, "${episode.title} thumbnail",
+                            Modifier.size(112.dp, 63.dp), ContentScale.Crop, url = episode.imageUrl ?: data.media.imageUrl)
                         Text("${episode.number}. ${episode.title}", maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                         Text(if (episode.isNakama) "Shared library" else if (episode.isDownloaded) "On device" else "Choose source", color = Accent, fontSize = 14.sp)
                     }

@@ -23,6 +23,9 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import app.seanime.tv.data.NativeArtworkUrl
+import app.seanime.tv.data.MediaCard
+import app.seanime.tv.data.MediaArtworkOrigin
+import app.seanime.tv.data.providerArtwork
 import app.seanime.tv.data.ProviderUrlPolicy
 import app.seanime.tv.data.NativeImageTransport
 import app.seanime.tv.data.SeanimeApiClient
@@ -60,12 +63,23 @@ internal fun NativeArtworkProvider(api: SeanimeApiClient, transportFactory: (Sea
 
 @Composable
 internal fun NativeArtwork(
+    media: MediaCard,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Fit,
+    url: String? = media.imageUrl,
+) = NativeArtwork(url, contentDescription, modifier, contentScale, providerResult = media.providerArtwork(url),
+    offlineAssetMediaId = media.id.takeIf { media.artworkOrigin == MediaArtworkOrigin.LOCAL_ASSET && !media.providerArtwork(url) })
+
+@Composable
+internal fun NativeArtwork(
     url: String?,
     contentDescription: String?,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Fit,
     headers: Map<String, String> = emptyMap(),
     providerResult: Boolean = false,
+    offlineAssetMediaId: Long? = null,
 ) {
     val owner = LocalArtwork.current
     val context = LocalContext.current
@@ -75,11 +89,11 @@ internal fun NativeArtwork(
     }
     // A provider can serve different covers at one URL depending on its headers. Include that
     // authority in memory identity; secrets stay in a hash, never a readable cache key or URL.
-    val cacheHeaders = if (!providerResult && resolved != null && owner.api.isServerUrl(resolved)) headers + owner.api.requestHeaders() else headers
-    val request = remember(context, resolved, headers, cacheHeaders, providerResult) {
+    val cacheHeaders = if (offlineAssetMediaId != null) emptyMap() else if (!providerResult && resolved != null && owner.api.isServerUrl(resolved)) headers + owner.api.requestHeaders() else headers
+    val request = remember(context, resolved, headers, cacheHeaders, providerResult, offlineAssetMediaId) {
         ImageRequest.Builder(context).data(resolved).crossfade(false)
-            .tag(NativeImageTransport.SourceHeaders::class.java, NativeImageTransport.SourceHeaders(headers, providerResult))
-            .apply { if (resolved != null) memoryCacheKey(artworkCacheKey(resolved, cacheHeaders, providerResult)) }.build()
+            .tag(NativeImageTransport.SourceHeaders::class.java, NativeImageTransport.SourceHeaders(headers, providerResult, offlineAssetMediaId))
+            .apply { if (resolved != null) memoryCacheKey(artworkCacheKey(resolved, cacheHeaders, providerResult, offlineAssetMediaId)) }.build()
     }
     var phase by remember(request) { mutableStateOf(if (resolved == null) { if (providerResult && !url.isNullOrBlank()) ArtworkPhase.FAILED else ArtworkPhase.ABSENT } else ArtworkPhase.LOADING) }
     Box(modifier = modifier.clipToBounds().semantics(mergeDescendants = true) {
@@ -125,9 +139,9 @@ private fun BoxScope.ArtworkPlaceholder(label: String) {
 }
 
 /** Header-sensitive memory identity prevents a recycled provider card from displaying stale pixels. */
-private fun artworkCacheKey(url: String, headers: Map<String, String>, providerResult: Boolean): String {
+private fun artworkCacheKey(url: String, headers: Map<String, String>, providerResult: Boolean, offlineAssetMediaId: Long?): String {
     val identity = buildString {
-        append(if (providerResult) "provider:" else "trusted:")
+        append(if (offlineAssetMediaId != null) "local-asset:$offlineAssetMediaId:" else if (providerResult) "provider:" else "trusted:")
         append(url.length).append(':').append(url)
         headers.entries.sortedBy { it.key.lowercase() }.forEach { (name, value) ->
             val normalized = name.lowercase()
