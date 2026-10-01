@@ -48,7 +48,11 @@ import okhttp3.Call
 import androidx.lifecycle.Lifecycle
 import kotlinx.coroutines.ensureActive
 import java.util.concurrent.TimeUnit
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
+import app.seanime.tv.data.ProviderUrlPolicy
+import app.seanime.tv.data.ProviderMediaContext
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.analytics.AnalyticsListener
@@ -130,6 +134,9 @@ class NativePlayerActivity : ComponentActivity() {
     @Volatile private var playbackRecoveryDismissed = false
     private val checkpointExecutor = Executors.newSingleThreadExecutor { task -> Thread(task, "Seanime TV playback checkpoint") }
     private val subtitleCacheFiles = mutableListOf<File>()
+    private val mediaHttpClients = mutableListOf<OkHttpClient>()
+    private data class MediaAuthority(val context: ProviderMediaContext, val inlineSubtitles: Set<String>)
+    private class MediaHeaders(val interceptor: PlaybackHeaderInterceptor)
     private val progressHandler = Handler(Looper.getMainLooper())
     private val screenshotExecutor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "Seanime TV screenshot")
@@ -265,14 +272,29 @@ class NativePlayerActivity : ComponentActivity() {
                 return
             }
         }
-        val httpClient = OkHttpClient.Builder()
+        fun httpClient(provider: Boolean): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
             .followRedirects(true).followSslRedirects(false)
-            .addNetworkInterceptor(PlaybackHeaderInterceptor { url -> NativePlaybackBus.headerProvider?.invoke(url).orEmpty() })
-            .build()
-        val httpFactory = OkHttpDataSource.Factory(httpClient).setUserAgent("Seanime TV/0.1.0")
-        val dataSources = DefaultDataSource.Factory(this, httpFactory)
-        val nativeAss = NativeAssSession(this, dataSources, activePlayerView?.subtitleView)
+            .addNetworkInterceptor { chain -> requireNotNull(chain.request().tag(MediaHeaders::class.java)).interceptor.intercept(chain) }
+            .apply { if (provider) ProviderUrlPolicy.secureClient(this) }
+            .build().also { mediaHttpClients.add(it) }
+        val trustedHttp = httpClient(false)
+        val providerHttp = httpClient(true)
+        val nativeAss = NativeAssSession(this, { item ->
+            // This tag belongs to the MediaItem, not the mutable currently selected episode.
+            val authority = item.localConfiguration?.tag as? MediaAuthority
+                ?: MediaAuthority(ProviderMediaContext(true), emptySet())
+            val calls = Call.Factory { request ->
+                val initial = request.url.toString()
+                authority.context.requireMediaUri(initial, authority.inlineSubtitles)
+                val client = if (authority.context.requiresPublicUrl(initial)) providerHttp else trustedHttp
+                val headers = MediaHeaders(PlaybackHeaderInterceptor { target -> authority.context.headersFor(initial, target) })
+                client.newCall(request.newBuilder().tag(MediaHeaders::class.java, headers).build())
+            }
+            val httpFactory = OkHttpDataSource.Factory(calls).setUserAgent("Seanime TV/0.1.0")
+            val delegates = DefaultDataSource.Factory(this, httpFactory)
+            DataSource.Factory { ProviderMediaDataSource(delegates.createDataSource(), authority.context, authority.inlineSubtitles) }
+        }, activePlayerView?.subtitleView)
         assSession = nativeAss
         val exoPlayer = nativeAss.player
         player = exoPlayer
@@ -843,8 +865,14 @@ class NativePlayerActivity : ComponentActivity() {
                 "mp4" -> builder.setMimeType(MimeTypes.VIDEO_MP4)
             }
         }
+        val previousSubtitleFiles = subtitleCacheFiles.toSet()
         val subtitles = parseSubtitleConfigurations(subtitleTracksJson)
         if (subtitles.isNotEmpty()) builder.setSubtitleConfigurations(subtitles)
+        val authority = (NativePlaybackBus.listener as? NativePlaybackCoordinator)?.mediaRequestContext(uri.toString())
+            ?: ProviderMediaContext(ProviderMediaContext.isProviderPlayback(playbackInfo))
+        val createdUris = subtitleCacheFiles.filter { it !in previousSubtitleFiles }.map { Uri.fromFile(it).toString() }.toSet()
+        val inlineUris = subtitles.map { it.uri.toString() }.filter { it in createdUris }.toSet()
+        builder.setTag(MediaAuthority(authority, inlineUris))
         return builder.build()
     }
 
@@ -867,6 +895,8 @@ class NativePlayerActivity : ComponentActivity() {
                     Uri.fromFile(file)
                 }
                 source.isNotBlank() -> {
+                    val playbackInfo = runCatching { JSONObject(NativePlaybackBus.playbackInfoJson) }.getOrNull()
+                    if (ProviderMediaContext.isProviderPlayback(playbackInfo) && runCatching { ProviderUrlPolicy.requirePublicUrl(source) }.isFailure) continue
                     val resolved = if (source.startsWith("/")) "http://127.0.0.1:$SERVER_PORT$source" else source
                     runCatching { Uri.parse(resolved) }.getOrNull() ?: continue
                 }
@@ -1145,6 +1175,8 @@ class NativePlayerActivity : ComponentActivity() {
         eventSubtitles?.pause()
         assSession?.release() ?: current.release()
         assSession = null
+        mediaHttpClients.forEach { client -> client.dispatcher.cancelAll(); client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown() }
+        mediaHttpClients.clear()
         subtitleCacheFiles.forEach { it.delete() }
         subtitleCacheFiles.clear()
         nativePlayerVisible = false
@@ -1388,5 +1420,20 @@ class NativePlayerActivity : ComponentActivity() {
                 .putExtra("nativePlaybackInfo", snapshot.playbackInfoJson)
                 .putExtra(EXTRA_CHECKPOINT_ID, snapshot.checkpointId)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+}
+
+/** Every Media3 open is checked, including child manifests, encryption keys and subtitle URLs. */
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
+internal class ProviderMediaDataSource(
+    private val delegate: DataSource,
+    private val context: ProviderMediaContext,
+    inlineSubtitleUris: Set<String>,
+) : DataSource by delegate {
+    private val inlineSubtitles = inlineSubtitleUris.toSet()
+    override fun open(dataSpec: DataSpec): Long {
+        try { context.requireMediaUri(dataSpec.uri.toString(), inlineSubtitles) }
+        catch (error: IllegalArgumentException) { throw IOException(error.message, error) }
+        return delegate.open(dataSpec)
     }
 }

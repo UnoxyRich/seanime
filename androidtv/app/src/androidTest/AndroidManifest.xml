@@ -3,6 +3,7 @@
     <application android:usesCleartextTraffic="true">
         <activity android:name="app.seanime.tv.TestStreamingExternalPlayerActivity"
             android:label="Owned test player" android:exported="true" android:process=":external_player">
+            <!-- Keep this HTTP-only to exercise production visibility of network players. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

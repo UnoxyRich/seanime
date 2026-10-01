@@ -7,10 +7,13 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import app.seanime.tv.gomobile.mobile.Mobile
 import app.seanime.tv.data.SeanimeApiClient
 import app.seanime.tv.platform.NativeHostQueue
+import app.seanime.tv.platform.NativeProviderBootstrap
+import app.seanime.tv.platform.ProviderBootstrapFiles
 import app.seanime.tv.platform.NativeExternalHostLease
 import app.seanime.tv.platform.NativeExternalPlaybackService
 import java.io.File
@@ -93,7 +96,21 @@ class SeanimeTvApplication : Application(), Application.ActivityLifecycleCallbac
     fun startEmbeddedServer(owner: Long, dataPath: String, cachePath: String): Boolean {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Server startup must run off the main thread" }
         return host.runForOwner(owner) {
-            Mobile.startServer(dataPath, cachePath, 43211L)
+            val bootstrap = NativeProviderBootstrap(
+                readAsset = { path -> assets.open(path).use { it.readBytes() } },
+                files = ProviderBootstrapFiles { directory ->
+                    // O_DIRECTORY is not part of Android's public OsConstants.
+                    // The bootstrap has already confined this directory to app-private storage.
+                    check(directory.isDirectory) { "Provider directory is unavailable" }
+                    val descriptor = Os.open(directory.absolutePath, OsConstants.O_RDONLY, 0)
+                    try { Os.fsync(descriptor) } finally { Os.close(descriptor) }
+                },
+            )
+            val report = bootstrap.beforeServerStart(File(dataPath)) {
+                Mobile.startServer(dataPath, cachePath, 43211L)
+            }
+            if (report.installed.isNotEmpty()) Log.i("SeanimeTV", "Installed bundled English providers: ${report.installed.joinToString()}")
+            report.warnings.forEach { Log.w("SeanimeTV", it) }
             check(Mobile.waitForServer(60_000)) { Mobile.serverError().ifBlank { "Server startup timed out. Your files and settings are safe; try again." } }
         }.get()
     }

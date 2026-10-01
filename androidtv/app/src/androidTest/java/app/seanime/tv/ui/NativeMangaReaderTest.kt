@@ -36,7 +36,11 @@ import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Real HTTP image decode and remote input; fixtures never open or reset the embedded Go database. */
+/**
+ * Real HTTP image decode and remote input using owned pages through the downloaded-manga
+ * response contract. This checks trusted server image authentication, not external-provider
+ * transport. Fixtures never open or reset the embedded Go database.
+ */
 @OptIn(ExperimentalTestApi::class)
 class NativeMangaReaderTest {
     @get:Rule val compose = createComposeRule()
@@ -163,7 +167,7 @@ class NativeMangaReaderTest {
         compose.onNodeWithTag("manga-retry-image-0").assertDoesNotExist()
         waitForPage(1)
         assertEquals(1, fixture.pages.size)
-        assertEquals(2, fixture.images.count { it.path == "/owned-reader/page-1.png" })
+        assertEquals(2, fixture.images.count { it.path == "/manga-downloads/owned-reader/page-1.png" })
     }
 
     @Test fun automaticProgressWaitsForTheRenderedLastPageAndOnlyRunsOnce() = fixture(autoProgress = true) { fixture ->
@@ -184,7 +188,7 @@ class NativeMangaReaderTest {
         waitForPage(1)
         repeat(3) { compose.onNodeWithTag("manga-page").performKeyInput { pressKey(Key.DirectionRight) } }
         waitForPage(4)
-        compose.waitUntil(10_000) { fixture.images.any { it.path == "/owned-reader/page-4.png" } }
+        compose.waitUntil(10_000) { fixture.images.any { it.path == "/manga-downloads/owned-reader/page-4.png" } }
         compose.waitForIdle()
         assertTrue(fixture.progress.isEmpty())
         assertEquals(0, fixture.entryReads.get())
@@ -233,7 +237,7 @@ class NativeMangaReaderTest {
         compose.onNodeWithContentDescription("Page 4").assertDoesNotExist()
         val wide = compose.onNodeWithContentDescription("Page 3").fetchSemanticsNode().boundsInRoot
         assertTrue("Landscape image occupies the full spread", wide.width > paired.width * 1.8f)
-        compose.waitUntil(10_000) { fixture.images.any { it.path == "/owned-reader/page-3.png" } }
+        compose.waitUntil(10_000) { fixture.images.any { it.path == "/manga-downloads/owned-reader/page-3.png" } }
         assertTrue(fixture.progress.isEmpty())
         NativeScreenshotEvidence.capture("manga-reader-wide-page-cover-fixture")
         compose.onNodeWithTag("manga-page").performKeyInput { pressKey(Key.DirectionRight) }
@@ -373,8 +377,8 @@ class NativeMangaReaderTest {
                     "/api/v1/manga/pages" -> {
                         pages += JSONObject(request.body.readUtf8())
                         if (failPagesOnce && pages.size == 1) MockResponse().setResponseCode(503).setBody("""{"error":"Fixture chapter temporarily unavailable"}""")
-                        else MockResponse().setHeader("Content-Type", "application/json").setBody(JSONObject().put("data", JSONObject().put("isDownloaded", false)
-                            .put("pages", JSONArray().apply { (1..4).forEach { put(JSONObject().put("index", if (mixedWide) it * 10 else it - 1).put("url", "/owned-reader/page-$it.png")) } })
+                        else MockResponse().setHeader("Content-Type", "application/json").setBody(JSONObject().put("data", JSONObject().put("isDownloaded", true)
+                            .put("pages", JSONArray().apply { (1..4).forEach { put(JSONObject().put("index", if (mixedWide) it * 10 else it - 1).put("url", "owned-reader/page-$it.png")) } })
                             .put("pageDimensions", if (pages.last().optBoolean("doublePage")) JSONObject().apply { (1..4).forEach {
                                 put((if (mixedWide) it * 10 else it - 1).toString(), JSONObject().put("width", if (mixedWide && it == 3) 360 else 180).put("height", 260))
                             } } else JSONObject.NULL)).toString())
@@ -385,11 +389,11 @@ class NativeMangaReaderTest {
                         progress += payload
                         MockResponse().setHeader("Content-Type", "application/json").setBody("""{"data":true}""")
                     }
-                    else -> if (request.path?.startsWith("/owned-reader/page-") == true) {
+                    else -> if (request.path?.startsWith("/manga-downloads/owned-reader/page-") == true) {
                         images += request
                         if ((failImageOnce && images.size == 1) ||
-                            (request.path == "/owned-reader/page-4.png" && failLastImageOnce && finalImageRequests.incrementAndGet() == 1)) MockResponse().setResponseCode(404)
-                        else MockResponse().setHeader("Content-Type", "image/png").setBody(Buffer().write(if (mixedWide && request.path == "/owned-reader/page-3.png") widePng else png))
+                            (request.path == "/manga-downloads/owned-reader/page-4.png" && failLastImageOnce && finalImageRequests.incrementAndGet() == 1)) MockResponse().setResponseCode(404)
+                        else MockResponse().setHeader("Content-Type", "image/png").setBody(Buffer().write(if (mixedWide && request.path == "/manga-downloads/owned-reader/page-3.png") widePng else png))
                     } else MockResponse().setResponseCode(404)
                 }
             }

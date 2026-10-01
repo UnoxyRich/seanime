@@ -8,6 +8,8 @@ import app.seanime.tv.NativePlayerActivity
 import app.seanime.tv.PlaybackRecoverySnapshot
 import app.seanime.tv.SeanimeTvApplication
 import app.seanime.tv.data.SeanimeApiClient
+import app.seanime.tv.data.ProviderUrlPolicy
+import app.seanime.tv.data.ProviderMediaContext
 import app.seanime.tv.data.OnlineEpisodeIdentity
 import app.seanime.tv.gomobile.mobile.Mobile
 import kotlinx.coroutines.CancellationException
@@ -106,8 +108,8 @@ class NativePlaybackCoordinator(
         NativePlaybackBus.headerProvider = { url ->
             val policy = sourceHeaders
             when {
-                api.isServerUrl(url) -> api.requestHeaders()
-                origin(url) == policy.origin -> policy.headers
+                !ProviderMediaContext.isProviderPlayback(info) && api.isServerUrl(url) -> api.requestHeaders()
+                origin(url) == policy.origin -> policy.headers.filterKeys { !it.startsWith("X-Seanime-", true) }
                 else -> emptyMap()
             }
         }
@@ -199,6 +201,14 @@ class NativePlaybackCoordinator(
         val generation = ++launchGeneration
         task {
             api.awaitEventsReady()
+            if (ProviderMediaContext.isProviderPlayback(playbackInfo)) {
+                ProviderUrlPolicy.requirePublicUrl(playbackInfo.optString("streamUrl"))
+                val tracks = playbackInfo.optJSONArray("subtitleTracks") ?: JSONArray()
+                for (index in 0 until tracks.length()) tracks.optJSONObject(index)?.let { track ->
+                    val source = track.optString("src").ifBlank { track.optString("url") }
+                    if (source.isNotBlank()) ProviderUrlPolicy.requirePublicUrl(source)
+                }
+            }
             val incoming = NativePlaybackProtocol.normalizePlaybackInfo(playbackInfo) { source ->
                 api.absoluteUrl(source.replace("{{SERVER_URL}}", api.baseUrl))
             }
@@ -455,6 +465,15 @@ class NativePlaybackCoordinator(
         else NativeEpisodeNavigation.local(episodePlaylist.current(info?.optString("id").orEmpty()))
     }
 
+    /** Captured per MediaItem, so a source switch cannot change an in-flight request's authority. */
+    internal fun mediaRequestContext(url: String): ProviderMediaContext {
+        val provider = ProviderMediaContext.isProviderPlayback(info)
+        val policy = sourceHeaders
+        val converted = transcodeSession != null && url == expectedPlaybackUrl && api.isServerUrl(url)
+        return ProviderMediaContext(provider, api.baseUrl, !provider || converted,
+            policy.origin, policy.headers, api::requestHeaders)
+    }
+
     internal data class ExternalRequest(val source: NativeExternalPlaybackSource, val generation: Int, val serverOwner: Long)
     internal fun externalPlaybackRequest(url: String): ExternalRequest {
         val current = info ?: error("Reopen this source before choosing another player")
@@ -669,6 +688,7 @@ class NativePlaybackCoordinator(
         val selected = candidates.firstOrNull { it.optString("server") == params.optString("server") && it.optString("quality") == params.optString("quality") }
             ?: candidates.firstOrNull { it.optString("server") == params.optString("server") }
             ?: candidates.firstOrNull() ?: error("No streams are available for episode $number")
+        ProviderUrlPolicy.requirePublicUrl(selected.optString("url"))
         val headers = selected.optJSONObject("headers")
         sourceHeaders = SourceHeaders(origin(selected.optString("url")),
             headers?.let { objectValue -> objectValue.keys().asSequence().associateWith { objectValue.optString(it) } }.orEmpty())

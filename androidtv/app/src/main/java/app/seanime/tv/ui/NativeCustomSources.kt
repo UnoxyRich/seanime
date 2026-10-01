@@ -118,7 +118,7 @@ internal fun NativeCustomSources(repo: SeanimeRepository, initialProvider: Strin
             val media = result.media[index]
             FeaturePanel(media.title) {
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    NativeArtwork(media.imageUrl, media.title, Modifier.size(84.dp, 120.dp), ContentScale.Crop)
+                    NativeArtwork(media.imageUrl, media.title, Modifier.size(84.dp, 120.dp), ContentScale.Crop, providerResult = true)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         if (media.description.isNotBlank()) Text(rememberNativeSynopsis(media.description), maxLines = 3, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
                         ActionButton(if (type == "manga") "Open manga" else "Open anime", modifier = Modifier.testTag("custom-source-media-${media.id}")

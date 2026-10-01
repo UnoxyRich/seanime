@@ -18,6 +18,7 @@ import app.seanime.tv.data.SeanimeApiClient
 import app.seanime.tv.data.SeanimeRepository
 import app.seanime.tv.gomobile.mobile.Mobile
 import app.seanime.tv.ui.performTvClick
+import app.seanime.tv.ui.performTvImeDone
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
@@ -104,7 +105,7 @@ class AndroidIsolatedLibraryManagementTest {
             assertFalse("Library actions must not create playback recovery", recovery.exists())
             assertFalse("Library actions must not create pending playback recovery", pendingRecovery.exists())
         }
-        fun readIndex(stage: String): List<JSONObject> {
+        fun readIndex(stage: String? = null): List<JSONObject> {
             verifyIsolation()
             val values = apiCall { repo.request("GET", "/api/v1/library/local-files") } as JSONArray
             val rows = (0 until values.length()).map(values::getJSONObject)
@@ -112,7 +113,7 @@ class AndroidIsolatedLibraryManagementTest {
                 assertTrue("Unexpected indexed path outside the generated copies", file.getString("path") in ownedPaths)
                 assertEquals("This workflow must remain unmatched", 0L, file.getLong("mediaId"))
             }
-            readbacks.put(JSONObject().put("stage", stage).put("files", values))
+            if (stage != null) readbacks.put(JSONObject().put("stage", stage).put("files", values))
             return rows
         }
         try {
@@ -193,9 +194,19 @@ class AndroidIsolatedLibraryManagementTest {
             remote(KeyEvent.KEYCODE_DPAD_CENTER)
             awaitFocused("library-rename-input")
             compose.onNodeWithTag("library-rename-input").performTextReplacement(renamed.name)
-            compose.onNodeWithTag("library-rename-input").performImeAction()
-            compose.onNodeWithTag("text-entry-save").performTvClick()
+            compose.performTvImeDone("library-rename-input")
+            compose.onNodeWithTag("library-rename-input").assertTextContains(renamed.name)
+            remote(KeyEvent.KEYCODE_DPAD_DOWN)
+            compose.onNodeWithTag("text-entry-cancel").assertIsFocused()
+            remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+            compose.onNodeWithTag("text-entry-save").assertIsFocused().assertIsEnabled()
+            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitClosed("text-entry-dialog")
+            compose.onNodeWithTag("library-rename-preview").assertTextContains("Preview: ${renamed.absolutePath}")
             awaitFocused("library-rename-edit")
+            assertEquals("Saving the filename draft must not rename the indexed file",
+                setOf(first.absolutePath, second.absolutePath), readIndex().map { it.getString("path") }.toSet())
+            assertFalse(renamed.exists()); assertEquals(originalHash, digest(first)); assertEquals(originalHash, digest(second))
             remote(KeyEvent.KEYCODE_DPAD_DOWN)
             compose.onNodeWithTag("library-rename-cancel").assertIsFocused()
             remote(KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -219,6 +230,10 @@ class AndroidIsolatedLibraryManagementTest {
                 node.optJSONArray("children")?.let { children -> (0 until children.length()).any { contains(children.getJSONObject(it), target) } } == true
             assertTrue(contains(tree.getJSONObject("root"), renamed.absolutePath))
             assertTrue(contains(tree.getJSONObject("root"), original.absolutePath))
+            assertFalse(contains(tree.getJSONObject("root"), first.absolutePath))
+            scrollMain("library-folder-open-${library.absolutePath}").performTvClick()
+            awaitFocused("library-tools-refresh")
+            scrollMain("library-file-select-${renamed.absolutePath}").assertIsDisplayed().assertIsEnabled()
             manifest.put("explorerOwnedPaths", JSONArray(listOf(renamed.absolutePath, original.absolutePath)))
             NativeScreenshotEvidence.capture("isolated-go-library-explorer")
             scrollMain("library-tab-Files").performTvClick()

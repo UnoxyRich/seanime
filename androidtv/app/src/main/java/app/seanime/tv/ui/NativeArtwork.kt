@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import app.seanime.tv.data.NativeArtworkUrl
+import app.seanime.tv.data.ProviderUrlPolicy
 import app.seanime.tv.data.NativeImageTransport
 import app.seanime.tv.data.SeanimeApiClient
 import coil.ImageLoader
@@ -39,9 +40,13 @@ private enum class ArtworkPhase(val label: String) {
 
 /** One bounded artwork loader is shared by the native shell, including dialogs and lazy grids. */
 @Composable
-internal fun NativeArtworkProvider(api: SeanimeApiClient, content: @Composable () -> Unit) {
+internal fun NativeArtworkProvider(api: SeanimeApiClient, content: @Composable () -> Unit) =
+    NativeArtworkProvider(api, { NativeImageTransport(it) }, content)
+
+@Composable
+internal fun NativeArtworkProvider(api: SeanimeApiClient, transportFactory: (SeanimeApiClient) -> NativeImageTransport, content: @Composable () -> Unit) {
     val context = LocalContext.current.applicationContext
-    val transport = remember(api) { NativeImageTransport(api) }
+    val transport = remember(api) { transportFactory(api) }
     val owner = remember(context, api, transport) {
         ArtworkOwner(api, ImageLoader.Builder(context).callFactory(transport)
             .memoryCache { MemoryCache.Builder(context).maxSizePercent(0.06).weakReferencesEnabled(false).build() }
@@ -60,19 +65,23 @@ internal fun NativeArtwork(
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Fit,
     headers: Map<String, String> = emptyMap(),
+    providerResult: Boolean = false,
 ) {
     val owner = LocalArtwork.current
     val context = LocalContext.current
-    val resolved = remember(owner.api.baseUrl, url) { NativeArtworkUrl.resolve(owner.api.baseUrl, url) }
+    val resolved = remember(owner.api.baseUrl, url, providerResult) {
+        if (providerResult) url?.let { runCatching { ProviderUrlPolicy.requirePublicUrl(it).toString() }.getOrNull() }
+        else NativeArtworkUrl.resolve(owner.api.baseUrl, url)
+    }
     // A provider can serve different covers at one URL depending on its headers. Include that
     // authority in memory identity; secrets stay in a hash, never a readable cache key or URL.
-    val cacheHeaders = if (resolved != null && owner.api.isServerUrl(resolved)) headers + owner.api.requestHeaders() else headers
-    val request = remember(context, resolved, headers, cacheHeaders) {
+    val cacheHeaders = if (!providerResult && resolved != null && owner.api.isServerUrl(resolved)) headers + owner.api.requestHeaders() else headers
+    val request = remember(context, resolved, headers, cacheHeaders, providerResult) {
         ImageRequest.Builder(context).data(resolved).crossfade(false)
-            .tag(NativeImageTransport.SourceHeaders::class.java, NativeImageTransport.SourceHeaders(headers))
-            .apply { if (resolved != null) memoryCacheKey(artworkCacheKey(resolved, cacheHeaders)) }.build()
+            .tag(NativeImageTransport.SourceHeaders::class.java, NativeImageTransport.SourceHeaders(headers, providerResult))
+            .apply { if (resolved != null) memoryCacheKey(artworkCacheKey(resolved, cacheHeaders, providerResult)) }.build()
     }
-    var phase by remember(request) { mutableStateOf(if (resolved == null) ArtworkPhase.ABSENT else ArtworkPhase.LOADING) }
+    var phase by remember(request) { mutableStateOf(if (resolved == null) { if (providerResult && !url.isNullOrBlank()) ArtworkPhase.FAILED else ArtworkPhase.ABSENT } else ArtworkPhase.LOADING) }
     Box(modifier = modifier.clipToBounds().semantics(mergeDescendants = true) {
         this.contentDescription = contentDescription ?: "Artwork"
         role = Role.Image
@@ -116,8 +125,9 @@ private fun BoxScope.ArtworkPlaceholder(label: String) {
 }
 
 /** Header-sensitive memory identity prevents a recycled provider card from displaying stale pixels. */
-private fun artworkCacheKey(url: String, headers: Map<String, String>): String {
+private fun artworkCacheKey(url: String, headers: Map<String, String>, providerResult: Boolean): String {
     val identity = buildString {
+        append(if (providerResult) "provider:" else "trusted:")
         append(url.length).append(':').append(url)
         headers.entries.sortedBy { it.key.lowercase() }.forEach { (name, value) ->
             val normalized = name.lowercase()

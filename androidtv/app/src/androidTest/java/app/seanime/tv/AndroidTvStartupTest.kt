@@ -22,9 +22,11 @@ import app.seanime.tv.data.SeanimeApiClient
 import app.seanime.tv.gomobile.mobile.Mobile
 import app.seanime.tv.platform.NativePlatformActions
 import app.seanime.tv.platform.NativePlaybackBus
+import app.seanime.tv.platform.BundledEnglishProviders
 import app.seanime.tv.ui.TvFeature
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -45,6 +47,7 @@ class AndroidTvStartupTest {
             val scenario = ActivityScenario.launch(MainActivity::class.java)
             try {
                 awaitNativeReady()
+                assertBundledProvidersLoaded(activityClient(scenario))
                 scenario.onActivity { activity ->
                     assertTrue("The TV host must be a native ComponentActivity", activity is ComponentActivity)
                     assertTrue("The main Activity must contain a real ComposeView", containsView<ComposeView>(activity.window.decorView))
@@ -317,6 +320,29 @@ class AndroidTvStartupTest {
     }
 
     private fun activitySession(scenario: ActivityScenario<MainActivity>) = activityClient(scenario).snapshotSession()
+
+    private fun assertBundledProvidersLoaded(client: SeanimeApiClient) = runBlocking {
+        // /status becomes ready before asynchronous extension loading. Observe
+        // the passive inventory, without a provider search or update request.
+        withTimeout(30_000) {
+            while (true) {
+                val inventory = client.request("POST", "/api/v1/extensions/all", JSONObject().put("withUpdates", false)) as JSONObject
+                val loaded = inventory.optJSONArray("extensions")
+                val byId = (0 until (loaded?.length() ?: 0)).map { loaded!!.getJSONObject(it) }.associateBy { it.getString("id") }
+                if (BundledEnglishProviders.entries.all { it.id in byId }) {
+                    BundledEnglishProviders.entries.forEach { expected ->
+                        val actual = byId.getValue(expected.id)
+                        assertEquals(expected.version, actual.getString("version"))
+                        assertEquals("en", actual.getString("lang"))
+                        assertEquals(expected.type, actual.getString("type"))
+                        assertEquals(expected.manifestURI, actual.getString("manifestURI"))
+                    }
+                    return@withTimeout
+                }
+                delay(100)
+            }
+        }
+    }
 
     private fun activityClient(scenario: ActivityScenario<MainActivity>): SeanimeApiClient {
         var client: SeanimeApiClient? = null

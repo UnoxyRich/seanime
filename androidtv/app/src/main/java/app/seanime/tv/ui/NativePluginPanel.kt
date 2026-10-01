@@ -190,7 +190,7 @@ private fun NativePluginNode(node: Any?, state: NativePluginState, depth: Int = 
                 NativePluginNode(props.opt("item"), state, depth + 1, activeTab, onTab)
                 Text(props.text("text"), style = MaterialTheme.typography.bodySmall)
             }
-            "img" -> NativeArtwork(url = props.text("src"), contentDescription = props.text("alt", "Plugin image"), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp, max = 240.dp))
+            "img" -> NativeArtwork(url = props.text("src"), contentDescription = props.text("alt", "Plugin image"), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp, max = 240.dp), providerResult = true)
             "dropdown-menu-separator" -> Spacer(Modifier.height(12.dp))
             "tabs" -> {
                 var selected by remember(id) { mutableStateOf(props.text("defaultValue")) }

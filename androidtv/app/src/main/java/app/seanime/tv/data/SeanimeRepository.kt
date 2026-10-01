@@ -74,8 +74,8 @@ class SeanimeRepository(val client: SeanimeApiClient = SeanimeApiClient()) {
     suspend fun onlineSources(mediaId: Long, episodeNumber: Int, provider: String, dubbed: Boolean = false, refresh: Boolean = false): List<StreamSource> =
         post("/onlinestream/episode-source", jsonObject("mediaId" to mediaId, "episodeNumber" to episodeNumber, "provider" to provider, "dubbed" to dubbed, "refresh" to refresh))
             .objectValue("/onlinestream/episode-source").objects("videoSources").map { raw ->
-                StreamSource(raw.optString("url"), raw.stringOrNull("label") ?: raw.optString("server"), raw.optString("quality"), raw.optString("type"),
-                    raw.optJSONObject("headers")?.stringMap().orEmpty(), raw.objects("subtitles").map { StreamSubtitle(it.optString("url"), it.optString("language"), it.optBoolean("isDefault")) }, raw)
+                StreamSource(ProviderUrlPolicy.requirePublicUrl(raw.optString("url")).toString(), raw.stringOrNull("label") ?: raw.optString("server"), raw.optString("quality"), raw.optString("type"),
+                    raw.optJSONObject("headers")?.stringMap().orEmpty(), raw.objects("subtitles").map { StreamSubtitle(ProviderUrlPolicy.requirePublicUrl(it.optString("url")).toString(), it.optString("language"), it.optBoolean("isDefault")) }, raw)
             }
     suspend fun searchTorrents(media: MediaCard, episodeNumber: Int, provider: String, query: String = "", batch: Boolean = false): List<TorrentItem> =
         post("/torrent/search", jsonObject("media" to media.raw, "episodeNumber" to episodeNumber, "provider" to provider,
@@ -127,14 +127,16 @@ class SeanimeRepository(val client: SeanimeApiClient = SeanimeApiClient()) {
         val container = post("/manga/pages", jsonObject("mediaId" to id, "chapterId" to chapterId, "provider" to provider, "doublePage" to doublePage)).objectValue("/manga/pages")
         val pages = container.objects("pages").map { raw ->
             val source = raw.optString("url")
+            val providerResult = provider != "local-manga" && !container.optBoolean("isDownloaded")
             val url = when {
-                source.startsWith("{{manga-local-assets}}") -> client.absoluteUrl("/api/v1/manga/local-page/${encodePathSegment(source)}")
+                providerResult -> ProviderUrlPolicy.requirePublicUrl(source).toString()
+                provider == "local-manga" && source.startsWith("{{manga-local-assets}}") -> client.absoluteUrl("/api/v1/manga/local-page/${encodePathSegment(source)}")
                 container.optBoolean("isDownloaded") -> client.absoluteUrl("/manga-downloads/" + source.split('/').joinToString("/") { encodePathSegment(it) })
                 source.startsWith('/') -> client.absoluteUrl(source)
                 else -> source
             }
-            val headers = if (client.isServerUrl(url)) client.requestHeaders() else raw.optJSONObject("headers")?.stringMap().orEmpty()
-            MangaPage(raw.optInt("index"), url, headers, raw)
+            val headers = if (!providerResult && client.isServerUrl(url)) client.requestHeaders() else raw.optJSONObject("headers")?.stringMap().orEmpty()
+            MangaPage(raw.optInt("index"), url, headers, raw, providerResult)
         }.sortedBy { it.index }
         val dimensions = container.optJSONObject("pageDimensions")
         return MangaPageCollection(pages, pages.mapNotNull { page ->

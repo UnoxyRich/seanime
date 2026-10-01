@@ -84,6 +84,50 @@ configurations are preserved and are not represented as automatically repaired.
 No missing API is invented: the directory-children handler's current loading
 method is a no-op because the full tree is built up front.
 
+## R26 actual device result
+
+[Run 36879535950](https://github.com/UnoxyRich/seanime/actions/runs/36879535950)
+tested published source `fe003631a704efe01532b002425f8c19e3802da5`, whose tree
+equals local reviewed commit `53aff6f1`. It completed with failure at 15:24 UTC.
+The ordinary suite **did not run**: the emulator action's unlock command
+(`adb shell input keyevent 82`) exited 255 after the first boot-complete read,
+before the instrumentation script started. There is no new 183-case score;
+R25's 170 passes / 8 failures / 5 skips remain historical results only.
+
+All four isolated cases ran once without skips, with exact built/installed APK
+identity verified. Two passed and two failed:
+
+| Isolated flow | Verified result | Remaining limit |
+| --- | --- | --- |
+| Library → Files → native player → Explorer → native player | **Passed completely**: real D-pad navigation, signed Go ranges, decoded frame/audio, 10-second seek, visible embedded subtitle on/off, Mode C/direct rendering round-trip, same-file focus restored from both routes | Owned generated 320×240 multitrack media, not live anime or representative hardware decoding |
+| Independent raw Go media route | **Passed** signed 206/range/boundary checks, native playback, pause/seek and recovery | Generated owned silent media |
+| Library management | Import, two-file selection, bulk ignore and signed readback passed | Filename editor remained open with Save focused after an IME transition; timeout before parent preview/rename/delete completion |
+| External player | Raw media subflow passed | HTTP-only receiver was not visible to the app's MIME-only package query; guard failed before native More/chooser navigation |
+
+The journey's canonical root and exact Explorer index membership checks passed;
+the fixture observed Android's app-files alias. This verifies the R26 canonical
+default/fixture correction, not a rewrite of existing user-selected roots.
+Post-seek readiness, decoded-buffer and unobstructed pixel checks passed at
+11,996 ms. Subtitle pixels were 7,835 enabled and zero disabled. Second audio
+track `fr` decoded 15 buffers. Mode C/direct aspect checks retained 4:3 content
+with 240-pixel side bars in the 1920×1080 viewport. Twelve actual journey PNGs,
+the bounded silent recording and a typed manifest were retained.
+
+The external-player issue also affects production discovery of network-only
+players: Android's `parseQueries` supplies the content scheme for MIME-only
+queries. Explicit HTTP/HTTPS queries are required alongside existing content
+queries. The HTTP-only test receiver remains unchanged as the regression
+case. The management recording narrows its failure to the filename editor's
+completion boundary; it does not demonstrate failed restoration after a
+successful save.
+
+Artifact `11172821332` SHA-256:
+`1b9e065e77458bf95794a6a52c6ac180c480c6d2759bc6a580abb239b6ee0882`.
+The tested runner x86_64 APK SHA-256 is
+`0a232a799cde34821dc893f772f006c5c5675c8f1ce1d2670d06f0e97d585918`;
+test APK: `412c899b0136442551a2e77bba2a50340cf992212efe60c2478bb44e4ded9f0c`.
+These identities differ from the locally built R26 artifacts below.
+
 ## Evidence collection and environment
 
 The AGP keep-installed option worked in R25: app-private screenshots and all four
@@ -111,8 +155,9 @@ This process-local build configuration changes no app or server networking.
 | Scope | Status |
 | --- | --- |
 | Current R26 local aggregate | Passed:383 JVM,34 visual,48 collector regressions; APK signatures/alignment/API boundaries verified |
-| R26 actual TV automation | Unrun; R25 results above do not establish the new revision |
-| Library Explorer, management and external handoff | Specific repairs ready; complete isolated flows require rerun |
+| R26 actual TV automation | Four isolated cases: two pass, two fail. Ordinary 183-case invocation never started because emulator action unlock failed |
+| Library Explorer | Complete generated-media D-pad playback and same-file return focus passed at R26 |
+| Library management and external handoff | Partial subflows passed; filename editor completion and network-only player discovery require corrections/rerun |
 | Settings reentry and other failed ordinary cases | Corrections/diagnostics retain exact assertions; require native confirmation |
 | Live AniList metadata/covers, metadata-assisted scan and Bloom streaming | Recorded HTTP 403 still blocks these; no proxy, alternate route or synthetic catalog |
 | Browser-DOM-only plugin presentation and independent MAL capabilities | Previously documented partial/missing API capabilities remain |
@@ -143,5 +188,40 @@ literal API contracts pass; Go core, modules and schema remain unchanged from
 | x86_64 | `e13a091e1a6c7a694889580c89ecadfe5bae0031b4efe1d827240000fe85b5e3` |
 | Instrumentation | `b3323903acfda8677eac30a3f53739d5430d63652030cd448f39471b6ff47d1b` |
 
-These are locally built debug artifacts. The next CI run must record its own
-built/installed identities; local hashes are not substituted for runner hashes.
+These are locally built debug artifacts. R26 CI recorded its own built/installed
+identities above; local hashes are not substituted for runner hashes.
+
+## R27 bundled-provider test candidate
+
+The next candidate contains the three pinned English providers and the Android
+origin/transport boundaries described in the
+[provider report](2026-10-01-bundled-provider-boundary.md). It also corrects
+network-only player discovery and replaces synthetic rename-footer focus with
+measured IME closure plus physical Down/Right/Select navigation.
+
+Validation passed on 295 unchanged Android source/asset files: **420 JVM tests,
+34 unchanged visual comparisons, 48 collector tests, zero lint errors and 87
+warnings**, both main APKs plus instrumentation, signatures, ZIP/native 16 KiB
+alignment, exact provider/shader bytes, 145 literal API contracts and the
+unchanged-Go baseline. Source digest:
+`3f349024f430b67020d8a1225440df88eb63d9e842831fb1cc55627b0876aae6`.
+
+The original combined process completed tests, lint and APK assembly, then its
+daemon disappeared during visual validation. The same visual task passed in a
+fresh 2 GiB daemon in 31 seconds; source, reference images and all three APK
+hashes remained unchanged. This recovery is preserved separately rather than
+described as one uninterrupted green build. Two earlier setup failures are
+retained: an unsupported public-SDK constant and an unavailable Robolectric
+API28 test fixture; both were corrected before the successful checks.
+
+| Local R27 artifact | SHA-256 |
+| --- | --- |
+| ARM64 | `53696f06c9cfa54d8acc04c350e6873eaf4b38f9004e7874ea8fd48a700d2cbd` |
+| x86_64 | `4afd39cec79b04b81745a74c53b3c2639a2af64bd39140d3a68e00419e9b3063` |
+| Instrumentation | `03baba7e740a884c16aca9945e97b6b35106ed1ae63c0bd3919c5ccf0726a5b0` |
+
+This is a physical-computer test candidate, not a release-final build. Its
+device flows and live providers are unverified. Custom-source catalog artwork
+is guarded, but propagation into shared detail/library artwork still needs a
+narrow follow-up; none of the three bundled providers is a custom-source
+provider. R26's device results cannot be transferred to these new bytes.

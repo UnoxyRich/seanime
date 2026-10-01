@@ -18,6 +18,8 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
 import app.seanime.tv.data.SeanimeApiClient
+import app.seanime.tv.data.NativeImageTransport
+import okhttp3.Dns
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -138,6 +140,25 @@ class NativeArtworkHostTest {
             requests.forEach { assertNull(it.getHeader("X-Seanime-Token")); assertNull(it.getHeader("X-Seanime-Client-Id")) }
             capture("provider-current-header-pixels")
         }
+    }
+
+    @Test fun providerImagesRejectLocalAddressesAndMarkersWithoutReusingTrustedPixels() = fixture { api, server, requests, show ->
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse { requests += request; return image(Color.GREEN) }
+        }
+        var providerResult by mutableStateOf(false)
+        var source by mutableStateOf(api.baseUrl + "/owned-cover.png")
+        show { NativeArtwork(source, "Provider boundary", Modifier.size(140.dp).testTag("boundary"), providerResult = providerResult) }
+        awaitLoaded("boundary"); assertPixel("boundary", Color.GREEN)
+        assertEquals(1, requests.size)
+        compose.runOnIdle { providerResult = true }
+        awaitPhase("boundary", "Image unavailable")
+        for (blocked in listOf("/api/v1/status", "{{LOCAL_ASSETS}}/private/cover.png", "file:///private/image", "content://private/image")) {
+            compose.runOnIdle { source = blocked }
+            awaitPhase("boundary", "Image unavailable")
+        }
+        assertEquals("Untrusted images must make no local requests, including cache hits", 1, requests.size)
+        capture("provider-blocked-image-placeholder")
     }
 
     @Test fun reusingOneCardChangesPixelsAndReturningToItsCachedImageRequiresNoNetwork() = fixture { _, server, requests, show ->
@@ -299,7 +320,7 @@ class NativeArtworkHostTest {
                 requests += request
                 return when (request.path) {
                     "/api/v1/extensions/list/custom-source" -> json(org.json.JSONArray().put(org.json.JSONObject("""{"id":"fixture-source","name":"Fixture provider","settings":{"supportsAnime":true}}""")))
-                    "/api/v1/custom-source/provider/list/anime" -> json(org.json.JSONObject("""{"media":[{"id":905,"title":"Fixture custom title","coverImage":{"large":"/custom-cover.png"}}],"totalPages":1}"""))
+                    "/api/v1/custom-source/provider/list/anime" -> json(org.json.JSONObject("""{"media":[{"id":905,"title":"Fixture custom title","coverImage":{"large":"${server.url("/custom-cover.png").newBuilder().host("provider.example").build()}"}}],"totalPages":1}"""))
                     "/custom-cover.png" -> image(Color.GREEN)
                     else -> json(org.json.JSONObject())
                 }
@@ -328,7 +349,7 @@ class NativeArtworkHostTest {
                         "/api/v1/extensions/list/manga-provider" -> json(org.json.JSONArray().put(org.json.JSONObject("""{"id":"fixture-provider","name":"Fixture provider"}""")))
                         "/api/v1/manga/chapters" -> json(org.json.JSONObject().put("chapters", org.json.JSONArray()))
                         "/api/v1/manga/search" -> json(org.json.JSONArray().put(org.json.JSONObject().put("id", "match-1").put("title", "Fixture provider match")
-                            .put("image", provider.url("/protected-cover.png").toString()).put("imageHeaders", org.json.JSONObject().put("X-Image-Key", "fixture-provider-key"))))
+                            .put("image", provider.url("/protected-cover.png").newBuilder().host("provider.example").build().toString()).put("imageHeaders", org.json.JSONObject().put("X-Image-Key", "fixture-provider-key"))))
                         else -> json(org.json.JSONObject())
                     }
                 }
@@ -439,7 +460,9 @@ class NativeArtworkHostTest {
                 var showing by mutableStateOf(true)
                 try {
                     test(api, server, requests) { content -> compose.setContent {
-                        if (showing) SeanimeTheme { NativeArtworkProvider(api, content) }
+                        if (showing) SeanimeTheme { NativeArtworkProvider(api, transportFactory = { client -> NativeImageTransport(client, object : Dns {
+                            override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1"))
+                        }) }, content = content) }
                     } }
                 } finally { compose.runOnIdle { showing = false }; compose.waitForIdle() }
             }

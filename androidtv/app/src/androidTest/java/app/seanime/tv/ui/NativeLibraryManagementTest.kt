@@ -134,8 +134,15 @@ class NativeLibraryManagementTest {
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
         awaitFocused("library-rename-input")
         compose.onNodeWithTag("library-rename-input").performTextReplacement(name)
-        compose.onNodeWithTag("library-rename-input").performImeAction()
-        compose.onNodeWithTag("text-entry-save").performTvClick()
+        compose.performTvImeDone("library-rename-input")
+        compose.onNodeWithTag("library-rename-input").assertTextContains(name)
+        remote(KeyEvent.KEYCODE_DPAD_DOWN)
+        compose.onNodeWithTag("text-entry-cancel").assertIsFocused()
+        remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        compose.onNodeWithTag("text-entry-save").assertIsFocused().assertIsEnabled()
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("text-entry-dialog").fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithTag("library-rename-edit").assertTextContains("New filename: $name")
         awaitFocused("library-rename-edit")
     }
     private fun remote(code: Int) {

@@ -6,14 +6,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 import okhttp3.Call
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
+import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
 /** A reader-owned image transport. Redirects never acquire another image's or server's authority. */
-class NativeImageTransport(private val api: SeanimeApiClient) : Call.Factory, Closeable {
+class NativeImageTransport internal constructor(private val api: SeanimeApiClient, private val providerDns: Dns = ProviderUrlPolicy.publicDns()) : Call.Factory, Closeable {
     /** Coil forwards this tag to OkHttp without putting these values on the request itself. */
-    class SourceHeaders(headers: Map<String, String>) {
+    class SourceHeaders(headers: Map<String, String>, internal val providerResult: Boolean = false) {
         internal val values = headers.filterKeys { it.lowercase() !in TRANSPORT_HEADERS }.toMap()
         override fun toString(): String = "SourceHeaders(redacted)"
     }
@@ -22,7 +23,7 @@ class NativeImageTransport(private val api: SeanimeApiClient) : Call.Factory, Cl
         override fun toString(): String = "ImageSource(redacted)"
     }
     private val closed = AtomicBoolean(false)
-    private val http = OkHttpClient.Builder()
+    private fun client(providerResult: Boolean) = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
         .dispatcher(Dispatcher().apply { maxRequests = 4; maxRequestsPerHost = 4 })
         .connectionPool(ConnectionPool(4, 1, TimeUnit.MINUTES))
@@ -43,20 +44,27 @@ class NativeImageTransport(private val api: SeanimeApiClient) : Call.Factory, Cl
             }
             approved.forEach { (name, value) -> builder.header(name, value) }
             chain.proceed(builder.build())
-        }.build()
+        }.apply { if (providerResult) { ProviderUrlPolicy.secureClient(this); dns(providerDns) } }.build()
+    private val http = client(false)
+    private val providerHttp = client(true)
 
     override fun newCall(request: Request): Call {
         check(!closed.get()) { "Image transport is closed" }
-        val sourceHeaders = request.tag(SourceHeaders::class.java)?.values.orEmpty()
-        val source = Source(request.url, sourceHeaders, api.isServerUrl(request.url.toString()))
-        return http.newCall(request.newBuilder().tag(Source::class.java, source).build())
+        val policy = request.tag(SourceHeaders::class.java)
+        val providerResult = policy?.providerResult == true
+        if (providerResult) ProviderUrlPolicy.requirePublicUrl(request.url.toString())
+        val sourceHeaders = policy?.values.orEmpty()
+        val source = Source(request.url, sourceHeaders, !providerResult && api.isServerUrl(request.url.toString()))
+        return (if (providerResult) providerHttp else http).newCall(request.newBuilder().tag(Source::class.java, source).build())
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        http.dispatcher.cancelAll()
-        http.dispatcher.executorService.shutdown()
-        http.connectionPool.evictAll()
+        for (client in listOf(http, providerHttp)) {
+            client.dispatcher.cancelAll()
+            client.dispatcher.executorService.shutdown()
+            client.connectionPool.evictAll()
+        }
     }
 
     private companion object {

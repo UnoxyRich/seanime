@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/Seanime-contributions/Seanime-Providers",
+  "commit": "641b9d842e5502d34fb923dac959129d3da9fc1a",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2025 Pal",
+  "licenseURL": "https://github.com/Seanime-contributions/Seanime-Providers/blob/641b9d842e5502d34fb923dac959129d3da9fc1a/LICENSE",
+  "licenseSha256": "a0c786b2df3fcf9445d56201e581429654b4ad4ade1807bf428c40c1f3e7efaa",
+  "providers": [
+    {
+      "id": "animeheaven",
+      "name": "AnimeHeaven",
+      "version": "1.1.4",
+      "type": "onlinestream-provider",
+      "lang": "en",
+      "language": "javascript",
+      "manifestURI": "https://raw.githubusercontent.com/Seanime-contributions/Seanime-Providers/641b9d842e5502d34fb923dac959129d3da9fc1a/src/anime/animeheaven/manifest.json",
+      "upstreamManifestURI": "https://raw.githubusercontent.com/Pal-droid/Seanime-Providers/main/src/anime/animeheaven/manifest.json",
+      "files": {
+        "manifest.json": {
+          "sourcePath": "src/anime/animeheaven/manifest.json",
+          "bytes": 609,
+          "sha256": "ea2ec531c514a06134f93d2cec10921a6dc2cc6965240d7b0a6a57134eaff16c",
+          "gitBlob": "0d4d10c14a150f1edf75e25cc94bcda0c9315f5b"
+        },
+        "provider.js": {
+          "sourcePath": "src/anime/animeheaven/provider.js",
+          "bytes": 3555,
+          "sha256": "bd26ab1d453a19694c36da8d9ab54b29aed1d0292d053d4d14b5e7042e2f9452",
+          "gitBlob": "473052867f508c1591562c978a9c96f87a0be73b"
+        }
+      }
+    },
+    {
+      "id": "anidb",
+      "name": "AniDB",
+      "version": "1.0.1",
+      "type": "onlinestream-provider",
+      "lang": "en",
+      "language": "javascript",
+      "manifestURI": "https://raw.githubusercontent.com/Seanime-contributions/Seanime-Providers/641b9d842e5502d34fb923dac959129d3da9fc1a/src/anime/anidb/manifest.json",
+      "upstreamManifestURI": "https://raw.githubusercontent.com/Pal-droid/Seanime-Providers/main/src/anime/anidb/manifest.json",
+      "files": {
+        "manifest.json": {
+          "sourcePath": "src/anime/anidb/manifest.json",
+          "bytes": 582,
+          "sha256": "0ed2ecf7063a18375cdac70cedf8963264536f53bec19712db1360f6bd4876de",
+          "gitBlob": "98c98db66c4db9f71cfb5e0973ef072202401c60"
+        },
+        "provider.js": {
+          "sourcePath": "src/anime/anidb/provider.js",
+          "bytes": 3043,
+          "sha256": "065ec31a990f7196605f4a7ab67b5441d2c709a3f28e9272752c104c6f90502d",
+          "gitBlob": "72a82bc1353c247ac92d44480b02f297539f177a"
+        }
+      }
+    },
+    {
+      "id": "atsumaru",
+      "name": "Atsumaru",
+      "version": "1.1.2",
+      "type": "manga-provider",
+      "lang": "en",
+      "language": "javascript",
+      "manifestURI": "https://raw.githubusercontent.com/Seanime-contributions/Seanime-Providers/641b9d842e5502d34fb923dac959129d3da9fc1a/src/manga/atsumaru/manifest.json",
+      "upstreamManifestURI": "https://raw.githubusercontent.com/Pal-droid/Seanime-Providers/refs/heads/main/src/manga/atsumaru/manifest.json",
+      "files": {
+        "manifest.json": {
+          "sourcePath": "src/manga/atsumaru/manifest.json",
+          "bytes": 589,
+          "sha256": "04fe384db81a6790f661f73d7f37e135b0d9857a9f66500bf9c06246b1fae2d3",
+          "gitBlob": "d57cda30ef72ef52a158807dc9dae37b6171fe54"
+        },
+        "provider.js": {
+          "sourcePath": "src/manga/atsumaru/provider.js",
+          "bytes": 7306,
+          "sha256": "605a77d6807f123050405e6136dc19f43aea1680375cecb79572b7352f1a5070",
+          "gitBlob": "e60e226349e09f38856b28b430b711d47596006c"
+        }
+      }
+    }
+  ],
+  "installation": "Manifest and provider.js assets are unmodified upstream bytes. At first bootstrap only: inline provider.js in payload, clear payloadURI, pin manifestURI to this commit, and set isDevelopment=false. Existing IDs and completed bootstrap ledger records are preserved."
+}

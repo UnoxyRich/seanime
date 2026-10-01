@@ -9,6 +9,7 @@ verification, live-provider tests, or physical TV/USB acceptance.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -22,6 +23,19 @@ ROOT = Path(__file__).resolve().parents[1]
 NATIVE = Path("androidtv/app/src/main/java/app/seanime/tv")
 FEATURES = {"LIBRARY", "ANILIST", "MANGA", "OFFLINE", "PLAYLISTS", "EXTENSIONS", "STREAMING", "DOWNLOADS", "NAKAMA", "SETTINGS", "LOGS"}
 REQUIRED_LIBRARIES = {"libgojni.so", "libffmpeg.so", "libffprobe.so", "libc++_shared.so"}
+# These are approved Go provider payloads, never Android presentation code.
+# Exact source bytes from Seanime-contributions/Seanime-Providers@641b9d842e5502d34fb923dac959129d3da9fc1a.
+APPROVED_PROVIDER_ASSETS = {
+    "assets/providers/animeheaven/provider.js": "bd26ab1d453a19694c36da8d9ab54b29aed1d0292d053d4d14b5e7042e2f9452",
+    "assets/providers/anidb/provider.js": "065ec31a990f7196605f4a7ab67b5441d2c709a3f28e9272752c104c6f90502d",
+    "assets/providers/atsumaru/provider.js": "605a77d6807f123050405e6136dc19f43aea1680375cecb79572b7352f1a5070",
+}
+
+
+def forbidden_apk_asset(name: str, content: bytes) -> bool:
+    if name in APPROVED_PROVIDER_ASSETS:
+        return hashlib.sha256(content).hexdigest() != APPROVED_PROVIDER_ASSETS[name]
+    return bool(re.search(r'lib(?:reactnative|hermes)|assets/(?:.*\/)?(?:index\.html|.*\.(?:js|jsx|tsx|bundle))$', name))
 
 
 def read(path: str | Path) -> str:
@@ -197,7 +211,7 @@ def check_apk(path: Path) -> dict[str, object]:
             abis = sorted({name.split("/")[1] for name in names if name.startswith("lib/") and len(name.split("/")) == 3})
             libraries = {abi: {Path(name).name for name in names if name.startswith(f"lib/{abi}/")} for abi in abis}
             missing = {abi: sorted(REQUIRED_LIBRARIES - libs) for abi, libs in libraries.items() if REQUIRED_LIBRARIES - libs}
-            forbidden = [name for name in names if re.search(r'lib(?:reactnative|hermes)|assets/(?:.*\/)?(?:index\.html|.*\.(?:js|jsx|tsx|bundle))$', name)]
+            forbidden = [name for name in names if forbidden_apk_asset(name, apk.read(name) if name in APPROVED_PROVIDER_ASSETS else b"")]
             invalid_elf = []
             library_sizes = {}
             for abi in abis:
@@ -217,6 +231,15 @@ def check_apk(path: Path) -> dict[str, object]:
 
 
 class ScannerTests(unittest.TestCase):
+    def test_only_exact_approved_provider_payloads_are_allowed(self):
+        for name in APPROVED_PROVIDER_ASSETS:
+            content = (ROOT / "androidtv/app/src/main" / name).read_bytes()
+            self.assertFalse(forbidden_apk_asset(name, content), name)
+            self.assertTrue(forbidden_apk_asset(name, content + b"\n// changed"), name)
+            self.assertTrue(forbidden_apk_asset(name.replace("provider.js", "other.js"), content), name)
+        for name in ("assets/index.html", "assets/index.android.bundle", "assets/react/app.js", "assets/providers/other/provider.js", "lib/x86_64/libhermes.so"):
+            self.assertTrue(forbidden_apk_asset(name, b"provider"), name)
+
     def test_comments_do_not_create_webview_false_positive(self):
         code = kotlin_code('// WebView\n/* ReactActivity */\nval example = "http://localhost/"\n')
         self.assertNotIn("WebView", code)

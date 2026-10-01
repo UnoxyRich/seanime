@@ -108,6 +108,28 @@ jobs:
       - name: Verify APK native alignment
         run: python3 scripts/verify_android_native_alignment.py androidtv/app/build/outputs/apk/debug/*.apk
 
+      - name: Record installable APK identity
+        working-directory: androidtv/app/build/outputs/apk/debug
+        run: |
+          sha256sum app-arm64-v8a-debug.apk app-x86_64-debug.apk > SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT.txt
+
+      - name: Retain installable debug APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-tv-debug-apks-${{ github.sha }}
+          path: |
+            androidtv/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+            androidtv/app/build/outputs/apk/debug/app-x86_64-debug.apk
+            androidtv/app/build/outputs/apk/debug/SHA256SUMS
+            androidtv/app/build/outputs/apk/debug/SOURCE_COMMIT.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Initialize emulator ADB transport
+        run: adb start-server
+
       - name: Run Android TV instrumentation tests
         id: connected_suite
         if: ${{ !cancelled() && steps.build_apks.outcome == 'success' }}

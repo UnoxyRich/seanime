@@ -375,7 +375,7 @@ internal fun MangaTitleScreen(repo: SeanimeRepository, initialMedia: MediaCard, 
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
                     NativeArtwork(result.stringOrNull("image"), "${result.text("title", "Source match")} cover",
                         Modifier.size(64.dp, 90.dp), ContentScale.Crop,
-                        headers = result.optJSONObject("imageHeaders")?.stringMap().orEmpty())
+                        headers = result.optJSONObject("imageHeaders")?.stringMap().orEmpty(), providerResult = true)
                     ActionButton("Use this source match", !action.busy) {
                         action.run("Source match saved") {
                             repo.setMangaMapping(media.id, provider, result.text("id"))
@@ -618,9 +618,9 @@ internal fun MangaReader(
                                         NativePdfPage(pdf, index, onRendered = { width, height -> recordDimensions(index, width, height); renderedPages = renderedPages + index },
                                             onUnavailable = { renderedPages = renderedPages - index })
                                     } else {
-                                    val request = remember(mangaPage.url, mangaPage.headers, retry) {
+                                    val request = remember(mangaPage.url, mangaPage.headers, mangaPage.providerResult, retry) {
                                         ImageRequest.Builder(context).data(mangaPage.url)
-                                            .tag(NativeImageTransport.SourceHeaders::class.java, NativeImageTransport.SourceHeaders(mangaPage.headers))
+                                            .tag(NativeImageTransport.SourceHeaders::class.java, NativeImageTransport.SourceHeaders(mangaPage.headers, mangaPage.providerResult))
                                             .crossfade(false).build()
                                     }
                                     AsyncImage(model = request, imageLoader = imageLoader, contentDescription = "Page ${index + 1}", contentScale = ContentScale.Fit,
