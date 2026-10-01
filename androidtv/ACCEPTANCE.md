@@ -2,14 +2,16 @@
 
 ## Native Compose migration
 
-The active implementation is now native Compose for TV. Its current result,
-feature matrix and device gates are recorded in the
+The active implementation is now native Compose for TV. Its current result is
+recorded in the [remote UI review](acceptance/2026-10-01-remote-ui-review.md):
+375 JVM tests and 34 host comparisons pass, while the current device rerun is
+pending. The previous GitHub TV run reached 71/181 methods, with nine failures
+and four skips, before a process crash. The resulting source/test corrections
+are not yet device passes. The [current inventory](acceptance/2026-10-01-remote-ui-device-plan.json)
+contains 183 methods. Feature-level and external gates remain in the
 [October 1 TV layout and live-data report](acceptance/2026-10-01-tv-layout-and-live-data.md).
-Current source `43c2f02e` passes 366 JVM tests and 34 host layout comparisons,
-but all 176 planned current-device methods remain unrun after a preinstall
-framework gate failure. The [exact manifest](acceptance/2026-10-01-tv-device-manifest.json)
-separates these from four retained direct-engine results and one externally
-blocked scan/matching method. The
+The [earlier frozen manifest](acceptance/2026-10-01-tv-device-manifest.json)
+retains R21's preinstall-failure history and direct-engine distinctions. The
 [September 30 native report](acceptance/2026-09-30-native-compose.md) retains
 the earlier implementation history and API boundary evidence.
 The evidence below is preserved historical evidence from base commit

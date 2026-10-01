@@ -12,6 +12,8 @@ on:
       - "scripts/build-android-ffmpeg.sh"
       - "scripts/verify_android_native_alignment.py"
       - "scripts/test_android_native_alignment.py"
+      - "scripts/run_android_tv_instrumentation.py"
+      - "scripts/test_android_tv_evidence.py"
       - ".github/workflows/androidtv-check.yml"
   push:
     paths:
@@ -24,6 +26,8 @@ on:
       - "scripts/build-android-ffmpeg.sh"
       - "scripts/verify_android_native_alignment.py"
       - "scripts/test_android_native_alignment.py"
+      - "scripts/run_android_tv_instrumentation.py"
+      - "scripts/test_android_tv_evidence.py"
       - ".github/workflows/androidtv-check.yml"
   workflow_dispatch:
 
@@ -80,6 +84,9 @@ jobs:
       - name: Test native alignment verifier
         run: python3 -m unittest discover -s scripts -p test_android_native_alignment.py
 
+      - name: Test Android TV evidence collector
+        run: python3 -m unittest discover -s scripts -p test_android_tv_evidence.py
+
       - name: Test shared frontend
         working-directory: seanime-web
         run: npm test
@@ -94,6 +101,7 @@ jobs:
         run: go test -ldflags=-checklinkname=0 ./internal/androidtvstorage ./internal/directstream -count=1
 
       - name: Build Android TV APKs
+        id: build_apks
         working-directory: androidtv
         run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
 
@@ -101,13 +109,54 @@ jobs:
         run: python3 scripts/verify_android_native_alignment.py androidtv/app/build/outputs/apk/debug/*.apk
 
       - name: Run Android TV instrumentation tests
+        id: connected_suite
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
           target: android-tv
           arch: x86_64
           profile: tv_1080p
+          avd-name: seanime-connected-${{ github.run_id }}-${{ github.run_attempt }}
+          force-avd-creation: true
+          emulator-port: 5554
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
           disable-animations: true
           working-directory: androidtv
-          script: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" ./gradlew :app:connectedDebugAndroidTest --no-daemon
+          # One command: the action runs separate script lines in separate shells.
+          script: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" python3 ../scripts/run_android_tv_instrumentation.py
+
+      - name: Run owned library playback journey on a fresh AVD
+        id: owned_library_journey
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: android-tv
+          arch: x86_64
+          profile: tv_1080p
+          avd-name: seanime-owned-journey-${{ github.run_id }}-${{ github.run_attempt }}
+          force-avd-creation: true
+          emulator-port: 5556
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          disable-animations: true
+          working-directory: androidtv
+          script: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" python3 ../scripts/run_android_tv_instrumentation.py --invocation owned-library-journey --class 'app.seanime.tv.AndroidIsolatedLibraryPlaybackJourneyTest#remoteOnlyLibraryFilesAndExplorerPlayOwnedMultitrackVideo' --runner-flag isolatedNativeGoLibraryPlaybackJourneyFixture --runner-flag freshInstrumentationProcess
+
+      - name: Verify owned journey ran once without skips
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' }}
+        run: python3 scripts/run_android_tv_instrumentation.py --check-acceptance --invocation owned-library-journey --class 'app.seanime.tv.AndroidIsolatedLibraryPlaybackJourneyTest#remoteOnlyLibraryFilesAndExplorerPlayOwnedMultitrackVideo'
+
+      - name: Retain Android TV test evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-tv-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            androidtv/build/native-ci-evidence/connected-suite/evidence.zip
+            androidtv/build/native-ci-evidence/connected-suite/collection-status.json
+            androidtv/build/native-ci-evidence/owned-library-journey/evidence.zip
+            androidtv/build/native-ci-evidence/owned-library-journey/collection-status.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,498 @@
+{
+  "version": 1,
+  "scope": "Current source instrumentation inventory; no device pass implied",
+  "sourceDigest": "0b43b829b3c58f9b2075c70ab7554619a610513511f6049b625f83c719e7d761",
+  "methodCount": 183,
+  "classes": [
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidExternalPlayerTest.kt",
+      "methods": [
+        "configuredPlayerSchemeLaunchesAndReturnsToNativeCompose"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidIsolatedLibraryManagementTest.kt",
+      "methods": [
+        "importedOwnedUnmatchedIndexSupportsNativeBulkRenameExplorerAndDelete"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidIsolatedLibraryPlaybackJourneyTest.kt",
+      "methods": [
+        "remoteOnlyLibraryFilesAndExplorerPlayOwnedMultitrackVideo"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidIsolatedLocalPlaybackTest.kt",
+      "methods": [
+        "generatedMediaScansImportsPlaysAndResumesThroughIsolatedGo"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidIsolatedRawMediaPlaybackTest.kt",
+      "methods": [
+        "generatedVideoUsesSignedGoRangeRouteAndNativePlayerWithoutMetadata",
+        "nativeMoreHandsOwnedGoVideoToSeparatePlayerAcrossBackgroundAndReturnsPaused"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidMediaToolsTest.kt",
+      "methods": [
+        "bundledToolsAndNativePlayerEncodeProbeDecodeAndSeekVideo",
+        "bundledToolsExecuteFromTheirInstalledNativeLibraryDirectory"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidNativeBackendFlowsTest.kt",
+      "methods": [
+        "nativePlaylistDialogCancelsThenCreatesInTheRealBackend",
+        "repositoryPlaylistCreateRenameReorderCompleteAndDeleteRoundTrips",
+        "typedSettingsPersistPreserveOtherFieldsAndRejectInvalidWritesAtomically"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidSafStorageAdapterTest.kt",
+      "methods": [
+        "revokedPersistedGrantIsRejectedAndWorksAgainAfterRestoration",
+        "selectedTreeSupportsLibraryReadsWritesListingAndRemoval",
+        "failedFallbackCleanupKeepsJournalUntilPartialDestinationIsRemoved",
+        "abandonedWritesAreRecoveredWithoutLosingCommittedOrOriginalFiles",
+        "goDirectorySelectorUsesThePersistedSafAdapter"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidTvStartupTest.kt",
+      "methods": [
+        "nativeComposeUiStartsAndRestartsTheRealServer",
+        "dpadMovesBetweenNativeDestinationsAndBackOffersAnExit",
+        "nativeRouteAndTextSurviveRecreationAndBackgroundReturn",
+        "remoteLetterKeysEnterNativeSearchWithoutStealingCursorFocus",
+        "everyMainDestinationHasRemoteContentAndBackRecovery",
+        "oauthBrowserDeclaresResizeForTheTvKeyboard",
+        "updateInstallerRejectsApksOutsideTheManagedUpdateCache",
+        "networkPolicyKeepsTheEmbeddedServerReachableAndModernRemoteHttpBlocked",
+        "callbackDestinationsStayOnTheCanonicalLoopbackOrigin",
+        "packageIsDiscoverableAsAnAndroidTvLauncherApp"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/NativeExternalPlaybackLifecycleTest.kt",
+      "methods": [
+        "exactDocumentGrantFollowsTheLeaseAndRetainedTreeAccessSurvivesEveryRelease",
+        "remoteTerminationReleasesOnlyItsCurrentSourceWithoutALiveMedia3Player",
+        "aRealPendingRangeProbeIsCancelledOnStopAndCannotLaunchOnResume"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/NativePlaybackMediaIdentityTest.kt",
+      "methods": [
+        "customMediaIdsRemainExactInPlaylistContinuityAndPlaybackStateCommands"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/NativePlayerLifecycleTest.kt",
+      "methods": [
+        "dismissingPlaybackDoesNotRecreateItsRecoverySnapshotOnStop",
+        "failedSourceCanRetryWithRemoteAndKeepPausedPosition",
+        "failedSourceOffersRemoteConvertAndReturnToNativeLibrary",
+        "nativeCommandsControlOnlyTheMatchingSource",
+        "serverStatusAndRelativeSeekReadLivePositionInsteadOfCachedProgress",
+        "pluginSkipDataDrivesNativeHudAndCaptionQueriesUseExactWireSchema",
+        "stoppedAndRecreatedPlayerRestoresLatestMediaAndPlaybackSettings",
+        "freshComposeControlsKeepMediaKeysAndBackNavigationIndependent"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/PlaybackRecoverySnapshotTest.kt",
+      "methods": [
+        "terminatedSourceCannotBeRewrittenAndNeverClearsANewerCheckpoint",
+        "customMediaIdsSurviveOwnedRecoveryDiskAndSourceRefresh",
+        "persistedSnapshotRetainsDecoderStateAndTrackPreferences",
+        "freshMainActivityDiscoversPersistedPlaybackRecoveryTicket"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/platform/NativeAnime4KShaderTest.kt",
+      "methods": [
+        "originalMediumCnnMatchesIndependentCpuReferenceAndReconfigures",
+        "everySupportedPresetCompilesAndRendersRealPixels",
+        "memoryLimitAndHdrBypassKeepOriginalPixelsAndReportOnce"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/platform/NativeAssRendererTest.kt",
+      "methods": [
+        "embeddedAssRendersAnimatedGlyphsAndSurvivesSeekAndLifecycle"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/platform/NativeEventSubtitleOverlayTest.kt",
+      "methods": [
+        "queuedSubtitleFramesCannotReappearAfterSeekOrPauseResume",
+        "hlsRendersAuthoredAssAndPgsAcrossSeekAndLifecycle"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/platform/NativeHostQueueAndroidTest.kt",
+      "methods": [
+        "androidMainLooperRemainsResponsiveWhileRuntimeInitializationIsBlocked"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/platform/NativeMangaPdfTest.kt",
+      "methods": [
+        "generatedPdfRendersPagesAndClosesItsSessionCache",
+        "visiblePageWorkIsSerializedAndRasterCacheIsBounded",
+        "invalidPdfFailsWithoutLeavingItsPrivateCopyBehind"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/platform/NativeTvPlayerPresentationTest.kt",
+      "methods": [
+        "errorScreenKeepsExternalPlayerAndReturnActionsVisibleToTheRemote",
+        "unavailableEpisodeControlsAreDisabledAndReturnFocusToPlay",
+        "skipActivationRestoresPlayWhenTheNextIntervalAppearsInTheSameFrame",
+        "manyTrackChoicesKeepSelectionVisibleAndRestoreFocusAcrossReopen"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeAccountPromptTest.kt",
+      "methods": [
+        "changingConnectionsRequiresTheNamedActionAndDisconnectConfirmation",
+        "localProfileDoesNotOfferAnAniListDisconnectOrGuessMalConnectionState",
+        "offlineAccountKeepsAniListChangesUnavailableWithoutChangingMalActions",
+        "localCollectionUploadNamesItsTargetAndRequiresItsOwnConfirmation"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeActionRowFocusTest.kt",
+      "methods": [
+        "firstLastAndAutomaticallyScrolledButtonsKeepTheirFullScaledFocusBounds"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeAnimeDiscoveryTest.kt",
+      "methods": [
+        "searchDialogCancelPreservesQueryAndRemoteNavigationKeepsWholePostersVisible",
+        "trendingPaginationAndDetailsRestoreThePageCardAndOpener",
+        "effectiveFiltersApplyTogetherAndCancelDoesNotChangeTheRequest",
+        "emptySearchAndRetryKeepRemoteControlsUsableAndBlankSearchReturnsTrending"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeArtworkFallbackTest.kt",
+      "methods": [
+        "missingCoverHasUsefulSemanticsKeepsItsSizeAndDoesNotTakeRemoteFocus",
+        "failedCoverUsesAStableFallbackWhilePendingCoverShowsStaticLoading",
+        "smallPickerArtworkUsesIconOnlyButRetainsAccessibleStateAndExactBounds"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeAutoDownloaderBatchTest.kt",
+      "methods": [
+        "batchReviewCancelSharedPreferencesAndPartialRetryUseExactPerTitlePayloads",
+        "uncertainCreationSurvivesClosingAndReopeningBatchWithoutAnotherPost",
+        "finishedRuleCleanupCancelsThenRetriesOnlyExplicitFailedIds"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeCatalogDiscoveryTest.kt",
+      "methods": [
+        "advancedMangaRouteFiltersPagesAndDetailsUseNativeControlsAndExactPayloads",
+        "nativeAiringEntryPaginatesUsesActualEpisodeAndRestoresDiscoveryAfterDetails",
+        "airingFailuresRetryAndEmptyPagesKeepUsableNavigation"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeConfigurationReportTest.kt",
+      "methods": [
+        "enabledExtensionShowsConfigurationErrorAndKeepsDraftThroughLoadAndSaveRetry",
+        "reportChoicePreservesDescriptionOnFailureAndExportsOnlyAfterAcknowledgement"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeCustomSourcesTest.kt",
+      "methods": [
+        "actualExtensionRouteRetainsLargeIdsPageQueryAndFocusedTitleThroughBothDetailTypes"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeDownloadCapabilitiesTest.kt",
+      "methods": [
+        "clientSpecificActionsRefreshAndRecheckBeforeSendingAnyBulkMutation"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeEmptyNavigationTest.kt",
+      "methods": [
+        "emptyLibraryAndZeroSearchResultsKeepRemoteControlsFocused",
+        "retryAfterServerFailureRestoresStableRemoteFocus",
+        "returningFromOffscreenDetailsRestoresCardButSearchKeepsItsFocus"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeExistingDebridDownloadTest.kt",
+      "methods": [
+        "remoteFolderPickerCancelsReturnsFocusAndRetriesAnExistingDebridTransfer",
+        "hardwareBackCancelsAndSuccessfulRemovedTransferReturnsToRefresh"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeExtensionMarketplaceTest.kt",
+      "methods": [
+        "actualExtensionEntryBrowsesFiltersReviewsCancelsAndRetriesInstallWithoutLosingManifest"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeFeatureDialogsTest.kt",
+      "methods": [
+        "cancellingConfirmationNeverInvokesMutation",
+        "blankNameCannotBeSubmitted",
+        "optionalSettingsCanBeClearedExplicitly",
+        "longConfirmationCanBeReadWithArrowsAndReturnsToCancel"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeFileTransferWorkflowTest.kt",
+      "methods": [
+        "settingsBackupExportsExactBytesAndImportsOnlyAfterPreviewAndConfirmation",
+        "logsProfileExportReachesBinaryEndpointAndPlatformSaveBoundary",
+        "torrentRenamePreservesDraftOnFailureAndMoveRequiresReview"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeInitialFocusTest.kt",
+      "methods": [
+        "latePlacementWaitsForWindowAndFulfilledFocusDoesNotStealButCanBeRearmed",
+        "setupFocusWaitsForWindowAndOnlyTheExplicitContinueActionCompletes",
+        "lockedServerFocusWaitsForWindowAndSubmittingClearsThePasswordField",
+        "rootInitialFocusWaitsForWindowThenPreservesUserFocus",
+        "bottomRailRowsStayAboveFooterAndBackRestoresAnOffscreenSelectedRow",
+        "compactRailReturnsToLastContentControlWithoutMovingContentBounds"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeLibraryFileActionsTest.kt",
+      "methods": [
+        "matchFailureKeepsEditedDraftAndRetryClosesOnlyAfterConfirmation",
+        "deletionRequiresExplicitConfirmationRetainsFailureAndRestoresRefreshFocus"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeLibraryManagementTest.kt",
+      "methods": [
+        "selectedFileActionCancelsThenRetainsFalseAckForExactRetry",
+        "folderActionsUseTypedAnimeAndExcludeUnindexedAndOtherFolderFiles",
+        "renamePreviewCancelAndFailureRetainTheFilenameUntilServerAck",
+        "staleSelectionBlocksWholeActionAndBackClearsSelectionBeforeLeaving"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeListEntryDialogTest.kt",
+      "methods": [
+        "loadsCurrentRatingAndCancelPreservesTheBackend",
+        "statusEditOmitsTheExistingScoreProgressAndDates",
+        "cancellingNumericEditorsRestoresEachOpenerAndUnchangedSaveWritesNothing",
+        "numericEditorSavesOnlyDraftUntilTheMainEditorIsSavedOrCancelled",
+        "numericEditorCommitsExactProgressAndRatingWithUntouchedFieldsOmitted",
+        "failedMangaRatingSaveRetainsTheExactDraftForRetry",
+        "mangaRemovalRequiresConfirmationAndUsesOnlyTheSelectedTitle",
+        "changingToOfflineBeforeConfirmationBlocksRemovalAndKeepsDraft",
+        "offlineEditorDisablesRemovalButLeavesOrdinaryEditsAvailable",
+        "addingAnUnlistedTitleUsesPlanningWithoutADeleteAction",
+        "rawPartialDatesSurviveCancelledDateDraftAndNoOpSave",
+        "fullCalendarDateValidatesAndFailedSaveKeepsTheDateForRetry",
+        "simulatedMangaCanExplicitlyClearADateAndOneComponent",
+        "livePartialDateRequiresFullReplacementAndDoesNotExposeClear"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeMangaPreferencesTest.kt",
+      "methods": [
+        "providerFiltersLoadAndSparseLanguageEditSurvivesProviderSwitches",
+        "failedScanlatorSaveRetainsSelectionForRetryAndLeavesLanguageUntouched",
+        "matchingPreferenceEventReloadsCurrentProviderFilters",
+        "downloadedOfflineFiltersNeedNoSourcePreferenceRequests"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeMangaReaderTest.kt",
+      "methods": [
+        "decodedPagesSupportRemoteDirectionSpreadsZoomJumpProgressAndBack",
+        "pageListFailureCanBeRetriedWithTheRemoteAndLoadsRealImages",
+        "failedImageRetriesWithoutRefetchingTheChapterOrChangingItsPage",
+        "automaticProgressWaitsForTheRenderedLastPageAndOnlyRunsOnce",
+        "disabledAutomaticProgressLeavesTheLastPageUnmarked",
+        "markingAnEarlierChapterReadPreservesNewerServerProgress",
+        "failedFinalImageDoesNotAutoMarkUntilItsRetryRenders",
+        "portraitWideAndCoverSpreadsKeepPixelsPageAnchorAndFinalProgress"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeMangaWorkflowTest.kt",
+      "methods": [
+        "offlineCollectionEntryOpensDownloadsWithoutAnOnlineSourceLookup",
+        "unavailableProviderFallsBackToExistingDownloads",
+        "explicitRefreshAndConfirmedMappingResetRefetchTheRightChapterList"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeMediaPickerTest.kt",
+      "methods": [
+        "catalogSearchSelectsTheReturnedTitleAndCancelDoesNotSelect",
+        "offlineTrackingUsesSelectedMediaAndExactExistingPayload",
+        "playlistTitleSelectionAppendsOnceAndPreservesEpisodePayload",
+        "hiddenTitlesCancelPreservesOriginalAndChosenTitlesSaveNumericIds"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeNakamaRoutingTest.kt",
+      "methods": [
+        "initialRefreshAndReconnectAdvertiseNativeWatchPartyPlayback"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeOfflineAndRefreshTest.kt",
+      "methods": [
+        "localAccountDisablesOfflineModeAndAniListSynchronization",
+        "connectedAccountCanToggleAndSyncUsingFreshStatus",
+        "accountDisconnectedAfterRenderingCannotUseCachedEnabledToggle",
+        "explorerRefreshInvalidatesServerTreeBeforeReadingNewFiles",
+        "returningFromPlayerRefreshesSavedPlaylistCompletion",
+        "playlistEventUpdatesCompletionBeforeAsynchronousDatabaseSave"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeOfflineArtworkTest.kt",
+      "methods": [
+        "offlinePosterLoadsThroughTheExistingAssetRouteAndRemainsVisibleWithRemoteFocus"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeOnlineSourceSelectionTest.kt",
+      "methods": [
+        "findingSourcesBeforeEpisodeListStillPlaysTheReturnedCanonicalSpecial",
+        "sourceEditorsValidateSaveCancelAndRestoreTheirRemoteOpeners",
+        "switchingSourceClearsOldProvidersAndFailedLoadCanBeRetried"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativePersonalCollectionTest.kt",
+      "methods": [
+        "customSourceRangeIdsOpenExactDetailsAndRestoreTheirOwnCards",
+        "animePersonalSearchStatusSortAndDetailsRestoreWithoutCatalogRequests",
+        "collectionRefreshFailureRetriesWithoutDroppingPersonalFilters",
+        "mangaPersonalQueryAndStatusSurviveCatalogAndChapterBack"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativePlatformDialogsTest.kt",
+      "methods": [
+        "lateInformationalNoticeFocusesCloseOnlyAfterDialogPlacement",
+        "destructivePromptInitiallyFocusesCancelAndNeverInvokesActionWhenCancelled",
+        "selectingActionCanReplacePromptWithoutItsDismissalClosingTheReplacement",
+        "longPromptActionListRemainsRemoteNavigable",
+        "longPromptMessageIsReadableWithArrowsWithoutInvokingTheAction"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativePluginActionsAndTabsTest.kt",
+      "methods": [
+        "highMediaIdsSurviveActualPluginNavigationOpenAndEpisodeSelection",
+        "libraryMediaPageAndEpisodeActionsKeepTheirPayloadsAndUnloadFocus",
+        "configuredPluginSourceOpensSelectsAndClosesWithoutOverridingManualChoice",
+        "lateCollectionsCannotBecomeSelectableAfterSwitchingTitles"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativePluginPresentationTest.kt",
+      "methods": [
+        "globalTrayOpenRendersOnlyItsSurfaceAndBackRestoresTheOpener",
+        "globalCommandsUseTheirOwnerAndIgnoreUnrelatedCloseRequests",
+        "relativeAnchorItemsNavigateNativelyAndHandlerLinksKeepTheirCallbackContract"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativePluginScreenNavigationTest.kt",
+      "methods": [
+        "globalPluginDeviceRequestsUseNativeViewportAndConfirmedClipboardWithEmptyDomResults",
+        "webSocketNavigationAndReloadCallbacksAlwaysRunOnAndroidMainThread",
+        "globalPluginNavigationOpensSubpagesReportsManualBackAndReloadsTheActualScreen",
+        "filteredDiscoveryAndMangaEntryUseTypedTargetsAndUnsupportedRequestsStayNative"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeSettingsFieldsTest.kt",
+      "methods": [
+        "cancellingListEditsDoesNotMutateOriginalOrSubmit",
+        "listRemovalSavesNumericServerPayload",
+        "nativeChoiceReturnsContractValueAndKeepsCurrentVisible"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeSettingsNavigationTest.kt",
+      "methods": [
+        "devicePageRetainsAllActionsAndRestoresItsLastRowAfterBack",
+        "settingRowsKeepChoiceAndBooleanPayloadsAndRestoreListDialogOpener",
+        "allSettingsRestoresOffscreenCategoryAndKeepsSecondarySettingsEndpoint"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeSourceDownloadTest.kt",
+      "methods": [
+        "remoteSearchDownloadUsesFoldersSupportsCancelAndRetriesServerFailure",
+        "remoteDebridDownloadUsesChosenConfiguredFolder"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeTextEntryImeTest.kt",
+      "methods": [
+        "numericKeyboardLeavesTheFieldAndFooterVisibleAndDoneDoesNotSave",
+        "firstPhysicalBackHidesMultilineKeyboardAndLeavesTheDraftOpen"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeThemeContrastTest.kt",
+      "methods": [
+        "defaultNativeBodyTextRemainsReadableOnTheDarkRootSurface"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeTorrentDetailsWorkflowTest.kt",
+      "methods": [
+        "downloadsEntrySupportsExactTorrentActionsFileRetryTrackersAndLazyBackFocus",
+        "sessionLimitsPreserveDraftOnFailureCancelDoesNotSubmitAndReadbackIsNotInvented"
+      ]
+    },
+    {
+      "source": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeTransferStatusTest.kt",
+      "methods": [
+        "liveMangaQueueRefreshBlocksCanceledWorkersAndRechecksBeforeClearingFailures",
+        "metadataAcknowledgementAndEmptyQueueStayPendingUntilTheFinishEvent",
+        "metadataStatusFailureAndRejectedRequestRemainRetryable"
+      ]
+    }
+  ],
+  "ordinaryCi": "connectedDebugAndroidTest; opt-in methods remain skipped without flags",
+  "ownedJourney": {
+    "class": "app.seanime.tv.AndroidIsolatedLibraryPlaybackJourneyTest",
+    "method": "remoteOnlyLibraryFilesAndExplorerPlayOwnedMultitrackVideo",
+    "requiredFlags": [
+      "isolatedNativeGoLibraryPlaybackJourneyFixture",
+      "freshInstrumentationProcess"
+    ],
+    "environment": "Dedicated freshly created disposable CI AVD; never the retained cloud AVD",
+    "expectedTests": 1,
+    "allowedSkipped": 0
+  },
+  "latestPriorDeviceRun": {
+    "commit": "8ff4ce9e572131c9ba1aa8816a845c3f9d05f38e",
+    "run": 36844301124,
+    "executed": 71,
+    "total": 181,
+    "failures": 9,
+    "skipped": 4,
+    "unrun": 110,
+    "outcome": "Instrumentation process crashed; no successful full-suite acceptance"
+  }
+}
