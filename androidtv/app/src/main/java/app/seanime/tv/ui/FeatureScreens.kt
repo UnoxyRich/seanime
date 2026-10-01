@@ -74,6 +74,7 @@ data class PlaybackRequest(
     val playlistId: Int? = null,
     val media: JSONObject? = null,
     val playlistEpisode: JSONObject? = null,
+    val unmatchedFile: app.seanime.tv.platform.NativeUnmatchedFile? = null,
 )
 
 @Composable

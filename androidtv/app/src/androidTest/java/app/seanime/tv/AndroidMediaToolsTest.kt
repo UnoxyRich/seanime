@@ -24,6 +24,7 @@ class AndroidMediaToolsTest {
     @Test
     fun bundledToolsAndNativePlayerEncodeProbeDecodeAndSeekVideo() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        (context.applicationContext as SeanimeTvApplication).awaitAndroidRuntime()
         val directory = File(context.cacheDir, "media-tools-${System.nanoTime()}").apply { mkdirs() }
         val video = File(directory, "cpu-video.mp4")
         val raw = File(directory, "source.yuv")
@@ -72,42 +73,49 @@ class AndroidMediaToolsTest {
             ActivityScenario.launch<NativePlayerActivity>(
                 NativePlayerActivity.intent(context, Uri.fromFile(video), "CPU fallback video", "[]", 0, "{}", """{"paused":true}"""),
             ).use { scenario ->
-                awaitVideoFrame(scenario)
-                scenario.onActivity { activity ->
-                    val player = requireNotNull(findPlayerView(activity.window.decorView)?.player)
-                    assertEquals(160, player.videoSize.width)
-                    assertEquals(90, player.videoSize.height)
-                    assertEquals(1_000L, player.duration)
-                    assertTrue("fixture should start paused", !player.playWhenReady)
+                val first = awaitVideoFrame(scenario, Uri.fromFile(video))
+                assertEquals(160, first.width)
+                assertEquals(90, first.height)
+                assertEquals(1_000L, first.duration)
+                assertTrue("fixture should start paused", first.paused)
+                scenario.onActivity {
                     NativePlayerActivity.control(Uri.fromFile(video).toString(), "seekTo", 500.0)
                 }
-                awaitVideoFrame(scenario)
-                scenario.onActivity { activity ->
-                    val player = requireNotNull(findPlayerView(activity.window.decorView)?.player)
-                    assertEquals(500L, player.currentPosition)
-                    assertTrue("seeking resumed a paused video", !player.playWhenReady)
-                }
+                val sought = awaitVideoFrame(scenario, Uri.fromFile(video), first.renderedBuffers, 500L)
+                assertEquals(500L, sought.position)
+                assertTrue("seeking resumed a paused video", sought.paused)
             }
         } finally {
             directory.deleteRecursively()
         }
     }
 
-    private fun awaitVideoFrame(scenario: ActivityScenario<NativePlayerActivity>) {
+    private data class VideoFrame(val width: Int, val height: Int, val duration: Long, val position: Long,
+        val paused: Boolean, val renderedBuffers: Int)
+
+    private fun awaitVideoFrame(scenario: ActivityScenario<NativePlayerActivity>, uri: Uri,
+        previousBuffers: Int = 0, expectedPosition: Long = 0): VideoFrame {
         val deadline = SystemClock.elapsedRealtime() + 10_000
+        var last: VideoFrame? = null
         while (SystemClock.elapsedRealtime() < deadline) {
-            var rendered = false
             scenario.onActivity { activity ->
                 val player = findPlayerView(activity.window.decorView)?.player as? ExoPlayer
                 assertEquals("native video decoder failed", null, player?.playerError)
                 val counters = player?.videoDecoderCounters
                 counters?.ensureUpdated()
-                rendered = player?.playbackState == Player.STATE_READY && (counters?.renderedOutputBufferCount ?: 0) > 0
+                last = if (player?.playbackState == Player.STATE_READY) {
+                    assertEquals("Native decoder changed fixture source", uri, player.currentMediaItem?.localConfiguration?.uri)
+                    VideoFrame(player.videoSize.width, player.videoSize.height, player.duration, player.currentPosition,
+                        !player.playWhenReady, counters?.renderedOutputBufferCount ?: 0)
+                } else null
             }
-            if (rendered) return
+            // READY and a retained buffer count can precede the current surface's
+            // size callback. Observe all decoder fields together, and require a
+            // newly rendered frame after seeking rather than the first old frame.
+            last?.let { if (it.width == 160 && it.height == 90 && it.position == expectedPosition && it.renderedBuffers > previousBuffers) return it }
             SystemClock.sleep(50)
         }
-        throw AssertionError("native decoder did not render an H.264 frame")
+        throw AssertionError("native decoder did not render the expected H.264 frame at $expectedPosition ms; last=$last")
     }
 
     private fun findPlayerView(view: View): PlayerView? {

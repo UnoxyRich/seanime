@@ -72,12 +72,19 @@ private val Accent = Color(0xFF82E9D0)
 private val Muted = Color(0xFFB6C8D2)
 
 @Stable
-private class PlayerFocusTransfer(val target: String?) {
-    var placed by mutableStateOf(false)
+internal class PlayerFocusTransfer(val target: String?, alreadyPlaced: Boolean = false) {
+    var placed by mutableStateOf(alreadyPlaced)
     var applied by mutableStateOf(false)
     fun modifier(id: String): Modifier = if (id == target) Modifier.onGloballyPositioned {
         if (it.isAttached) placed = true
     } else Modifier
+}
+
+/** Consecutive transfers can target the same unchanged HUD node without a new layout. */
+internal class PlayerFocusTransfers {
+    private var previous: PlayerFocusTransfer? = null
+    fun begin(target: String?): PlayerFocusTransfer = PlayerFocusTransfer(target,
+        alreadyPlaced = target != null && previous?.target == target && previous?.placed == true).also { previous = it }
 }
 
 @Composable
@@ -85,12 +92,13 @@ fun NativeTvPlayerPresentation(state: NativeTvPlayerState, onAction: (String) ->
     MaterialTheme(colorScheme = darkColorScheme(primary = Accent, surface = Ink, onSurface = Color.White)) {
         val rootFocus = remember { FocusRequester() }
         val requesters = remember { mutableMapOf<String, FocusRequester>() }
+        val focusTransfers = remember { PlayerFocusTransfers() }
         var lastFocused by remember { mutableStateOf("play") }
         // Android can assign focus to the first node before the window is ready.
         // Freeze the intended target until our explicit transfer succeeds, so
         // that automatic timeline focus cannot replace the initial Play target.
         val focus = remember(state.controls, state.error, state.dialog, state.screenshot, state.skipLabel.isNotBlank(), state.canPrevious, state.canNext) {
-            PlayerFocusTransfer(when {
+            focusTransfers.begin(when {
                 state.screenshot || state.dialog != null -> null
                 state.error.isNotBlank() -> "retry"
                 state.controls -> lastFocused.takeUnless {

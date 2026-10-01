@@ -183,6 +183,7 @@ class MainActivity : ComponentActivity() {
     private fun play(request: PlaybackRequest) {
         request.playlistId?.let { playback.startPlaylist(it); return }
         request.playlistEpisode?.let { playback.playSinglePlaylistItem(it); return }
+        request.unmatchedFile?.let { playback.playUnmatchedFile(it); return }
         val stream = request.stream
         if (request.episode?.isNakama == true && stream == null) {
             lifecycleScope.launch {

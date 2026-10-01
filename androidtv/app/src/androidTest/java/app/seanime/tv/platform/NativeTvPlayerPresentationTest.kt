@@ -4,7 +4,6 @@ import android.view.KeyEvent
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.seanime.tv.NativeScreenshotEvidence
@@ -43,18 +42,36 @@ class NativeTvPlayerPresentationTest {
 
     @Test fun unavailableEpisodeControlsAreDisabledAndReturnFocusToPlay() {
         val state = NativeTvPlayerState().apply { paused = true; canPrevious = true; canNext = true }
-        compose.setContent { NativeTvPlayerPresentation(state, onAction = {}, onSeek = {}) }
-        compose.onNodeWithTag("native-player-play").assertIsFocused()
-        compose.onNodeWithTag("native-player-previous").assertIsEnabled().performSemanticsAction(SemanticsActions.RequestFocus)
-        compose.onNodeWithTag("native-player-previous").assertIsFocused()
+        val actions = mutableListOf<String>()
+        compose.setContent { NativeTvPlayerPresentation(state, onAction = { actions.add(it) }, onSeek = {}) }
+        awaitFocus("native-player-play")
+        remote(KeyEvent.KEYCODE_DPAD_LEFT)
+        remote(KeyEvent.KEYCODE_DPAD_LEFT)
+        awaitFocus("native-player-previous")
+        compose.onNodeWithTag("native-player-previous").assertIsEnabled()
         compose.runOnIdle { state.canPrevious = false }
+        // The production transfer waits for placement and a focused Android
+        // window. Observe that bounded transfer before asserting its result.
+        awaitFocus("native-player-play")
         compose.onNodeWithTag("native-player-previous").assertIsNotEnabled().assertIsNotFocused()
-        compose.onNodeWithTag("native-player-play").assertIsFocused()
-        compose.onNodeWithTag("native-player-next").assertIsEnabled().performSemanticsAction(SemanticsActions.RequestFocus)
-        compose.onNodeWithTag("native-player-next").assertIsFocused()
+        remote(KeyEvent.KEYCODE_DPAD_LEFT)
+        remote(KeyEvent.KEYCODE_DPAD_LEFT)
+        awaitFocus("native-player-rewind")
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
+        compose.runOnIdle { assertEquals(listOf("rewind"), actions) }
+        repeat(3) { remote(KeyEvent.KEYCODE_DPAD_RIGHT) }
+        awaitFocus("native-player-next")
+        compose.onNodeWithTag("native-player-next").assertIsEnabled()
         compose.runOnIdle { state.canNext = false }
+        awaitFocus("native-player-play")
         compose.onNodeWithTag("native-player-next").assertIsNotEnabled().assertIsNotFocused()
-        compose.onNodeWithTag("native-player-play").assertIsFocused()
+        remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        awaitFocus("native-player-forward")
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
+        compose.runOnIdle { assertEquals(listOf("rewind", "forward"), actions) }
+        remote(KeyEvent.KEYCODE_DPAD_LEFT)
+        awaitFocus("native-player-play")
     }
 
     @Test fun skipActivationRestoresPlayWhenTheNextIntervalAppearsInTheSameFrame() {
@@ -139,6 +156,11 @@ class NativeTvPlayerPresentationTest {
     }
 
     private fun remote(key: Int) = InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(key)
+
+    private fun awaitFocus(tag: String) {
+        compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag(tag).assertIsDisplayed().assertIsFocused()
+    }
 
     private fun assertDialogFitsViewport() {
         val dialog = compose.onNodeWithTag("native-player-dialog").fetchSemanticsNode().boundsInRoot

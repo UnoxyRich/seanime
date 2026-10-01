@@ -155,7 +155,10 @@ class NativePersonalCollectionTest {
             SeanimeApiClient(server.url("/").newBuilder().host("127.0.0.1").build().toString()).use { api ->
                 val repo = SeanimeRepository(api)
                 val status = SeanimeJson.status(JSONObject("""{"serverReady":true,"user":{"isSimulated":true},"settings":{"library":{}}}"""))
-                compose.setContent { SeanimeTheme { if (manga) MangaScreen(repo) else SeanimeTvApp(repo, status, {}, {}, {}) } }
+                compose.setContent { SeanimeTheme {
+                    if (manga) NativeArtworkProvider(repo.client) { MangaScreen(repo) }
+                    else SeanimeTvApp(repo, status, {}, {}, {})
+                } }
                 body(f)
             }
         }

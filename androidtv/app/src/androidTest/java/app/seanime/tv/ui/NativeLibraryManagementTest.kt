@@ -140,7 +140,9 @@ class NativeLibraryManagementTest {
         val repo = SeanimeRepository(api)
         var visible by mutableStateOf(true)
         try {
-            compose.setContent { SeanimeTheme { if (visible) LibraryTools(repo, {}, onClose = { fixture.closed.incrementAndGet(); visible = false }) } }
+            compose.setContent { SeanimeTheme { NativeArtworkProvider(repo.client) {
+                if (visible) LibraryTools(repo, {}, onClose = { fixture.closed.incrementAndGet(); visible = false })
+            } } }
             block(fixture)
         } finally {
             compose.runOnIdle { visible = false }; compose.waitForIdle()

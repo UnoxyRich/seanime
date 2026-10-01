@@ -274,7 +274,10 @@ class NativePlayerActivity : ComponentActivity() {
         player = exoPlayer
         activeInstance = WeakReference(this)
         exoPlayer.addListener(object : Player.Listener {
+            private fun ownsPlayer() = this@NativePlayerActivity.player === exoPlayer
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!ownsPlayer()) return
                 lastPositionMs = exoPlayer.currentPosition
                 if (isPlaying) {
                     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -284,6 +287,7 @@ class NativePlayerActivity : ComponentActivity() {
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
+                if (!ownsPlayer()) return
                 lastPositionMs = exoPlayer.currentPosition
                 if (playbackState == Player.STATE_ENDED && !completed) {
                     completed = true
@@ -292,6 +296,7 @@ class NativePlayerActivity : ComponentActivity() {
             }
 
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                if (!ownsPlayer()) return
                 if (reason == Player.DISCONTINUITY_REASON_SEEK) {
                     completed = false
                     eventSubtitles?.seek()
@@ -300,9 +305,10 @@ class NativePlayerActivity : ComponentActivity() {
                 }
             }
 
-            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) { applyAnime4K() }
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) { if (ownsPlayer()) applyAnime4K() }
 
             override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+                if (!ownsPlayer()) return
                 val text = cueGroup.cues.mapNotNull { it.text?.toString() }.joinToString("\n").trim()
                 if (text != currentCueText) {
                     currentCueText = text
@@ -312,6 +318,7 @@ class NativePlayerActivity : ComponentActivity() {
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                if (!ownsPlayer()) return
                 val textTracks = JSONArray()
                 var audioIndex = 0
                 var textIndex = 0
@@ -351,6 +358,7 @@ class NativePlayerActivity : ComponentActivity() {
             }
 
             override fun onEvents(player: Player, events: Player.Events) {
+                if (!ownsPlayer()) return
                 if (events.contains(Player.EVENT_PLAYER_ERROR)) showPlaybackError(player.playerError)
                 publishSnapshot()
             }
@@ -1081,12 +1089,15 @@ class NativePlayerActivity : ComponentActivity() {
         rememberPlaybackState()
         persistPlaybackRecovery()
         publishSnapshot(active = false, closed = isFinishing)
+        // Detaching the surface and releasing Media3 can deliver final callbacks.
+        // Retire ownership before those callbacks so the inactive snapshot cannot
+        // be overwritten, or an old renderer mutate a replacement player's state.
+        player = null
         showPlaybackError(null)
         activePlayerView?.player = null
         eventSubtitles?.pause()
         assSession?.release() ?: current.release()
         assSession = null
-        player = null
         subtitleCacheFiles.forEach { it.delete() }
         subtitleCacheFiles.clear()
         nativePlayerVisible = false

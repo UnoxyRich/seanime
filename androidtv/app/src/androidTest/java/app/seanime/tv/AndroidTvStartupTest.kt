@@ -10,7 +10,8 @@ import android.view.WindowManager
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.lifecycle.Lifecycle
@@ -21,6 +22,7 @@ import app.seanime.tv.data.SeanimeApiClient
 import app.seanime.tv.gomobile.mobile.Mobile
 import app.seanime.tv.platform.NativePlatformActions
 import app.seanime.tv.platform.NativePlaybackBus
+import app.seanime.tv.ui.TvFeature
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -50,10 +52,13 @@ class AndroidTvStartupTest {
                 }
                 compose.onNodeWithTag("native-tv-root").assertIsDisplayed()
                 compose.onNodeWithTag("nav-LIBRARY").assertHasClickAction()
-                compose.onNodeWithTag("anime-search-field").assertExists()
-                compose.onNodeWithTag("nav-LIBRARY").performSemanticsAction(SemanticsActions.RequestFocus)
-                compose.onNodeWithTag("nav-LIBRARY").assertIsFocused()
+                compose.onNodeWithTag("anime-search-submit").assertIsDisplayed()
+                compose.onNodeWithTag("anime-search-field").assertDoesNotExist()
+                awaitFocus("nav-LIBRARY")
                 NativeScreenshotEvidence.capture("real-go-library-home-rail-focus")
+                key(KeyEvent.KEYCODE_DPAD_RIGHT)
+                awaitFocus("anime-search-submit")
+                NativeScreenshotEvidence.capture("real-go-library-search-toolbar-focus")
             } finally {
                 scenario.close()
                 Mobile.stopServer()
@@ -67,15 +72,23 @@ class AndroidTvStartupTest {
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
             awaitNativeReady()
-            compose.onNodeWithTag("nav-LIBRARY").performSemanticsAction(SemanticsActions.RequestFocus)
-            compose.onNodeWithTag("nav-LIBRARY").assertIsFocused()
-            key(KeyEvent.KEYCODE_DPAD_DOWN)
-            compose.onNodeWithTag("nav-ANILIST").assertIsFocused()
+            selectAniListFromInitialRail()
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            awaitFocus("anime-search-submit")
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            awaitFocus("anime-collection-options")
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            compose.onNodeWithText("Connect AniList").assertIsDisplayed()
+            awaitFocus("collection-status")
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            awaitFocus("collection-sort")
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            compose.onNodeWithText("Connect AniList").assertIsDisplayed().assertIsFocused()
+            NativeScreenshotEvidence.capture("real-go-anilist-options-account-focus")
 
-            // Back first restores the current navigation item, then opens the exit dialog.
-            compose.onNodeWithTag("anime-search-submit").performSemanticsAction(SemanticsActions.RequestFocus)
+            // Close the actual options dialog before testing content → rail → Exit.
+            key(KeyEvent.KEYCODE_BACK)
+            awaitFocus("anime-collection-options")
+            compose.onNodeWithText("Collection options").assertDoesNotExist()
             key(KeyEvent.KEYCODE_BACK)
             compose.onNodeWithTag("nav-ANILIST").assertIsFocused()
             key(KeyEvent.KEYCODE_BACK)
@@ -95,11 +108,14 @@ class AndroidTvStartupTest {
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
             awaitNativeReady()
-            compose.onNodeWithTag("nav-ANILIST").performSemanticsAction(SemanticsActions.RequestFocus)
-            compose.onNodeWithTag("nav-ANILIST").assertIsFocused()
-            key(KeyEvent.KEYCODE_DPAD_CENTER)
-            compose.onNodeWithTag("anime-search-field").performTextInput("remote query")
-            compose.onNodeWithTag("anime-search-submit").performSemanticsAction(SemanticsActions.RequestFocus)
+            selectAniListFromInitialRail()
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            awaitFocus("anime-search-submit")
+            openSearchFromFocusedToolbar()
+            typeWithHardwareKeys("remote query")
+            compose.onNodeWithTag("anime-search-field").assertTextContains("remote query")
+            submitSearchWithHardwareEnter()
+            compose.onNodeWithTag("anime-search-submit").assertTextContains("Search: remote query")
             val initialSession = activitySession(scenario)
             assertTrue("The running Go server must supply a signed native client identity",
                 initialSession.clientId.isNotBlank() && !initialSession.identityProof.isNullOrBlank())
@@ -114,15 +130,25 @@ class AndroidTvStartupTest {
             // Its bytes may change while the authenticated client stays the same.
             assertFalse("Recreation lost the server-issued proof", recreatedSession.identityProof.isNullOrBlank())
             assertLiveSignedSession(activityClient(scenario), initialSession)
-            compose.onNodeWithText("Connect AniList").assertIsDisplayed()
+            awaitFocus("nav-ANILIST")
+            compose.onNodeWithTag("anime-search-submit").assertTextContains("Search: remote query")
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            awaitFocus("anime-search-submit")
+            openSearchFromFocusedToolbar()
             compose.onNodeWithTag("anime-search-field").assertTextContains("remote query")
+            submitSearchWithHardwareEnter()
 
             scenario.moveToState(Lifecycle.State.CREATED)
             scenario.moveToState(Lifecycle.State.RESUMED)
             awaitNativeReady()
-            compose.onNodeWithText("Connect AniList").assertIsDisplayed()
+            awaitFocus("anime-search-submit")
+            compose.onNodeWithTag("anime-search-submit").assertTextContains("Search: remote query")
+            openSearchFromFocusedToolbar()
             compose.onNodeWithTag("anime-search-field").assertTextContains("remote query")
-            compose.onNodeWithTag("nav-ANILIST").performSemanticsAction(SemanticsActions.RequestFocus)
+            NativeScreenshotEvidence.capture("real-go-search-query-restored-after-background")
+            submitSearchWithHardwareEnter()
+            key(KeyEvent.KEYCODE_BACK)
+            awaitFocus("nav-ANILIST")
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             compose.onNodeWithTag("nav-MANGA").assertIsFocused()
             scenario.onActivity { activity ->
@@ -139,13 +165,68 @@ class AndroidTvStartupTest {
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
             awaitNativeReady()
-            compose.onNodeWithTag("anime-search-field").performTextClearance()
-            compose.onNodeWithTag("anime-search-field").performSemanticsAction(SemanticsActions.RequestFocus)
+            awaitFocus("nav-LIBRARY")
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            awaitFocus("anime-search-submit")
+            openSearchFromFocusedToolbar()
+            assertEquals("A new Library search should start empty", "",
+                compose.onNodeWithTag("anime-search-field").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
             key(KeyEvent.KEYCODE_A)
             key(KeyEvent.KEYCODE_B)
             compose.onNodeWithTag("anime-search-field").assertTextContains("ab")
             key(KeyEvent.KEYCODE_DPAD_LEFT)
             compose.onNodeWithTag("anime-search-field").assertIsFocused()
+        } finally {
+            scenario.close()
+            Mobile.stopServer()
+        }
+    }
+
+    @Test
+    fun everyMainDestinationHasRemoteContentAndBackRecovery() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            awaitNativeReady()
+            awaitFocus("nav-LIBRARY")
+            TvFeature.entries.forEachIndexed { index, feature ->
+                if (index > 0) key(KeyEvent.KEYCODE_DPAD_DOWN)
+                val railTag = "nav-${feature.name}"
+                awaitFocus(railTag)
+                assertRailControlInsideSafeBounds(railTag)
+                key(KeyEvent.KEYCODE_DPAD_CENTER)
+                awaitFocus(railTag)
+                val enabledContentAction = hasClickAction() and isEnabled() and
+                    hasAnyAncestor(hasTestTag("native-content"))
+                compose.waitUntil(15_000) {
+                    compose.onAllNodes(enabledContentAction).fetchSemanticsNodes().isNotEmpty()
+                }
+                key(KeyEvent.KEYCODE_DPAD_RIGHT)
+                val contentFocused = isFocused() and hasAnyAncestor(hasTestTag("native-content"))
+                compose.waitUntil(15_000) {
+                    compose.onAllNodes(contentFocused).fetchSemanticsNodes().isNotEmpty()
+                }
+                compose.onAllNodes(contentFocused)[0].assertIsDisplayed()
+                key(KeyEvent.KEYCODE_BACK)
+                awaitFocus(railTag)
+                assertRailControlInsideSafeBounds(railTag)
+                if (feature == TvFeature.SETTINGS) NativeScreenshotEvidence.capture("real-go-settings-rail-safe-focus")
+                if (feature == TvFeature.LOGS) NativeScreenshotEvidence.capture("real-go-logs-rail-safe-focus")
+                key(KeyEvent.KEYCODE_BACK)
+                compose.onNodeWithTag("exit-confirm").assertIsDisplayed()
+                key(KeyEvent.KEYCODE_BACK)
+                compose.onNodeWithTag("exit-confirm").assertDoesNotExist()
+                awaitFocus(railTag)
+                assertEquals(Lifecycle.State.RESUMED, scenario.state)
+            }
+            // Exercise upward scrolling too, without a semantic scroll or focus jump.
+            TvFeature.entries.dropLast(1).asReversed().forEach { feature ->
+                key(KeyEvent.KEYCODE_DPAD_UP)
+                awaitFocus("nav-${feature.name}")
+                assertRailControlInsideSafeBounds("nav-${feature.name}")
+            }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitFocus("nav-LIBRARY")
+            compose.onNodeWithTag("anime-search-submit").assertIsDisplayed()
         } finally {
             scenario.close()
             Mobile.stopServer()
@@ -274,12 +355,65 @@ class AndroidTvStartupTest {
         if (compose.onAllNodesWithTag("setup-continue").fetchSemanticsNodes().isNotEmpty()) {
             // Setup is a remote-first TV control: drive its actual key path rather
             // than synthesized pointer activation.
-            compose.onNodeWithTag("setup-continue").performSemanticsAction(SemanticsActions.RequestFocus)
-            compose.onNodeWithTag("setup-continue").assertIsFocused()
+            awaitFocus("setup-continue")
             key(KeyEvent.KEYCODE_DPAD_CENTER)
         }
         compose.waitUntil(30_000) { compose.onAllNodesWithTag("nav-LIBRARY").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("native-tv-root").assertIsDisplayed()
+    }
+
+    private fun awaitFocus(tag: String) {
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag(tag).fetchSemanticsNodes().any {
+                it.config.getOrNull(SemanticsProperties.Focused) == true
+            }
+        }
+        compose.onNodeWithTag(tag).assertIsDisplayed().assertIsFocused()
+    }
+
+    private fun assertRailControlInsideSafeBounds(tag: String) {
+        val control = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+        val safe = compose.onNodeWithTag("native-navigation").fetchSemanticsNode().boundsInRoot
+        val footer = compose.onNodeWithTag("navigation-footer").fetchSemanticsNode().boundsInRoot
+        assertTrue("$tag is clipped at the left safe edge", control.left >= safe.left - 1f)
+        assertTrue("$tag is clipped at the top safe edge", control.top >= safe.top - 1f)
+        assertTrue("$tag overlaps the fixed navigation footer", control.bottom <= footer.top + 1f)
+        assertTrue("$tag is outside the safe viewport", control.right <= safe.right + 1f && control.bottom <= safe.bottom + 1f)
+    }
+
+    private fun selectAniListFromInitialRail() {
+        awaitFocus("nav-LIBRARY")
+        key(KeyEvent.KEYCODE_DPAD_DOWN)
+        awaitFocus("nav-ANILIST")
+        key(KeyEvent.KEYCODE_DPAD_CENTER)
+        awaitFocus("nav-ANILIST")
+    }
+
+    private fun openSearchFromFocusedToolbar() {
+        compose.onNodeWithTag("anime-search-submit").assertIsFocused()
+        key(KeyEvent.KEYCODE_DPAD_CENTER)
+        awaitFocus("anime-search-field")
+    }
+
+    private fun typeWithHardwareKeys(value: String) {
+        value.forEach { character ->
+            key(when (character) {
+                in 'a'..'z' -> KeyEvent.KEYCODE_A + (character - 'a')
+                ' ' -> KeyEvent.KEYCODE_SPACE
+                else -> error("Unsupported hardware-key fixture character")
+            })
+        }
+    }
+
+    private fun submitSearchWithHardwareEnter() {
+        compose.onNodeWithTag("anime-search-field").assertIsFocused()
+        // The production single-line editor declares ImeAction.Search. Exercise
+        // its actual hardware Enter path instead of invoking a semantics action.
+        key(KeyEvent.KEYCODE_ENTER)
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("anime-search-field").fetchSemanticsNodes().isEmpty()
+        }
+        awaitFocus("anime-search-submit")
     }
 
     private fun key(code: Int) {

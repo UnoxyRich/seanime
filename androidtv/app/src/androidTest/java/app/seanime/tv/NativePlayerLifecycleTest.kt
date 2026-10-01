@@ -292,10 +292,17 @@ class NativePlayerLifecycleTest {
             assertFalse("A live player incorrectly used inactive fallback", inactive.get())
             assertTrue("Live snapshot was not delivered on the player looper", snapshotOnMain.get())
             scenario.moveToState(Lifecycle.State.CREATED)
+            instrumentation.waitForIdleSync()
             instrumentation.runOnMainSync {
                 val owner = requireNotNull(coordinator)
+                val finalSnapshot = privateField(owner, "latest").get(owner) as JSONObject
+                assertEquals(url, finalSnapshot.getString("url"))
+                assertFalse("Release callbacks replaced the stopped source's inactive snapshot", finalSnapshot.getBoolean("active"))
+                assertTrue("Stopped playback must retain its paused checkpoint", finalSnapshot.getBoolean("paused"))
+                assertEquals(5500L, finalSnapshot.getLong("positionMs"))
                 socket.events.clear()
                 playerCommand(owner, "get-status")
+                assertEquals("A stopped source must emit exactly one requested status reply", 1, socket.events.size)
                 val stopped = socket.lastVideoEvent()
                 assertEquals("video-status", stopped.getString("type"))
                 assertEquals(5.5, stopped.getJSONObject("payload").getDouble("currentTime"), 0.0)

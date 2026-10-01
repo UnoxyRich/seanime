@@ -1,10 +1,16 @@
 package app.seanime.tv
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.os.SystemClock
+import android.view.KeyEvent
+import android.view.accessibility.AccessibilityWindowInfo
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import app.seanime.tv.data.ApiException
 import app.seanime.tv.data.Playlist
 import app.seanime.tv.data.PlaylistEpisode
@@ -13,7 +19,6 @@ import app.seanime.tv.data.SeanimeJson
 import app.seanime.tv.data.SeanimeRepository
 import app.seanime.tv.data.jsonObject
 import app.seanime.tv.gomobile.mobile.Mobile
-import app.seanime.tv.ui.performTvClick
 import app.seanime.tv.ui.settingChoices
 import app.seanime.tv.ui.validateSettingNumber
 import java.util.UUID
@@ -41,23 +46,38 @@ class AndroidNativeBackendFlowsTest {
         val name = fixtureName()
         val before = serverCall { repo.playlists() }
         try {
-            // Scroll the actual rail, then activate a physical-TV-remote control.
-            compose.onNode(hasScrollToNodeAction() and hasAnyDescendant(hasTestTag("nav-LIBRARY")))
-                .performScrollToNode(hasTestTag("nav-PLAYLISTS"))
-            compose.onNodeWithTag("nav-PLAYLISTS").performTvClick()
+            awaitFocusedTag("nav-LIBRARY")
+            repeat(4) { key(KeyEvent.KEYCODE_DPAD_DOWN) }
+            awaitFocusedTag("nav-PLAYLISTS")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
             waitForEnabledText("New playlist")
-
-            compose.onNodeWithText("New playlist").performTvClick()
-            compose.onNode(hasSetTextAction()).performTextInput(name)
-            compose.onNodeWithText("Cancel").performTvClick()
-            compose.onNode(hasSetTextAction()).assertDoesNotExist()
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            awaitFocusedText("New playlist")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            typePlaylistName(name)
+            // A real TV IME owns key events while visible. Hide it before moving
+            // through the app's footer, rather than assigning focus underneath it.
+            hideKeyboardKeepingDialog()
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            awaitFocusedTag("text-entry-cancel")
+            NativeScreenshotEvidence.capture("real-go-playlist-cancel-focus")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitNameDialogClosed()
+            awaitFocusedText("New playlist")
             assertEquals("Cancel must not create a playlist", playlistState(before),
                 playlistState(serverCall { repo.playlists() }))
 
-            compose.onNodeWithText("New playlist").performTvClick()
-            compose.onNodeWithText("Save").assertIsNotEnabled()
-            compose.onNode(hasSetTextAction()).performTextInput(name)
-            compose.onNodeWithText("Save").assertIsEnabled().performTvClick()
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            compose.onNodeWithTag("text-entry-save").assertIsNotEnabled()
+            typePlaylistName(name)
+            hideKeyboardKeepingDialog()
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            awaitFocusedTag("text-entry-cancel")
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            awaitFocusedTag("text-entry-save")
+            compose.onNodeWithTag("text-entry-save").assertIsEnabled()
+            NativeScreenshotEvidence.capture("real-go-playlist-save-focus")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
             compose.waitUntil(30_000) {
                 serverCall { repo.playlists() }.any { it.name == name }
             }
@@ -231,10 +251,62 @@ class AndroidNativeBackendFlowsTest {
                 compose.onAllNodesWithTag("setup-continue").fetchSemanticsNodes().isNotEmpty()
         }
         if (compose.onAllNodesWithTag("setup-continue").fetchSemanticsNodes().isNotEmpty()) {
-            compose.onNodeWithTag("setup-continue").performTvClick()
+            awaitFocusedTag("setup-continue")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
         }
         compose.waitUntil(30_000) { compose.onAllNodesWithTag("nav-LIBRARY").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("native-tv-root").assertIsDisplayed()
+    }
+
+    private fun key(code: Int) {
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(code)
+        compose.waitForIdle()
+    }
+
+    private fun awaitFocusedTag(tag: String) = awaitFocused(hasTestTag(tag))
+    private fun awaitFocusedText(text: String) = awaitFocused(hasText(text))
+    private fun awaitFocused(matcher: SemanticsMatcher) {
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(matcher).fetchSemanticsNodes().any {
+                it.config.getOrNull(SemanticsProperties.Focused) == true
+            }
+        }
+        compose.onNode(matcher).assertIsDisplayed().assertIsFocused()
+    }
+
+    private fun typePlaylistName(name: String) {
+        awaitFocused(hasSetTextAction())
+        InstrumentationRegistry.getInstrumentation().sendStringSync(name)
+        compose.waitForIdle()
+        compose.onNode(hasSetTextAction()).assertTextContains(name)
+    }
+
+    private fun hideKeyboardKeepingDialog() {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val previousFlags = automation.serviceInfo.flags
+        fun keyboardVisible(): Boolean {
+            val windows = automation.windows
+            return try { windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } }
+            finally { windows.forEach { it.recycle() } }
+        }
+        try {
+            automation.serviceInfo = automation.serviceInfo.apply {
+                flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            }
+            if (keyboardVisible()) {
+                key(KeyEvent.KEYCODE_BACK)
+                compose.waitUntil(10_000) { !keyboardVisible() }
+            }
+            compose.waitForIdle()
+            compose.onNode(hasSetTextAction()).assertIsDisplayed().assertIsFocused()
+        } finally {
+            automation.serviceInfo = automation.serviceInfo.apply { flags = previousFlags }
+        }
+    }
+
+    private fun awaitNameDialogClosed() {
+        compose.waitUntil(10_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isEmpty() }
+        compose.onNode(hasSetTextAction()).assertDoesNotExist()
     }
 
     private fun waitForEnabledText(text: String) {

@@ -170,6 +170,19 @@ class NativePlaybackCoordinator(
         api.request("POST", "/api/v1/directstream/play/localfile", JSONObject().put("path", path).put("clientId", api.clientId))
     }
 
+    fun playUnmatchedFile(file: NativeUnmatchedFile) = task {
+        api.awaitEventsReady()
+        if (globalPlaylist) {
+            check(api.sendEvent("playlist", JSONObject().put("type", "stop-playlist").put("payload", JSONObject()))) {
+                "The playlist connection was interrupted; try again"
+            }
+            globalPlaylist = false
+            globalPlaylistState = null
+        }
+        sourceHeaders = SourceHeaders("", emptyMap())
+        playPlaybackInfo(file.playbackInfo(api.baseUrl))
+    }
+
     fun playStream(
         url: String, title: String, mediaId: Long = 0, episode: JSONObject? = null,
         subtitles: JSONArray = JSONArray(), headers: Map<String, String> = emptyMap(), sourceType: String = "unknown", rawMedia: JSONObject? = null,

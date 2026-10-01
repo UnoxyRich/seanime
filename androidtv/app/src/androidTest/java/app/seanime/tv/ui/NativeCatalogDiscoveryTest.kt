@@ -109,8 +109,9 @@ class NativeCatalogDiscoveryTest {
                 val repo = SeanimeRepository(api)
                 val status = SeanimeJson.status(JSONObject("""{"serverReady":true,"user":{"isSimulated":true},"settings":{"library":{}}}"""))
                 compose.setContent { SeanimeTheme {
-                    if (manga) FeatureScreen(TvFeature.MANGA, repo, {}, {}, resolveNativePluginDestination("/search?type=manga&year=2024&format=MANGA&countryOfOrigin=KR&scoreAbove=8&sorting=CHAPTERS_DESC&page=2"))
-                    else SeanimeTvApp(repo, status, {}, {}, {})
+                    if (manga) NativeArtworkProvider(repo.client) {
+                        FeatureScreen(TvFeature.MANGA, repo, {}, {}, resolveNativePluginDestination("/search?type=manga&year=2024&format=MANGA&countryOfOrigin=KR&scoreAbove=8&sorting=CHAPTERS_DESC&page=2"))
+                    } else SeanimeTvApp(repo, status, {}, {}, {})
                 } }
                 test(f)
             }

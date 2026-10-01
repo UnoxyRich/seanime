@@ -1,5 +1,6 @@
 package app.seanime.tv.ui
 
+import android.util.Log
 import androidx.compose.runtime.*
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
@@ -54,17 +55,32 @@ class NativeAutoDownloaderBatchTest {
 
     @Test fun uncertainCreationSurvivesClosingAndReopeningBatchWithoutAnotherPost() = fixture { fixture ->
         fixture.rejectOnce[42L] = 503
-        openBatch(); addTitle(42)
-        scrollMain("auto-batch-review").performTvClick(); compose.onNodeWithTag("auto-batch-confirm").performTvClick()
-        awaitBatchResult(fixture, 1)
-        scrollMain("auto-batch-close").performTvClick()
-        awaitFocused("auto-batch-open")
-        compose.onNodeWithTag("auto-batch-open").performTvClick()
-        awaitFocused("auto-batch-review")
-        compose.onNodeWithTag("auto-batch-review").performTvClick(); compose.onNodeWithTag("auto-batch-confirm").performTvClick()
-        compose.waitUntil(15_000) { compose.onAllNodesWithTag("auto-batch-confirmation").fetchSemanticsNodes().isEmpty() }
-        scrollMain("auto-batch-result-42").assertTextContains("The earlier request is still unconfirmed. Refresh results or inspect Rules before creating another rule.")
-        assertEquals(1, fixture.created.size)
+        NativeUiStepWatchdog("auto-batch-uncertain-reopen").use { steps ->
+            steps.step("Open batch and select owned title") { openBatch(); addTitle(42) }
+            steps.step("Open first creation review") { scrollMain("auto-batch-review").performTvClick() }
+            steps.step("Submit creation and await uncertain result") {
+                compose.onNodeWithTag("auto-batch-confirm").performTvClick()
+                awaitBatchResult(fixture, 1)
+            }
+            steps.step("Close batch and restore its opener") {
+                scrollMain("auto-batch-close").performTvClick()
+                awaitFocused("auto-batch-open")
+            }
+            steps.step("Reopen retained uncertain batch") {
+                compose.onNodeWithTag("auto-batch-open").performTvClick()
+                awaitFocused("auto-batch-review")
+            }
+            steps.step("Open reconciliation review") {
+                compose.onNodeWithTag("auto-batch-review").performTvClick()
+                compose.onNodeWithTag("auto-batch-confirm-cancel").assertIsFocused()
+            }
+            steps.step("Reconcile and verify no repeated creation") {
+                compose.onNodeWithTag("auto-batch-confirm").performTvClick()
+                compose.waitUntil(15_000) { compose.onAllNodesWithTag("auto-batch-confirmation").fetchSemanticsNodes().isEmpty() }
+                scrollMain("auto-batch-result-42").assertTextContains("The earlier request is still unconfirmed. Refresh results or inspect Rules before creating another rule.")
+                assertEquals(1, fixture.created.size)
+            }
+        }
     }
 
     @Test fun finishedRuleCleanupCancelsThenRetriesOnlyExplicitFailedIds() = fixture(withRules = true) { fixture ->
@@ -113,10 +129,34 @@ class NativeAutoDownloaderBatchTest {
         val server = MockWebServer().apply { dispatcher = fixture; start(InetAddress.getByName("127.0.0.1"), 0) }
         val api = SeanimeApiClient(server.url("/").newBuilder().host("127.0.0.1").build().toString()); val repo = SeanimeRepository(api)
         var visible by mutableStateOf(true)
+        var primaryFailure: Throwable? = null
         try {
-            compose.setContent { SeanimeTheme { if (visible) AutoDownloaderScreen(repo) { visible = false } } }
+            compose.setContent { SeanimeTheme { NativeArtworkProvider(api) {
+                if (visible) AutoDownloaderScreen(repo) { visible = false }
+            } } }
             block(fixture)
-        } finally { compose.runOnIdle { visible = false }; compose.waitForIdle(); api.close(); server.shutdown() }
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+            // A failed measure can leave Compose's tree non-idle. Report the first
+            // failure before cleanup touches that tree, rather than masking it with
+            // a later "layout state is not idle" exception.
+            Log.e("NativeAutoBatchTest", "First failure before fixture cleanup", failure)
+            throw failure
+        } finally {
+            var cleanupFailure: Throwable? = null
+            fun clean(block: () -> Unit) {
+                try { block() } catch (failure: Throwable) {
+                    val first = primaryFailure ?: cleanupFailure
+                    if (first == null) cleanupFailure = failure
+                    else if (first !== failure) first.addSuppressed(failure)
+                    Log.e("NativeAutoBatchTest", "Fixture cleanup failure", failure)
+                }
+            }
+            clean { compose.runOnIdle { visible = false }; compose.waitForIdle() }
+            clean { api.close() }
+            clean { server.shutdown() }
+            if (primaryFailure == null) cleanupFailure?.let { throw it }
+        }
     }
 
     private inner class Fixture(withRules: Boolean) : Dispatcher() {

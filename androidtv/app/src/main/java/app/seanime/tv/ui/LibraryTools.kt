@@ -15,7 +15,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import app.seanime.tv.data.*
+import app.seanime.tv.platform.NativeUnmatchedFile
 import org.json.JSONObject
 
 /** Native file matching, explorer and scan results. Mutations preserve complete server file metadata. */
@@ -42,9 +45,13 @@ internal fun LibraryTools(repo: SeanimeRepository, onPlay: (PlaybackRequest) -> 
     var bulkDialog by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
     var editingFilter by remember { mutableStateOf(false) }
-    var returningTo by remember { mutableStateOf("") }
+    var returningTo by rememberSaveable { mutableStateOf("") }
+    var returningFromPlayer by rememberSaveable { mutableStateOf(false) }
     val returnFocus = remember { FocusRequester() }
     val returnGranted = remember { mutableStateOf(true) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (returningFromPlayer) { returnGranted.value = false; returningFromPlayer = false }
+    }
     var scan by remember { mutableStateOf(false) }
     suspend fun reload(refreshTree: Boolean = false) {
         loaded = false
@@ -128,7 +135,9 @@ internal fun LibraryTools(repo: SeanimeRepository, onPlay: (PlaybackRequest) -> 
                     LibraryFileRow(file, returnFocus, returnGranted, returningTo, loaded && !action.busy, path in selected,
                         select = { toggleSelection(file) }, rename = { returningTo = "rename:$path"; renaming = JSONObject(file.toString()) },
                         edit = { returningTo = "edit:$path"; edit = JSONObject(file.toString()) },
-                        delete = { returningTo = "delete:$path"; deleting = JSONObject(file.toString()) }) { onPlay(filePlayback(file)) }
+                        delete = { returningTo = "delete:$path"; deleting = JSONObject(file.toString()) }) {
+                        returningTo = "play:$path"; returningFromPlayer = true; onPlay(filePlayback(file))
+                    }
                 }
             }
             "Explorer" -> {
@@ -172,7 +181,9 @@ internal fun LibraryTools(repo: SeanimeRepository, onPlay: (PlaybackRequest) -> 
                             LibraryFileRow(file, returnFocus, returnGranted, returningTo, loaded && !action.busy, path in selected,
                                 select = { toggleSelection(file) }, rename = { returningTo = "rename:$path"; renaming = JSONObject(file.toString()) },
                                 edit = { returningTo = "edit:$path"; edit = JSONObject(file.toString()) },
-                                delete = { returningTo = "delete:$path"; deleting = JSONObject(file.toString()) }) { onPlay(filePlayback(file)) }
+                                delete = { returningTo = "delete:$path"; deleting = JSONObject(file.toString()) }) {
+                                returningTo = "play:$path"; returningFromPlayer = true; onPlay(filePlayback(file))
+                            }
                         }
                         else FeaturePanel(node.optString("name"), "Not indexed. Run a library scan to identify this file.")
                     }
@@ -236,6 +247,11 @@ internal fun LibraryTools(repo: SeanimeRepository, onPlay: (PlaybackRequest) -> 
 private fun JSONObject?.objects(key: String): List<JSONObject> = this?.optJSONArray(key).objects()
 
 internal fun filePlayback(file: JSONObject): PlaybackRequest {
+    if (file.optLong("mediaId") <= 0L) {
+        val path = file.getString("path")
+        val title = file.optString("name").ifBlank { path.substringAfterLast('/') }
+        return PlaybackRequest(title = title, unmatchedFile = NativeUnmatchedFile(path, title))
+    }
     val metadata = file.optJSONObject("metadata") ?: JSONObject()
     val number = metadata.optInt("episode")
     val raw = JSONObject().put("episodeNumber", number).put("progressNumber", if (metadata.optString("type") == "main") number else 0)
@@ -254,7 +270,8 @@ private fun LibraryFileRow(file: JSONObject, returnFocus: FocusRequester, return
             ActionButton(if (selected) "✓ Selected" else "Select file", enabled && path.isNotBlank(), Modifier.testTag("library-file-select-$path"), select)
             ActionButton("Edit match", enabled, modifier = Modifier.testTag("library-file-edit-$path")
                 .then(if (returningTo == "edit:$path" && enabled) Modifier.initialTvFocus(returnFocus, returnGranted) else Modifier), onClick = edit)
-            ActionButton("Play", enabled, onClick = play)
+            ActionButton("Play", enabled && path.isNotBlank(), modifier = Modifier.testTag("library-file-play-$path")
+                .then(if (returningTo == "play:$path" && enabled) Modifier.initialTvFocus(returnFocus, returnGranted) else Modifier), onClick = play)
             ActionButton("Rename file", enabled, Modifier.testTag("library-file-rename-$path")
                 .then(if (returningTo == "rename:$path" && enabled) Modifier.initialTvFocus(returnFocus, returnGranted) else Modifier), rename)
             ActionButton("Delete file", enabled, modifier = Modifier.testTag("library-file-delete-$path")

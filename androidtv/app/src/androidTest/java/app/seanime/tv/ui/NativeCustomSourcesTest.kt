@@ -58,7 +58,7 @@ class NativeCustomSourcesTest {
             SeanimeApiClient(server.url("/").newBuilder().host("127.0.0.1").build().toString()).use { api ->
                 val repo = SeanimeRepository(api)
                 compose.setContent { SeanimeTheme { Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    FeatureScreen(TvFeature.EXTENSIONS, repo, {}, {})
+                    NativeArtworkProvider(repo.client) { FeatureScreen(TvFeature.EXTENSIONS, repo, {}, {}) }
                 } } }
                 awaitTag("extensions-custom-sources")
                 compose.onNodeWithTag("extensions-custom-sources").performTvClick()
