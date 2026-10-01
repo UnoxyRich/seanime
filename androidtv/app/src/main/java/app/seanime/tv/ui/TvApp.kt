@@ -151,6 +151,10 @@ private fun SeanimeTvAppContent(
     val screenStates = rememberSaveableStateHolder()
     val railState = rememberLazyListState()
     val navigationScope = rememberCoroutineScope()
+    var requestedContentRoute by remember { mutableStateOf<String?>(null) }
+    fun currentContentRoute() = "$pluginRouteGeneration-" + if (selectedId != 0L) "details-$selectedId" else "destination-$destinationName"
+    val contentRoute = currentContentRoute()
+    fun cancelContentEntry() { requestedContentRoute = null }
     fun cancelDetailReturn() {
         if (detailReturnPending) { detailReturnPending = false; detailReturnCancelled = true }
     }
@@ -167,6 +171,7 @@ private fun SeanimeTvAppContent(
         selectedId = id
     }
     fun navigatePlugin(target: NativePluginDestination) {
+        cancelContentEntry()
         cancelDetailReturn()
         pluginRoutePath = target.location.path
         pluginRouteGeneration++
@@ -184,13 +189,16 @@ private fun SeanimeTvAppContent(
         railState.scrollToItem(destination.ordinal)
     }
     BackHandler {
+        val hadPendingContentEntry = requestedContentRoute != null
+        cancelContentEntry()
         when {
             selectedId != 0L -> closeDetails()
-            !railHasFocus || detailReturnPending -> {
+            hadPendingContentEntry || !railHasFocus || detailReturnPending -> {
                 cancelDetailReturn()
                 railFocusGranted.value = false
+                val railTarget = TvFeature.valueOf(destinationName)
                 navigationScope.launch {
-                    railState.scrollToItem(destination.ordinal)
+                    railState.scrollToItem(railTarget.ordinal)
                 }
             }
             else -> showExit = true
@@ -200,14 +208,26 @@ private fun SeanimeTvAppContent(
         LocalNativeNavigationOwnsFocus provides (railHasFocus && !detailReturnPending)) {
     ReportNativePluginScreen(nativeFeatureLocation(destination), priority = 0)
     NativeTvScaffold(destination, if (status.offline) "Offline mode" else "Server connected", railHasFocus,
-        onNavigate = { feature -> cancelDetailReturn(); destinationName = feature.name; selectedId = 0L; pluginRoutePath = null },
+        onNavigate = { feature -> cancelContentEntry(); cancelDetailReturn(); destinationName = feature.name; selectedId = 0L; pluginRoutePath = null },
         onRailFocusChanged = { railHasFocus = it }, contentFocus = contentFocus, railFocus = railFocus,
         railFocusGranted = railFocusGranted, railState = railState,
-        onContentInteraction = ::cancelDetailReturn, onRailInteraction = ::cancelDetailReturn) {
+        onContentInteraction = { cancelContentEntry(); cancelDetailReturn() },
+        onRailInteraction = { cancelContentEntry(); cancelDetailReturn() },
+        contentIdentity = contentRoute, contentEntryRequested = requestedContentRoute == contentRoute,
+        // Read the latest state here: Center and Right can arrive before the
+        // destination change has reached composition and placement.
+        onEnterContent = { requestedContentRoute = currentContentRoute() },
+        onContentEntryFinished = { entered ->
+            requestedContentRoute = null
+            if (!entered) {
+                railFocusGranted.value = false
+                navigationScope.launch { railState.scrollToItem(destination.ordinal) }
+            }
+        }) {
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 key(pluginRouteGeneration) {
-                screenStates.SaveableStateProvider("$pluginRouteGeneration-" + if (selectedId != 0L) "details-$selectedId" else "destination-${destination.name}") {
+                screenStates.SaveableStateProvider(contentRoute) {
                 when {
                     selectedId != 0L -> AnimeDetailScreen(selectedId, repo, onPlay, onBack = ::closeDetails,
                         initialSourceMode = initialRoute?.takeIf { it.animeId == selectedId }?.sourceMode,

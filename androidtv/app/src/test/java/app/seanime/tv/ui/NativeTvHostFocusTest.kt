@@ -191,6 +191,65 @@ class NativeTvHostFocusTest {
 
     @Test fun settingsDeviceActionsAndCategoryRestoreTheirRemoteOpeners() = settingsRoute()
 
+    @Test fun rapidDestinationThenRightEntersNewContentAndBackRestoresTheSelectedRail() = fixture {
+        moveRailTo(TvFeature.LOGS)
+        compose.onNodeWithTag("nav-LOGS").performKeyInput {
+            pressKey(Key.DirectionCenter)
+            pressKey(Key.DirectionRight)
+        }
+        awaitContentFocus()
+        compose.onNodeWithText("Logs & diagnostics").assertIsDisplayed()
+        compose.onNodeWithTag("nav-LOGS").assertIsNotFocused()
+        compose.onNodeWithTag("navigation-rail").performScrollToIndex(0)
+        activityBack()
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasTestTag("nav-LOGS") and isFocused()).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("nav-LOGS").assertIsDisplayed().assertIsFocused()
+        assertWholeControlInside("nav-LOGS", "navigation-rail")
+        compose.onNodeWithText("Leave Seanime?").assertDoesNotExist()
+    }
+
+    @Test fun newerRailKeyCancelsContentEntryDuringDestinationChange() = fixture {
+        moveRailTo(TvFeature.SETTINGS)
+        activityKeys(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP)
+        awaitTag("settings-row-device")
+        println("Focused controls after rapid rail cancellation: " + compose.onAllNodes(isFocused()).fetchSemanticsNodes().map { it.config })
+        compose.onNodeWithTag("nav-NAKAMA").assertIsFocused()
+        compose.onAllNodes(isFocused() and hasAnyAncestor(hasTestTag("native-content"))).assertCountEquals(0)
+    }
+
+    @Test fun backCancelsContentEntryBeforeTheNewDestinationIsPlaced() = fixture {
+        moveRailTo(TvFeature.LOGS)
+        activityKeys(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_BACK)
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Logs & diagnostics").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Leave Seanime?").assertDoesNotExist()
+        compose.onNodeWithTag("nav-LOGS").assertIsFocused()
+        compose.onAllNodes(isFocused() and hasAnyAncestor(hasTestTag("native-content"))).assertCountEquals(0)
+    }
+
+    private fun moveRailTo(target: TvFeature) {
+        for (feature in TvFeature.entries.take(target.ordinal)) {
+            key(compose.onNodeWithTag("nav-${feature.name}").assertIsFocused(), Key.DirectionDown)
+        }
+        compose.onNodeWithTag("nav-${target.name}").assertIsFocused()
+    }
+
+    private fun awaitContentFocus() = compose.waitUntil(10_000) {
+        compose.onAllNodes(isFocused() and hasAnyAncestor(hasTestTag("native-content"))).fetchSemanticsNodes().isNotEmpty()
+    }
+
+    private fun activityKeys(vararg keys: Int) {
+        compose.runOnUiThread {
+            val time = SystemClock.uptimeMillis()
+            for (code in keys) {
+                compose.activity.dispatchKeyEvent(KeyEvent(time, time, KeyEvent.ACTION_DOWN, code, 0))
+                compose.activity.dispatchKeyEvent(KeyEvent(time, time + 1, KeyEvent.ACTION_UP, code, 0))
+            }
+        }
+        compose.waitForIdle()
+    }
+
     @Test @Config(fontScale = 1.3f)
     fun settingsLargeFontKeepsFocusedRowsAndArrowsFullyVisible() = settingsRoute()
 

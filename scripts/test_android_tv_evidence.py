@@ -74,6 +74,13 @@ if args == ['shell', 'am', 'force-stop', 'app.seanime.tv']:
     sys.exit(0)
 if args[:3] == ['shell', 'pm', 'path']:
     package = args[3]
+    from pathlib import Path
+    if os.environ.get('FAKE_PACKAGE_QUERY_ERROR'):
+        print('PRIVATE_SENTINEL', file=sys.stderr)
+        sys.exit(1)
+    if os.environ.get('FAKE_APP_MISSING') or (os.environ.get('FAKE_ENFORCE_INSTALL_STATE') and
+            not (Path(os.environ['FAKE_DEVICE']) / '.installed').exists()):
+        sys.exit(1)
     if os.environ.get('FAKE_MALFORMED_APK_PATH'):
         print('package:/data/app/' + package + '-fixture/../../private.db;echo-bad')
     else:
@@ -99,6 +106,14 @@ sys.exit(0)
         run_as.write_text("""#!/usr/bin/env python3
 import os, sys
 assert sys.argv[1] == 'app.seanime.tv'
+from pathlib import Path
+if os.environ.get('FAKE_RUN_AS_DENIED'):
+    print('run-as: PRIVATE_SENTINEL', file=sys.stderr)
+    sys.exit(1)
+if os.environ.get('FAKE_APP_MISSING') or (os.environ.get('FAKE_ENFORCE_INSTALL_STATE') and
+        not (Path(os.environ['FAKE_DEVICE']) / '.installed').exists()):
+    print('run-as: unknown package: app.seanime.tv', file=sys.stderr)
+    sys.exit(1)
 os.chdir(os.environ['FAKE_DEVICE'])
 os.execvp(sys.argv[2], sys.argv[2:])
 """)
@@ -168,6 +183,79 @@ os.execvp(sys.argv[2], sys.argv[2:])
                 self.assertNotIn("PRIVATE_SENTINEL", json.dumps(evidence.capture_failure(error)))
         self.assertEqual(evidence.capture_failure(ValueError("Unexpected owned fixture path"))["reason"],
                          "Unexpected owned fixture path")
+
+    def test_app_access_distinguishes_missing_package_transport_and_run_as_failures(self):
+        self.assertEqual(evidence.probe_app_evidence_access(), {"status": "available"})
+        for environment, expected in (
+                ({"FAKE_APP_MISSING": "1"}, "package-not-installed"),
+                ({"FAKE_RUN_AS_DENIED": "1"}, "run-as-unavailable"),
+                ({"FAKE_ADB_FAILURE": "1"}, "run-as-transport-failed"),
+                ({"FAKE_PACKAGE_QUERY_ERROR": "1"}, "package-query-failed"),
+                ({"FAKE_MALFORMED_APK_PATH": "1"}, "unexpected-package-path")):
+            with self.subTest(expected=expected), patch.dict(os.environ, environment):
+                state = evidence.probe_app_evidence_access()
+                self.assertEqual(state["status"], expected)
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(state))
+
+    def test_unavailable_app_skips_private_reads_and_retains_safe_diagnostics(self):
+        command = self.owned_command("owned-library-journey")
+        for environment, expected in (({"FAKE_APP_MISSING": "1"}, "package-not-installed"),
+                                      ({"FAKE_RUN_AS_DENIED": "1"}, "run-as-unavailable")):
+            with self.subTest(expected=expected), patch.dict(os.environ, environment), patch.object(
+                    evidence, "collect_screenshots", side_effect=AssertionError("Must not read unavailable app")), patch.object(
+                    evidence, "collect_owned_manifest", side_effect=AssertionError("Must not read unavailable app")):
+                evidence.collect(self.root, 0, {"status": "app-process-not-observed"}, {}, "owned-library-journey", command)
+            with zipfile.ZipFile(self.root / Path(evidence.OUTPUT).parent / "owned-library-journey/evidence.zip") as saved:
+                state = json.loads(saved.read("collection-status.json"))
+                self.assertEqual(state["appEvidenceAccess"]["status"], expected)
+                self.assertEqual(state["screenshots"]["reason"], expected)
+                self.assertEqual(state["ownedJourneyManifest"]["reason"], expected)
+                self.assertNotIn(b"PRIVATE_SENTINEL", b"".join(saved.read(name) for name in saved.namelist()))
+
+    def test_keep_apks_option_preserves_private_evidence_through_gradle_teardown(self):
+        manifest = self.journey_manifest()
+        gradle = self.root / "androidtv/gradlew"
+        # Model AGP's default uninstall after the test: app data is gone before
+        # Gradle exits unless its actual keep-installed option was supplied.
+        gradle.write_text("#!/usr/bin/env python3\n" +
+                          "import os, shutil, sys\nfrom pathlib import Path\n" +
+                          "device = Path(os.environ['FAKE_DEVICE'])\n" +
+                          "(device / '.installed').touch()\n" +
+                          "screens = device / 'cache/native-acceptance-screenshots'\n" +
+                          "screens.mkdir(parents=True, exist_ok=True)\n" +
+                          f"(screens / {SCENARIO + '.png'!r}).write_bytes({png()!r})\n" +
+                          f"(screens / {SCENARIO + '.json'!r}).write_text({json.dumps(metadata())!r})\n" +
+                          f"fixture = device / 'files' / {manifest['root'].split('/')[-1]!r} / 'fixture.json'\n" +
+                          "fixture.parent.mkdir(parents=True, exist_ok=True)\n" +
+                          f"fixture.write_text({json.dumps(manifest)!r})\n" +
+                          "if '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true' not in sys.argv:\n" +
+                          "    (device / '.installed').unlink()\n" +
+                          "    shutil.rmtree(device / 'cache')\n    shutil.rmtree(device / 'files')\n")
+        gradle.chmod(0o755)
+        flags = [evidence.OWNED_FIXTURES["owned-library-journey"]["flag"], "freshInstrumentationProcess"]
+        with patch.dict(os.environ, {"FAKE_ENFORCE_INSTALL_STATE": "1"}):
+            self.assertEqual(evidence.main(self.root, "owned-library-journey", evidence.OWNED_JOURNEY, flags), 0)
+            output = self.root / Path(evidence.OUTPUT).parent / "owned-library-journey"
+            with zipfile.ZipFile(output / "evidence.zip") as saved:
+                state = json.loads(saved.read("collection-status.json"))
+                self.assertIn(evidence.KEEP_APKS_ARGUMENT, state["command"])
+                self.assertEqual(state["appEvidenceAccess"]["status"], "available")
+                self.assertEqual(state["screenshots"]["status"], "captured")
+                self.assertEqual(state["ownedJourneyManifest"]["status"], "captured")
+                self.assertIn(f"screenshots/{SCENARIO}.png", saved.namelist())
+                self.assertIn("fixtures/owned-library-journey.json", saved.namelist())
+            # Omitting the option reproduces the independent teardown failure.
+            subprocess.run([str(gradle)], check=True, timeout=5)
+            self.assertEqual(evidence.probe_app_evidence_access()["status"], "package-not-installed")
+            with self.assertRaises(tarfile.ReadError):
+                evidence.collect_screenshots()
+            with self.assertRaisesRegex(ValueError, "Unexpected owned fixture path"):
+                evidence.collect_journey_manifest()
+
+    def test_retention_never_runs_gradle_without_explicit_emulator_serial(self):
+        with patch.dict(os.environ, {"ANDROID_SERIAL": "personal-device"}), patch.object(
+                evidence.subprocess, "run", side_effect=AssertionError("Must reject before commands")), self.assertRaises(ValueError):
+            evidence.main(self.root)
 
     def test_fake_adb_collects_only_exact_regular_fixture_pairs(self):
         self.write_pair()
@@ -487,7 +575,8 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
             with self.subTest(invocation=invocation), patch.object(evidence.threading, "Thread") as thread, patch.object(
                     evidence, "collect") as collect:
                 thread.return_value.is_alive.return_value = False
-                self.assertEqual(evidence.main(self.root, invocation, selected), 0)
+                flags = [evidence.OWNED_FIXTURES[invocation]["flag"], "freshInstrumentationProcess"] if selected else []
+                self.assertEqual(evidence.main(self.root, invocation, selected, flags), 0)
                 profile = thread.call_args.kwargs["args"][3]
                 self.assertEqual(profile["maxSeconds"], seconds)
                 self.assertEqual(thread.call_args.kwargs["target"], evidence.record_startup)
@@ -612,20 +701,21 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
                 return original_run(command, **kwargs)
             with self.subTest(invocation=invocation), patch.object(evidence, "collect", side_effect=collect), patch.object(
                     evidence.subprocess, "run", side_effect=run):
-                self.assertEqual(evidence.main(self.root, invocation, selected), 17)
+                flags = [evidence.OWNED_FIXTURES[invocation]["flag"], "freshInstrumentationProcess"] if selected else []
+                self.assertEqual(evidence.main(self.root, invocation, selected, flags), 17)
             self.assertEqual(events, expected)
 
-    def write_acceptance_fixture(self, *, skipped=0, tests=1, failures=0, errors=0, installed_status="matched", gradle_status=0):
-        invocation = "owned-library-journey"
-        classname = "app.seanime.tv.AndroidIsolatedLibraryPlaybackJourneyTest"
-        method = "remoteOnlyLibraryFilesAndExplorerPlayOwnedMultitrackVideo"
-        selected = classname + "#" + method
+    def write_acceptance_fixture(self, *, skipped=0, tests=1, failures=0, errors=0, installed_status="matched", gradle_status=0,
+                                 invocation="owned-library-journey"):
+        spec = evidence.OWNED_FIXTURES[invocation]
+        selected = spec["selector"]
+        classname, method = selected.split("#")
         xml = (f'<testsuites><testsuite><testcase classname="{classname}" name="{method}">'
                + ("<skipped/>" if skipped else "") + "</testcase></testsuite></testsuites>").encode()
         digest = hashlib.sha256(b"fixture APK bytes").hexdigest()
         manifest = {
             "invocation": invocation, "gradleExitCode": gradle_status,
-            "command": evidence.COMMAND + ["-Pandroid.testInstrumentationRunnerArguments.class=" + selected],
+            "command": self.owned_command(invocation),
             "junit": {"status": "sanitized", "tests": tests, "failures": failures, "errors": errors,
                       "skipped": skipped, "rejectedReportsOrCases": 0},
             "installedApkIdentity": {"status": installed_status, "packages": {
@@ -633,18 +723,18 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
                 for package, relative in ((evidence.PACKAGE, evidence.APK_PATHS[1]), (evidence.TEST_PACKAGE, evidence.APK_PATHS[2]))}},
             "apkSha256": {path: digest for path in evidence.APK_PATHS},
             "fileSha256": {"junit-summary.xml": hashlib.sha256(xml).hexdigest()},
-            "ownedJourneyManifest": {"status": "captured", "outcome": "passed"},
+            spec["statusKey"]: {"status": "captured", "outcome": "passed"},
         }
         output = self.root / Path(evidence.OUTPUT).parent / invocation
         output.mkdir(parents=True, exist_ok=True)
         fixture = evidence.json_bytes({"outcome": "passed"})
-        manifest["fileSha256"]["fixtures/owned-library-journey.json"] = hashlib.sha256(fixture).hexdigest()
+        manifest["fileSha256"][f"fixtures/{invocation}.json"] = hashlib.sha256(fixture).hexdigest()
         status = evidence.json_bytes(manifest)
         (output / "collection-status.json").write_bytes(status)
         with zipfile.ZipFile(output / "evidence.zip", "w") as archive:
             archive.writestr("collection-status.json", status)
             archive.writestr("junit-summary.xml", xml)
-            archive.writestr("fixtures/owned-library-journey.json", fixture)
+            archive.writestr(f"fixtures/{invocation}.json", fixture)
         return invocation, selected
 
     def test_selected_acceptance_requires_one_unskipped_test_and_matching_installed_pair(self):
@@ -665,6 +755,246 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
         self.write_acceptance_fixture()
         (output / "evidence.zip").unlink()
         self.assertEqual(evidence.check_acceptance(self.root, invocation, selected), 1)
+
+    def owned_command(self, invocation):
+        spec = evidence.OWNED_FIXTURES[invocation]
+        return evidence.COMMAND + [evidence.RUNNER_ARGUMENT + "class=" + spec["selector"],
+                                   evidence.RUNNER_ARGUMENT + spec["flag"] + "=true",
+                                   evidence.RUNNER_ARGUMENT + "freshInstrumentationProcess=true"]
+
+    def owned_manifest(self, invocation):
+        directory = "native-go-fixture-12345678-1234-4123-8123-123456789abc"
+        root = f"/data/user/0/{evidence.PACKAGE}/files/{directory}"
+        data = {"kind": evidence.OWNED_FIXTURES[invocation]["kind"], "root": root, "dataDir": root + "/data",
+                "cacheDir": root + "/cache", "libraryDir": root + "/library", "requiresColdRestart": True,
+                "stage": "stopped-awaiting-force-stop-and-reviewed-cleanup", "outcome": "passed",
+                "hostStatusAfterRun": "stopped", "failure": "PRIVATE_SENTINEL https://private.invalid",
+                "retainedDataDir": "/private/PRIVATE_SENTINEL", "processId": 123,
+                "recoveryPath": "/private/PRIVATE_SENTINEL", "headers": {"Authorization": "PRIVATE_SENTINEL"},
+                "streamUrl": "https://private.invalid/?token=PRIVATE_SENTINEL", "generatedVideoProbe": {"filename": "PRIVATE_SENTINEL"}}
+        if invocation == "owned-library-management":
+            owned = [root + "/library/" + name for name in ("Owned editable copy.mp4", "Owned retained copy.mp4", "Renamed owned copy.mp4")]
+            data.update(mediaPath=root + "/library/Original generated video.mp4", indexPath=root + "/library/Owned unmatched index.json",
+                        ownedCopyPaths=owned, originalSha256="a" * 64, originalPreserved=True, retainedCopyPreserved=True,
+                        recoveryAbsent=True, verified=["generated-owned-video-copies", "existing-index-import-api", "main-native-library-route",
+                            "multi-file-ignore", "native-rename", "explorer-tree", "native-delete", "signed-go-index-readback"])
+            data["indexReadbacks"] = [{"stage": stage, "files": [
+                {"path": path, "name": path.rsplit("/", 1)[1], "mediaId": 0, "locked": False, "ignored": index > 1,
+                 "parsedInfo": {"title": "PRIVATE_SENTINEL"}, "metadata": {"token": "PRIVATE_SENTINEL"}}
+                for path in paths]} for index, (stage, paths) in enumerate((
+                    ("fresh-empty-index", []), ("imported", owned[:2]), ("native-bulk-ignore", owned[:2]),
+                    ("native-rename", owned[1:]), ("native-delete", owned[1:2])))]
+        else:
+            data.update(mediaPath=root + "/library/Generated owned raw video.mp4", rangeStatus=206, rangeBytes=256,
+                        pausedPositionMs=10_123, renderedWidth=160, renderedHeight=90,
+                        recoverySourceValidated=True, recoveryClearedByPlayer=True,
+                        verified=["generated-h264", "signed-go-range-get", "library-root-boundary",
+                                  "main-coordinator-media3-rendered-frame", "remote-play-pause-seek", "owned-recovery-write-and-dismissal"])
+            if invocation == "owned-external-player":
+                data.update(externalReceiverDifferentUid=True, externalAnonymousGoRanges=3, foregroundHostVerified=True,
+                            externalReturnPaused=True, externalHostReleased=True)
+        return data
+
+    def test_owned_classification_requires_exact_selector_opt_in_and_fresh_process(self):
+        for invocation, spec in evidence.OWNED_FIXTURES.items():
+            command = self.owned_command(invocation)
+            with self.subTest(invocation=invocation):
+                self.assertEqual(evidence.owned_fixture_profile(invocation, command), spec)
+                for bad in (command[:-1], command[:-2], command + [command[-1]], command + [command[-3]],
+                            command + [evidence.RUNNER_ARGUMENT + "isolatedNativeGoLocalPlaybackFixture=true"],
+                            [arg.replace(spec["selector"], spec["selector"].split("#")[0]) for arg in command],
+                            [arg.replace("=true", "=false") for arg in command], None, [True]):
+                    self.assertIsNone(evidence.owned_fixture_profile(invocation, bad))
+                self.assertIsNone(evidence.owned_fixture_profile("other-invocation", command))
+                with patch.object(evidence.subprocess, "run", side_effect=AssertionError("Must reject before commands")):
+                    for flags in ([], [spec["flag"]], ["freshInstrumentationProcess"], [spec["flag"], "freshInstrumentationProcess"] * 2):
+                        with self.assertRaises(ValueError):
+                            evidence.main(self.root, invocation, spec["selector"], flags)
+                    with self.assertRaises(ValueError):
+                        evidence.main(self.root, "other-invocation", spec["selector"], [spec["flag"], "freshInstrumentationProcess"])
+
+    def test_new_owned_manifests_capture_only_typed_owned_observations(self):
+        for invocation in list(evidence.OWNED_FIXTURES)[1:]:
+            manifest = self.owned_manifest(invocation)
+            directory = manifest["root"].rsplit("/", 1)[1]
+            path = self.root / "device/files" / directory / "fixture.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(manifest))
+            with self.subTest(invocation=invocation):
+                files, state = evidence.collect_owned_manifest(invocation)
+                self.assertEqual(state, {"status": "captured", "fixtureRoot": directory, "outcome": "passed"})
+                raw = files[f"fixtures/{invocation}.json"]
+                clean = json.loads(raw)
+                self.assertEqual(clean["kind"], manifest["kind"])
+                self.assertEqual(clean["root"], directory)
+                self.assertEqual(clean["mediaPath"], manifest["mediaPath"].removeprefix(manifest["root"] + "/"))
+                for excluded in (b"PRIVATE_SENTINEL", b"https://", b"/data/user/", b"/private/", b"Authorization", b"generatedVideoProbe", b"processId"):
+                    self.assertNotIn(excluded, raw)
+                if invocation == "owned-library-management":
+                    self.assertEqual(len(clean["indexReadbacks"]), 5)
+                    self.assertEqual(clean["indexReadbacks"][-1]["files"][0]["path"], "library/Owned retained copy.mp4")
+                    self.assertNotIn("metadata", clean["indexReadbacks"][-1]["files"][0])
+                elif invocation == "owned-external-player":
+                    self.assertEqual(clean["externalAnonymousGoRanges"], 3)
+                    self.assertTrue(clean["externalReturnPaused"])
+
+    def test_new_owned_manifests_reject_path_schema_type_and_enum_confusion(self):
+        for invocation in list(evidence.OWNED_FIXTURES)[1:]:
+            base = self.owned_manifest(invocation)
+            directory = base["root"].rsplit("/", 1)[1]
+            cases = [("kind", "other-kind"), ("root", "/data/user/0/app.seanime.tv/files/../private"),
+                     ("mediaPath", base["root"] + "/library/../private"), ("requiresColdRestart", 1),
+                     ("stage", "PRIVATE_SENTINEL"), ("stage", {}), ("outcome", []),
+                     ("hostStatusAfterRun", ["stopped"]), ("failedAt", "PRIVATE_SENTINEL"),
+                     ("verified", ["PRIVATE_SENTINEL"]), ("verified", [base["verified"][0]] * 2), ("verified", [True])]
+            if invocation == "owned-library-management":
+                cases += [("ownedCopyPaths", [base["ownedCopyPaths"][0]] * 3), ("ownedCopyPaths", [None] * 3),
+                          ("originalSha256", "a" * 65), ("originalSha256", True), ("originalPreserved", 1),
+                          ("indexReadbacks", base["indexReadbacks"] * 2), ("indexReadbacks", [{"stage": "imported", "files": []}])]
+            else:
+                cases += [(key, value) for key in ("rangeStatus", "rangeBytes", "pausedPositionMs", "renderedWidth", "renderedHeight")
+                          for value in (True, "160", float("nan"), float("inf"), -1, 100_000_001)]
+                cases += [("recoverySourceValidated", 1)]
+                if invocation == "owned-external-player":
+                    cases += [("externalAnonymousGoRanges", 2), ("externalReturnPaused", "true")]
+            for field, value in cases:
+                with self.subTest(invocation=invocation, field=field, value=value), self.assertRaises(ValueError):
+                    evidence.sanitize_owned_manifest({**base, field: value}, directory, invocation)
+            for invalid in ("native-go-fixture-12345678-1234-1123-8123-123456789abc", directory.upper(), directory + "/../private", "native-go-fixture-invalid"):
+                with self.subTest(directory=invalid), self.assertRaises(ValueError):
+                    evidence.sanitize_owned_manifest(base, invalid, invocation)
+
+    def test_management_index_rows_reject_foreign_paths_types_duplicates_and_oversize(self):
+        invocation = "owned-library-management"
+        base = self.owned_manifest(invocation)
+        directory = base["root"].rsplit("/", 1)[1]
+        for field, value in (("path", "/private/PRIVATE_SENTINEL"), ("path", base["mediaPath"]), ("name", "PRIVATE_SENTINEL"),
+                             ("mediaId", True), ("mediaId", 1), ("mediaId", float("nan")), ("ignored", 1), ("locked", "false")):
+            data = copy.deepcopy(base)
+            data["indexReadbacks"][1]["files"][0][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                evidence.sanitize_owned_manifest(data, directory, invocation)
+        for count in (2, 3):
+            data = copy.deepcopy(base)
+            data["indexReadbacks"][1]["files"] = [data["indexReadbacks"][1]["files"][0]] * count
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                evidence.sanitize_owned_manifest(data, directory, invocation)
+
+    def test_new_owned_capture_rejects_oversize_symlinks_ambiguous_roots_and_wrong_kind(self):
+        directory = "native-go-fixture-12345678-1234-4123-8123-123456789abc"
+        fixture = self.root / "device/files" / directory / "fixture.json"
+        fixture.parent.mkdir(parents=True)
+        other = fixture.parent.parent / "native-go-fixture-87654321-1234-4123-8123-123456789abc/fixture.json"
+        private = self.root / "private.json"
+        private.write_text("PRIVATE_SENTINEL")
+        for invocation in list(evidence.OWNED_FIXTURES)[1:]:
+            with self.subTest(invocation=invocation):
+                fixture.write_bytes(b" " * 131073)
+                with self.assertRaisesRegex(ValueError, "Missing or oversized owned fixture manifest"):
+                    evidence.collect_owned_manifest(invocation)
+                fixture.unlink()
+                fixture.symlink_to(private)
+                self.assertEqual(evidence.collect_owned_manifest(invocation), ({}, {"status": "missing-or-unreadable"}))
+                fixture.unlink()
+                fixture.write_text(json.dumps(self.owned_manifest(invocation)))
+                other.parent.mkdir()
+                other.write_text("{}")
+                self.assertEqual(evidence.collect_owned_manifest(invocation)[1]["status"], "ambiguous-owned-roots")
+                other.unlink()
+                other.parent.rmdir()
+                data = self.owned_manifest(invocation)
+                data["kind"] = evidence.JOURNEY_KIND
+                fixture.write_text(json.dumps(data))
+                with self.assertRaisesRegex(ValueError, "Invalid fixture schema or path relationships"):
+                    evidence.collect_owned_manifest(invocation)
+
+    def rewrite_acceptance(self, invocation, change, fixture_change=None):
+        output = self.root / Path(evidence.OUTPUT).parent / invocation
+        with zipfile.ZipFile(output / "evidence.zip") as archive:
+            files = {name: archive.read(name) for name in archive.namelist()}
+        manifest = json.loads(files["collection-status.json"])
+        change(manifest)
+        if fixture_change:
+            fixture_path = f"fixtures/{invocation}.json"
+            fixture = json.loads(files[fixture_path])
+            fixture_change(fixture)
+            files[fixture_path] = evidence.json_bytes(fixture)
+            manifest["fileSha256"][fixture_path] = hashlib.sha256(files[fixture_path]).hexdigest()
+        files["collection-status.json"] = evidence.json_bytes(manifest)
+        (output / "collection-status.json").write_bytes(files["collection-status.json"])
+        with zipfile.ZipFile(output / "evidence.zip", "w") as archive:
+            for name, raw in files.items():
+                archive.writestr(name, raw)
+
+    def test_each_owned_acceptance_rejects_skips_wrong_flags_missing_manifest_or_failed_fixture(self):
+        with patch.object(evidence.subprocess, "run", side_effect=AssertionError("Acceptance must be read-only")):
+            for invocation, spec in evidence.OWNED_FIXTURES.items():
+                with self.subTest(invocation=invocation):
+                    _, selected = self.write_acceptance_fixture(invocation=invocation)
+                    self.assertEqual(evidence.check_acceptance(self.root, invocation, selected), 0)
+                    for invalid in ({"skipped": 1}, {"tests": 0}, {"tests": 2}, {"failures": 1}, {"errors": 1},
+                                    {"installed_status": "mismatch"}, {"gradle_status": 23}):
+                        self.write_acceptance_fixture(invocation=invocation, **invalid)
+                        self.assertEqual(evidence.check_acceptance(self.root, invocation, selected), 1)
+                    for change in (lambda value: value["command"].pop(),
+                                   lambda value: value["command"].append(value["command"][-1]),
+                                   lambda value: value.pop(spec["statusKey"]),
+                                   lambda value: value["fileSha256"].update({f"fixtures/{invocation}.json": "0" * 64})):
+                        self.write_acceptance_fixture(invocation=invocation)
+                        self.rewrite_acceptance(invocation, change)
+                        self.assertEqual(evidence.check_acceptance(self.root, invocation, selected), 1)
+                    self.write_acceptance_fixture(invocation=invocation)
+                    self.rewrite_acceptance(invocation, lambda value: None, lambda fixture: fixture.update(outcome="failed"))
+                    self.assertEqual(evidence.check_acceptance(self.root, invocation, selected), 1)
+
+    def test_new_owned_collect_and_postcapture_force_stop_preserve_original_exit_status(self):
+        gradle = self.root / "androidtv/gradlew"
+        gradle.write_text("#!/bin/sh\nexit 17\n")
+        gradle.chmod(0o755)
+        original_run = evidence.subprocess.run
+        for invocation, spec in list(evidence.OWNED_FIXTURES.items())[1:]:
+            for fails in (False, True):
+                events = []
+                def collect(*args, **kwargs):
+                    events.append("collect")
+                    if fails:
+                        raise OSError("PRIVATE_SENTINEL")
+                def run(command, **kwargs):
+                    if command[3:] == ["shell", "am", "force-stop", evidence.PACKAGE]:
+                        events.append("force-stop")
+                        return subprocess.CompletedProcess(command, 1)
+                    return original_run(command, **kwargs)
+                with self.subTest(invocation=invocation, fails=fails), patch.object(evidence, "collect", side_effect=collect), patch.object(
+                        evidence.subprocess, "run", side_effect=run), patch.object(evidence.threading, "Thread") as thread:
+                    thread.return_value.is_alive.return_value = False
+                    self.assertEqual(evidence.main(self.root, invocation, spec["selector"], [spec["flag"], "freshInstrumentationProcess"]), 17)
+                    self.assertEqual(events, ["collect", "force-stop"])
+                    profile = thread.call_args.kwargs["args"][3]
+                    self.assertEqual((profile["maxSeconds"], profile["bitRateBitsPerSecond"], profile["maxBytes"]), (60, 2_000_000, 32 * 1024 * 1024))
+                    self.assertIn("bounded excerpt only", profile["coverage"])
+
+    def test_new_owned_collect_saves_exact_manifest_and_does_not_touch_other_invocations(self):
+        for relative in evidence.APK_PATHS:
+            apk = self.root / relative
+            apk.parent.mkdir(parents=True, exist_ok=True)
+            apk.write_bytes(b"fixture APK bytes")
+        for invocation, spec in list(evidence.OWNED_FIXTURES.items())[1:]:
+            data = self.owned_manifest(invocation)
+            fixture = self.root / "device/files" / data["root"].rsplit("/", 1)[1] / "fixture.json"
+            fixture.parent.mkdir(parents=True, exist_ok=True)
+            fixture.write_text(json.dumps(data))
+            with self.subTest(invocation=invocation):
+                evidence.collect(self.root, 0, {"status": "app-process-not-observed", "installedApks": evidence.capture_installed_apks()},
+                                 {}, invocation, self.owned_command(invocation))
+                output = self.root / Path(evidence.OUTPUT).parent / invocation
+                with zipfile.ZipFile(output / "evidence.zip") as archive:
+                    saved = json.loads(archive.read("collection-status.json"))
+                    self.assertEqual(saved[spec["statusKey"]]["status"], "captured")
+                    self.assertEqual(saved["installedApkIdentity"]["status"], "matched")
+                    self.assertEqual({name for name in archive.namelist() if name.startswith("fixtures/")}, {f"fixtures/{invocation}.json"})
+                    self.assertNotIn(b"PRIVATE_SENTINEL", b"".join(archive.read(name) for name in archive.namelist()))
+        for invocation in list(evidence.OWNED_FIXTURES)[1:]:
+            self.assertTrue((self.root / Path(evidence.OUTPUT).parent / invocation / "evidence.zip").is_file())
 
     def test_literal_capture_names_are_in_allowlist(self):
         sources = Path(__file__).resolve().parent.parent / "androidtv/app/src/androidTest"

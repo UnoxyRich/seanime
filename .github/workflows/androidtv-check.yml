@@ -147,6 +147,69 @@ jobs:
         if: ${{ !cancelled() && steps.build_apks.outcome == 'success' }}
         run: python3 scripts/run_android_tv_instrumentation.py --check-acceptance --invocation owned-library-journey --class 'app.seanime.tv.AndroidIsolatedLibraryPlaybackJourneyTest#remoteOnlyLibraryFilesAndExplorerPlayOwnedMultitrackVideo'
 
+      - name: Run owned library management on a fresh AVD
+        id: owned_library_management
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: android-tv
+          arch: x86_64
+          profile: tv_1080p
+          avd-name: seanime-owned-management-${{ github.run_id }}-${{ github.run_attempt }}
+          force-avd-creation: true
+          emulator-port: 5558
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          disable-animations: true
+          working-directory: androidtv
+          script: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" python3 ../scripts/run_android_tv_instrumentation.py --invocation owned-library-management --class 'app.seanime.tv.AndroidIsolatedLibraryManagementTest#importedOwnedUnmatchedIndexSupportsNativeBulkRenameExplorerAndDelete' --runner-flag isolatedNativeGoLibraryManagementFixture --runner-flag freshInstrumentationProcess
+
+      - name: Verify owned library management ran once without skips
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' }}
+        run: python3 scripts/run_android_tv_instrumentation.py --check-acceptance --invocation owned-library-management --class 'app.seanime.tv.AndroidIsolatedLibraryManagementTest#importedOwnedUnmatchedIndexSupportsNativeBulkRenameExplorerAndDelete'
+
+      - name: Run owned raw media playback on a fresh AVD
+        id: owned_raw_media
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: android-tv
+          arch: x86_64
+          profile: tv_1080p
+          avd-name: seanime-owned-raw-media-${{ github.run_id }}-${{ github.run_attempt }}
+          force-avd-creation: true
+          emulator-port: 5560
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          disable-animations: true
+          working-directory: androidtv
+          script: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" python3 ../scripts/run_android_tv_instrumentation.py --invocation owned-raw-media --class 'app.seanime.tv.AndroidIsolatedRawMediaPlaybackTest#generatedVideoUsesSignedGoRangeRouteAndNativePlayerWithoutMetadata' --runner-flag isolatedNativeGoRawMediaFixture --runner-flag freshInstrumentationProcess
+
+      - name: Verify owned raw media playback ran once without skips
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' }}
+        run: python3 scripts/run_android_tv_instrumentation.py --check-acceptance --invocation owned-raw-media --class 'app.seanime.tv.AndroidIsolatedRawMediaPlaybackTest#generatedVideoUsesSignedGoRangeRouteAndNativePlayerWithoutMetadata'
+
+      - name: Run owned external player handoff on a fresh AVD
+        id: owned_external_player
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: android-tv
+          arch: x86_64
+          profile: tv_1080p
+          avd-name: seanime-owned-external-player-${{ github.run_id }}-${{ github.run_attempt }}
+          force-avd-creation: true
+          emulator-port: 5562
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          disable-animations: true
+          working-directory: androidtv
+          script: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" python3 ../scripts/run_android_tv_instrumentation.py --invocation owned-external-player --class 'app.seanime.tv.AndroidIsolatedRawMediaPlaybackTest#nativeMoreHandsOwnedGoVideoToSeparatePlayerAcrossBackgroundAndReturnsPaused' --runner-flag isolatedNativeGoExternalPlayerFixture --runner-flag freshInstrumentationProcess
+
+      - name: Verify owned external player handoff ran once without skips
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' }}
+        run: python3 scripts/run_android_tv_instrumentation.py --check-acceptance --invocation owned-external-player --class 'app.seanime.tv.AndroidIsolatedRawMediaPlaybackTest#nativeMoreHandsOwnedGoVideoToSeparatePlayerAcrossBackgroundAndReturnsPaused'
+
       - name: Retain Android TV test evidence
         if: always()
         continue-on-error: true
@@ -158,5 +221,11 @@ jobs:
             androidtv/build/native-ci-evidence/connected-suite/collection-status.json
             androidtv/build/native-ci-evidence/owned-library-journey/evidence.zip
             androidtv/build/native-ci-evidence/owned-library-journey/collection-status.json
+            androidtv/build/native-ci-evidence/owned-library-management/evidence.zip
+            androidtv/build/native-ci-evidence/owned-library-management/collection-status.json
+            androidtv/build/native-ci-evidence/owned-raw-media/evidence.zip
+            androidtv/build/native-ci-evidence/owned-raw-media/collection-status.json
+            androidtv/build/native-ci-evidence/owned-external-player/evidence.zip
+            androidtv/build/native-ci-evidence/owned-external-player/collection-status.json
           if-no-files-found: warn
           retention-days: 14

@@ -23,7 +23,39 @@ PACKAGE = "app.seanime.tv"
 TEST_PACKAGE = PACKAGE + ".test"
 OWNED_JOURNEY = "app.seanime.tv.AndroidIsolatedLibraryPlaybackJourneyTest#remoteOnlyLibraryFilesAndExplorerPlayOwnedMultitrackVideo"
 JOURNEY_KIND = "native-isolated-go-library-playback-journey-v1"
-COMMAND = ["./gradlew", ":app:connectedDebugAndroidTest", "--no-daemon"]
+OWNED_FIXTURES = {
+    "owned-library-journey": {
+        "selector": OWNED_JOURNEY,
+        "flag": "isolatedNativeGoLibraryPlaybackJourneyFixture",
+        "kind": JOURNEY_KIND,
+        "statusKey": "ownedJourneyManifest",
+    },
+    "owned-library-management": {
+        "selector": "app.seanime.tv.AndroidIsolatedLibraryManagementTest#importedOwnedUnmatchedIndexSupportsNativeBulkRenameExplorerAndDelete",
+        "flag": "isolatedNativeGoLibraryManagementFixture",
+        "kind": "native-isolated-go-library-management-v1",
+        "statusKey": "ownedFixtureManifest",
+    },
+    "owned-raw-media": {
+        "selector": "app.seanime.tv.AndroidIsolatedRawMediaPlaybackTest#generatedVideoUsesSignedGoRangeRouteAndNativePlayerWithoutMetadata",
+        "flag": "isolatedNativeGoRawMediaFixture",
+        "kind": "native-isolated-go-raw-media-v1",
+        "statusKey": "ownedFixtureManifest",
+    },
+    "owned-external-player": {
+        "selector": "app.seanime.tv.AndroidIsolatedRawMediaPlaybackTest#nativeMoreHandsOwnedGoVideoToSeparatePlayerAcrossBackgroundAndReturnsPaused",
+        "flag": "isolatedNativeGoExternalPlayerFixture",
+        "kind": "native-isolated-go-external-player-v1",
+        "statusKey": "ownedFixtureManifest",
+    },
+}
+RUNNER_ARGUMENT = "-Pandroid.testInstrumentationRunnerArguments."
+FIXTURE_DIRECTORY = r"native-go-fixture-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+# AGP 8.10.1 defaults this Stable option to false, which makes UTP uninstall
+# app/test APKs (and app-private evidence) before connectedAndroidTest returns.
+# Retain them only on the explicit disposable CI emulator until AVD teardown.
+KEEP_APKS_ARGUMENT = "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true"
+COMMAND = ["./gradlew", ":app:connectedDebugAndroidTest", "--no-daemon", KEEP_APKS_ARGUMENT]
 OUTPUT = "androidtv/build/native-ci-evidence/connected-suite"
 REMOTE_VIDEO = "/data/local/tmp/seanime-native-ci-startup.mp4"
 VIDEO_SECONDS = 60
@@ -165,6 +197,30 @@ def exec_out_run_as(*arguments):
     return adb_command() + ["exec-out", "run-as", PACKAGE, *arguments]
 
 
+def probe_app_evidence_access():
+    """Report fixed diagnostic codes without retaining pm/run-as output."""
+    try:
+        result = subprocess.run(adb_command() + ["shell", "pm", "path", PACKAGE],
+                                capture_output=True, timeout=5)
+        if not result.stdout.strip() and not result.stderr.strip() and result.returncode in (0, 1):
+            return {"status": "package-not-installed"}
+        if result.returncode != 0:
+            return {"status": "package-query-failed", "adbExitCode": result.returncode}
+        pattern = rb"package:/data/app/(?:~~[A-Za-z0-9_+=-]+/)?" + PACKAGE.encode().replace(b".", rb"\.") + rb"-[A-Za-z0-9_+=-]+/base\.apk\r?\n?"
+        if len(result.stdout) > 4096 or re.fullmatch(pattern, result.stdout) is None:
+            return {"status": "unexpected-package-path"}
+        result = subprocess.run(exec_out_run_as("sh", "-c", 'printf "seanime-native-evidence-access-ok\\n"'),
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
+        if result.returncode != 0:
+            return {"status": "run-as-transport-failed", "adbExitCode": result.returncode}
+        if result.stdout != b"seanime-native-evidence-access-ok\n":
+            # exec-out can return zero when run-as fails; require the receipt.
+            return {"status": "run-as-unavailable"}
+        return {"status": "available"}
+    except Exception as error:
+        return {"status": "app-access-probe-failed", "errorType": type(error).__name__}
+
+
 def screenshot_command():
     names = " ".join(sorted(EXPECTED_FILES))
     script = (
@@ -199,7 +255,7 @@ def capture_failure(error):
         "Invalid fixture stage or outcome", "Invalid or oversized key trace",
         "Invalid key trace enum", "Invalid numeric observation", "Invalid pixel observation",
         "Invalid picture observation", "Invalid aspect observation", "Invalid boolean observation",
-        "Invalid verified observation",
+        "Invalid verified observation", "Invalid index readback", "Invalid owned media digest",
         "Invalid observation enum", "Unexpected owned fixture path",
         "Missing or oversized owned fixture manifest",
     }
@@ -399,6 +455,22 @@ def is_owned_journey(invocation, command):
     return invocation == "owned-library-journey" and "-Pandroid.testInstrumentationRunnerArguments.class=" + OWNED_JOURNEY in command
 
 
+def owned_fixture_profile(invocation, command):
+    """Require one exact method, its sole opt-in, and a fresh process flag."""
+    spec = OWNED_FIXTURES.get(invocation)
+    if spec is None or not isinstance(command, list) or any(type(arg) is not str for arg in command):
+        return None
+    actual = [arg for arg in command if arg.startswith(RUNNER_ARGUMENT)]
+    expected = [RUNNER_ARGUMENT + "class=" + spec["selector"],
+                RUNNER_ARGUMENT + spec["flag"] + "=true",
+                RUNNER_ARGUMENT + "freshInstrumentationProcess=true"]
+    return spec if sorted(actual) == sorted(expected) else None
+
+
+def requires_owned_fixture(invocation, test_class):
+    return invocation in OWNED_FIXTURES or any(test_class == spec["selector"] for spec in OWNED_FIXTURES.values())
+
+
 def recording_profile(invocation, command):
     owned = is_owned_journey(invocation, command)
     seconds = OWNED_JOURNEY_VIDEO_SECONDS if owned else VIDEO_SECONDS
@@ -548,7 +620,118 @@ def sanitize_journey_manifest(data, directory):
     return clean
 
 
+def sanitize_owned_manifest(data, directory, invocation):
+    if invocation == "owned-library-journey":
+        return sanitize_journey_manifest(data, directory)
+    if not isinstance(data, dict):
+        raise ValueError("Invalid fixture object")
+    if not re.fullmatch(FIXTURE_DIRECTORY, directory):
+        raise ValueError("Invalid fixture UUID")
+    root = data.get("root")
+    if root not in (f"/data/user/0/{PACKAGE}/files/{directory}", f"/data/data/{PACKAGE}/files/{directory}"):
+        raise ValueError("Invalid owned fixture root")
+    management = invocation == "owned-library-management"
+    external = invocation == "owned-external-player"
+    paths = {"dataDir": "data", "cacheDir": "cache", "libraryDir": "library",
+             "mediaPath": "library/Original generated video.mp4" if management else "library/Generated owned raw video.mp4"}
+    if management:
+        paths["indexPath"] = "library/Owned unmatched index.json"
+    spec = OWNED_FIXTURES[invocation]
+    if (data.get("kind") != spec["kind"] or data.get("requiresColdRestart") is not True
+            or any(data.get(key) != root + "/" + relative for key, relative in paths.items())):
+        raise ValueError("Invalid fixture schema or path relationships")
+    stages = {"created", "stopped-awaiting-force-stop-and-reviewed-cleanup"}
+    if management:
+        stages |= {"isolated-server-and-empty-index-verified", "generated-files-and-index-ready",
+                   "existing-import-endpoint-verified", "native-bulk-ignore-and-signed-readback-verified",
+                   "native-rename-index-and-owned-bytes-verified", "owned-library-workflow-verified"}
+        verified = {"generated-owned-video-copies", "existing-index-import-api", "main-native-library-route",
+                    "multi-file-ignore", "native-rename", "explorer-tree", "native-delete", "signed-go-index-readback"}
+        booleans = ("originalPreserved", "retainedCopyPreserved", "recoveryAbsent")
+    else:
+        stages |= {"isolated-server-ready", "generating-owned-h264", "signed-go-range-and-library-boundary-verified",
+                   "signed-go-native-frame-pause-seek-verified", "raw-media-route-verified"}
+        if external:
+            stages.add("native-external-background-ranges-and-return-verified")
+        verified = {"generated-h264", "signed-go-range-get", "library-root-boundary",
+                    "main-coordinator-media3-rendered-frame", "remote-play-pause-seek", "owned-recovery-write-and-dismissal"}
+        booleans = ("recoverySourceValidated", "recoveryClearedByPlayer")
+        if external:
+            booleans += ("externalReceiverDifferentUid", "foregroundHostVerified", "externalReturnPaused", "externalHostReleased")
+    if (type(data.get("stage")) is not str or data["stage"] not in stages | {stage + "-terminal" for stage in stages}
+            or type(data.get("outcome")) is not str or data["outcome"] not in {"running", "passed", "failed"}):
+        raise ValueError("Invalid fixture stage or outcome")
+    clean = {"kind": spec["kind"], "root": directory, **paths, "stage": data["stage"], "outcome": data["outcome"],
+             "scope": "owned generated media and isolated native fixtures; no live-service or retained-state-restoration claim"}
+    for key, allowed in (("hostStatusAfterRun", {"stopped", "starting", "ready", "running", "stopping", "error"}),
+                         ("failedAt", stages)):
+        if key in data:
+            if type(data[key]) is not str or data[key] not in allowed:
+                raise ValueError("Invalid observation enum")
+            clean[key] = data[key]
+    for key in booleans:
+        if key in data:
+            if type(data[key]) is not bool:
+                raise ValueError("Invalid boolean observation")
+            clean[key] = data[key]
+    if "verified" in data:
+        values = data["verified"]
+        if (not isinstance(values, list) or len(values) > len(verified)
+                or any(type(value) is not str or value not in verified for value in values)
+                or len(set(values)) != len(values)):
+            raise ValueError("Invalid verified observation")
+        clean["verified"] = values
+    if management:
+        owned = ["library/Owned editable copy.mp4", "library/Owned retained copy.mp4", "library/Renamed owned copy.mp4"]
+        expected = [root + "/" + path for path in owned]
+        copies = data.get("ownedCopyPaths")
+        if (not isinstance(copies, list) or len(copies) != len(expected)
+                or any(type(path) is not str for path in copies) or set(copies) != set(expected)):
+            raise ValueError("Invalid fixture schema or path relationships")
+        clean["ownedCopyPaths"] = owned
+        if "originalSha256" in data:
+            if type(data["originalSha256"]) is not str or not re.fullmatch(r"[0-9a-f]{64}", data["originalSha256"]):
+                raise ValueError("Invalid owned media digest")
+            clean["originalSha256"] = data["originalSha256"]
+        readbacks = data.get("indexReadbacks")
+        readback_stages = ("fresh-empty-index", "imported", "native-bulk-ignore", "native-rename", "native-delete")
+        if not isinstance(readbacks, list) or len(readbacks) > len(readback_stages):
+            raise ValueError("Invalid index readback")
+        clean["indexReadbacks"] = []
+        for index, readback in enumerate(readbacks):
+            if (not isinstance(readback, dict) or readback.get("stage") != readback_stages[index]
+                    or not isinstance(readback.get("files"), list) or len(readback["files"]) > 2):
+                raise ValueError("Invalid index readback")
+            files, seen = [], set()
+            for row in readback["files"]:
+                if (not isinstance(row, dict) or type(row.get("path")) is not str or row["path"] not in expected
+                        or row["path"] in seen or row.get("name") != row["path"].rsplit("/", 1)[1]
+                        or type(row.get("mediaId")) is not int or row["mediaId"] != 0
+                        or any(type(row.get(key)) is not bool for key in ("locked", "ignored"))):
+                    raise ValueError("Invalid index readback")
+                seen.add(row["path"])
+                files.append({"path": row["path"][len(root) + 1:], **{key: row[key] for key in ("name", "mediaId", "locked", "ignored")}})
+            clean["indexReadbacks"].append({"stage": readback["stage"], "files": files})
+    else:
+        numbers = {"rangeStatus": (206, 206), "rangeBytes": (256, 256), "pausedPositionMs": (0, 31_000),
+                   "renderedWidth": (1, 8192), "renderedHeight": (1, 8192)}
+        if external:
+            numbers["externalAnonymousGoRanges"] = (3, 3)
+        for key, (minimum, maximum) in numbers.items():
+            if key in data:
+                # Integer-only observations reject booleans, NaN and Infinity.
+                if type(data[key]) is not int or not minimum <= data[key] <= maximum:
+                    raise ValueError("Invalid numeric observation")
+                clean[key] = data[key]
+    return clean
+
+
 def collect_journey_manifest():
+    return collect_owned_manifest("owned-library-journey")
+
+
+def collect_owned_manifest(invocation):
+
     script = ('for dir in files/native-go-fixture-*; do [ -d "$dir" ] && [ ! -L "$dir" ] '
               '&& [ -f "$dir/fixture.json" ] && [ ! -L "$dir/fixture.json" ] '
               '&& printf "%s\\n" "$dir/fixture.json"; done')
@@ -559,15 +742,15 @@ def collect_journey_manifest():
         return {}, {"status": "missing-or-unreadable"}
     if len(paths) != 1:
         return {}, {"status": "ambiguous-owned-roots", "candidateCount": len(paths)}
-    match = re.fullmatch(r"files/(native-go-fixture-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/fixture\.json", paths[0])
+    match = re.fullmatch(r"files/(" + FIXTURE_DIRECTORY + r")/fixture\.json", paths[0])
     if match is None:
         raise ValueError("Unexpected owned fixture path")
     result = subprocess.run(exec_out_run_as("head", "-c", "131073", paths[0]),
                             capture_output=True, timeout=5)
     if result.returncode != 0 or not 0 < len(result.stdout) <= 131072:
         raise ValueError("Missing or oversized owned fixture manifest")
-    clean = sanitize_journey_manifest(json.loads(result.stdout), match.group(1))
-    return {"fixtures/owned-library-journey.json": json_bytes(clean)}, {"status": "captured", "fixtureRoot": match.group(1), "outcome": clean["outcome"]}
+    clean = sanitize_owned_manifest(json.loads(result.stdout), match.group(1), invocation)
+    return {f"fixtures/{invocation}.json": json_bytes(clean)}, {"status": "captured", "fixtureRoot": match.group(1), "outcome": clean["outcome"]}
 
 
 def record_startup(stop, state, video, profile=None):
@@ -632,23 +815,33 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
         if re.fullmatch(r"[0-9]+", os.environ.get(name, "")):
             manifest[name] = os.environ[name]
     files = dict(video)
-    try:
-        screenshots, manifest["screenshots"] = collect_screenshots()
-        files.update(screenshots)
-    except Exception as error:
-        manifest["screenshots"] = capture_failure(error)
+    access = probe_app_evidence_access()
+    manifest["appEvidenceAccess"] = access
+    if access["status"] != "available":
+        manifest["screenshots"] = {"status": "missing-or-adb-failed", "reason": access["status"]}
+    else:
+        try:
+            screenshots, manifest["screenshots"] = collect_screenshots()
+            files.update(screenshots)
+        except Exception as error:
+            manifest["screenshots"] = capture_failure(error)
     try:
         files["junit-summary.xml"], manifest["junit"] = collect_junit(root, recording.get("gradleStartedAtMs", 0))
     except Exception as error:
         manifest["junit"] = {"status": "capture-failed", "errorType": type(error).__name__}
-    if is_owned_journey(invocation, command or COMMAND):
-        try:
-            fixture, manifest["ownedJourneyManifest"] = collect_journey_manifest()
-            files.update(fixture)
-        except Exception as error:
-            manifest["ownedJourneyManifest"] = capture_failure(error)
-        if manifest["ownedJourneyManifest"]["status"] != "captured":
-            print("::warning::Owned journey fixture manifest is missing, ambiguous or invalid; evidence is incomplete", flush=True)
+    owned = owned_fixture_profile(invocation, command or COMMAND)
+    if owned:
+        key = owned["statusKey"]
+        if access["status"] != "available":
+            manifest[key] = {"status": "missing-or-unreadable", "reason": access["status"]}
+        else:
+            try:
+                fixture, manifest[key] = collect_owned_manifest(invocation)
+                files.update(fixture)
+            except Exception as error:
+                manifest[key] = capture_failure(error)
+        if manifest[key]["status"] != "captured":
+            print("::warning::Owned fixture manifest is missing, ambiguous or invalid; evidence is incomplete", flush=True)
     hashes = {}
     for relative in APK_PATHS:
         path = root / relative
@@ -680,6 +873,7 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
 
 
 def main(root, invocation="connected-suite", test_class=None, runner_flags=()):
+    adb_command()  # Retaining app data is restricted to an explicit CI emulator.
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", invocation):
         raise ValueError("Invalid evidence invocation name")
     command = list(COMMAND)
@@ -693,6 +887,8 @@ def main(root, invocation="connected-suite", test_class=None, runner_flags=()):
         if not test_class or not re.fullmatch(r"(?:isolatedNativeGo[A-Za-z0-9]*Fixture|freshInstrumentationProcess)", flag):
             raise ValueError("Only explicit fixture boolean flags with a selected class are supported")
         command.append("-Pandroid.testInstrumentationRunnerArguments." + flag + "=true")
+    if requires_owned_fixture(invocation, test_class) and owned_fixture_profile(invocation, command) is None:
+        raise ValueError("Owned fixtures require their exact invocation, method, opt-in and fresh-process flags")
     output = root / Path(OUTPUT).parent / invocation
     try:
         # Exact outputs owned by this helper, so a retry cannot upload stale evidence.
@@ -736,14 +932,14 @@ def main(root, invocation="connected-suite", test_class=None, runner_flags=()):
         except OSError:
             print("::warning::Android TV evidence status could not be saved", flush=True)
     finally:
-        if is_owned_journey(invocation, command):
+        if owned_fixture_profile(invocation, command):
             try:
                 stopped = subprocess.run(adb_command() + ["shell", "am", "force-stop", PACKAGE],
                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
                 if stopped.returncode != 0:
-                    print("::warning::Unable to force-stop disposable owned-journey app after capture", flush=True)
+                    print("::warning::Unable to force-stop disposable owned-fixture app after capture", flush=True)
             except Exception:
-                print("::warning::Disposable owned-journey app force-stop failed after capture", flush=True)
+                print("::warning::Disposable owned-fixture app force-stop failed after capture", flush=True)
     return status
 
 
@@ -760,6 +956,9 @@ def check_acceptance(root, invocation, test_class):
             raise ValueError("Selected instrumentation invocation did not pass")
         if "-Pandroid.testInstrumentationRunnerArguments.class=" + test_class not in manifest.get("command", []):
             raise ValueError("Selected class/method does not match the captured invocation")
+        owned = owned_fixture_profile(invocation, manifest.get("command", []))
+        if requires_owned_fixture(invocation, test_class) and owned is None:
+            raise ValueError("Owned fixture method or required flags do not match the captured invocation")
         junit = manifest.get("junit", {})
         expected = {"tests": 1, "failures": 0, "errors": 0, "skipped": 0, "rejectedReportsOrCases": 0}
         if junit.get("status") != "sanitized" or any(junit.get(key) != value for key, value in expected.items()):
@@ -767,8 +966,8 @@ def check_acceptance(root, invocation, test_class):
         identity = manifest.get("installedApkIdentity", {})
         if identity.get("status") != "matched":
             raise ValueError("Installed app/test APK identities were not verified")
-        if is_owned_journey(invocation, manifest.get("command", [])) and manifest.get("ownedJourneyManifest", {}).get("status") != "captured":
-            raise ValueError("Owned journey fixture manifest evidence was not retained")
+        if owned and manifest.get(owned["statusKey"], {}).get("status") != "captured":
+            raise ValueError("Owned fixture manifest evidence was not retained")
         for package in (PACKAGE, TEST_PACKAGE):
             entry = identity.get("packages", {}).get(package, {})
             digest = entry.get("sha256", "")
@@ -780,11 +979,12 @@ def check_acceptance(root, invocation, test_class):
             if archive.testzip() is not None or archive.read("collection-status.json") != raw_status:
                 raise ValueError("Evidence archive is invalid or disagrees with its status file")
             xml = archive.read("junit-summary.xml")
-            if is_owned_journey(invocation, manifest.get("command", [])):
-                fixture = archive.read("fixtures/owned-library-journey.json")
-                if (manifest.get("fileSha256", {}).get("fixtures/owned-library-journey.json") != hashlib.sha256(fixture).hexdigest()
+            if owned:
+                fixture_path = f"fixtures/{invocation}.json"
+                fixture = archive.read(fixture_path)
+                if (manifest.get("fileSha256", {}).get(fixture_path) != hashlib.sha256(fixture).hexdigest()
                         or json.loads(fixture).get("outcome") != "passed"):
-                    raise ValueError("Owned journey manifest digest or outcome is not verified")
+                    raise ValueError("Owned fixture manifest digest or outcome is not verified")
         if manifest.get("fileSha256", {}).get("junit-summary.xml") != hashlib.sha256(xml).hexdigest():
             raise ValueError("JUnit artifact digest does not match")
         cases = list(ET.fromstring(xml).iter("testcase"))

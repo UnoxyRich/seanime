@@ -5,6 +5,8 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
 import app.seanime.tv.NativeScreenshotEvidence
 import app.seanime.tv.data.*
@@ -105,10 +107,18 @@ class NativePersonalCollectionTest {
         toolbar("manga-discover").performTvClick()
         compose.waitUntil(10_000) { f.catalogRequests.size == 1 }
         compose.onNodeWithTag("discovery-search-submit").performTvClick()
-        awaitTag("discovery-search-field")
+        awaitFocused("discovery-search-field")
         compose.onNodeWithTag("discovery-search-field").performTextReplacement("catalog phrase")
-        compose.onNodeWithTag("text-entry-save").performTvClick()
-        compose.waitUntil(10_000) { f.catalogRequests.size == 2 }
+        compose.onNodeWithTag("discovery-search-field").performImeAction()
+        // Receipt of the HTTP request precedes the editor/IME window handoff.
+        // Back belongs to discovery only once its opener owns input again.
+        awaitFocused("discovery-search-submit")
+        compose.waitUntil(10_000) {
+            val node = compose.onNodeWithTag("discovery-search-submit").fetchSemanticsNode()
+            val view = (node.root as ViewRootForTest).view
+            view.hasWindowFocus() && ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.ime()) != true &&
+                compose.onAllNodesWithTag("discovery-search-field").fetchSemanticsNodes().isEmpty() && f.catalogRequests.size == 2
+        }
         assertEquals("catalog phrase", f.catalogRequests.last().getString("search"))
         pressBack()
         awaitFocused("manga-discover")

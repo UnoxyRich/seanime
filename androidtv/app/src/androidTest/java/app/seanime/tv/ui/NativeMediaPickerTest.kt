@@ -35,9 +35,13 @@ class NativeMediaPickerTest {
             compose.setContent { SeanimeTheme { NativeArtworkProvider(repo.client) {
                 if (open.value) NativeMediaPickerDialog(repo, "Choose anime", onDismiss = { open.value = false }) { selected.set(it.id) }
             } } }
-            awaitTag("media-picker-collection")
+            awaitFocused("media-picker-collection")
             compose.onNodeWithTag("media-picker-cancel").performTvClick()
-            compose.runOnIdle { assertNull(selected.get()); open.value = true }
+            // A new opening must follow disposal of the cancelled dialog. Flipping
+            // false back to true before recomposition retains its one-shot focus state.
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("media-picker-collection").fetchSemanticsNodes().isEmpty() }
+            compose.runOnIdle { assertNull(selected.get()); assertFalse(open.value) }
+            compose.runOnIdle { open.value = true }
             awaitFocused("media-picker-collection")
             compose.onNodeWithTag("media-picker-query").performTextInput("Fixture title")
             compose.onNodeWithTag("media-picker-query").performImeAction()

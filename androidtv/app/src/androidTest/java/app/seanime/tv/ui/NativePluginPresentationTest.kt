@@ -1,5 +1,7 @@
 package app.seanime.tv.ui
 
+import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
@@ -115,9 +117,25 @@ class NativePluginPresentationTest {
         val api = SeanimeApiClient(server.url("/").newBuilder().host("127.0.0.1").build().toString())
         try {
             val status = SeanimeJson.status(JSONObject("""{"serverReady":true,"settings":{"library":{}},"user":{"isSimulated":true}}"""))
-            compose.setContent { SeanimeTheme { SeanimeTvApp(SeanimeRepository(api), status, {}, {}, {}) } }
+            val repo = SeanimeRepository(api)
+            compose.setContent { SeanimeTheme { SeanimeTvApp(repo, status, {}, {}, {}) } }
             api.connectEvents()
-            compose.waitUntil(10_000) { fixture.socket.get() != null && fixture.events.any { it.optString("type") == "screen:changed" } }
+            val started = SystemClock.elapsedRealtime()
+            var libraryReady = false
+            try {
+                compose.waitUntil(10_000) {
+                    // Observe composition every iteration, including before the
+                    // WebSocket callback. The initial screen announcement is a UI effect.
+                    libraryReady = compose.onAllNodesWithTag("media-21").fetchSemanticsNodes().isNotEmpty()
+                    libraryReady && fixture.socket.get() != null && api.connected.value &&
+                        fixture.events.any { it.optString("type") == "screen:changed" }
+                }
+            } catch (failure: Throwable) {
+                Log.e("NativePluginStartup", "Presentation fixture failed after ${SystemClock.elapsedRealtime() - started}ms; " +
+                    "libraryReady=$libraryReady, socket=${fixture.socket.get() != null}, connected=${api.connected.value}; " +
+                    "eventTypes=${fixture.events.map { it.optString("type") }}", failure)
+                throw failure
+            }
             test(fixture)
         } finally { api.close(); server.shutdown() }
     }

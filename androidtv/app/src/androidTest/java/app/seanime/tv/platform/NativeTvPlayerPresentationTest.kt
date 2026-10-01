@@ -57,17 +57,23 @@ class NativeTvPlayerPresentationTest {
         // semantics key; assertIsNotFocused incorrectly requires that key=false.
         compose.onNodeWithTag("native-player-previous").assertIsNotEnabled().assert(isNotFocusable())
         remote(KeyEvent.KEYCODE_DPAD_LEFT)
+        awaitFocus("native-player-rewind")
         remote(KeyEvent.KEYCODE_DPAD_LEFT)
         awaitFocus("native-player-rewind")
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
         compose.runOnIdle { assertEquals(listOf("rewind"), actions) }
-        repeat(3) { remote(KeyEvent.KEYCODE_DPAD_RIGHT) }
+        remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        awaitFocus("native-player-play")
+        remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        awaitFocus("native-player-forward")
+        remote(KeyEvent.KEYCODE_DPAD_RIGHT)
         awaitFocus("native-player-next")
         compose.onNodeWithTag("native-player-next").assertIsEnabled()
         compose.runOnIdle { state.canNext = false }
         awaitFocus("native-player-play")
         compose.onNodeWithTag("native-player-next").assertIsNotEnabled().assert(isNotFocusable())
         remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        awaitFocus("native-player-forward")
         remote(KeyEvent.KEYCODE_DPAD_RIGHT)
         awaitFocus("native-player-forward")
         remote(KeyEvent.KEYCODE_DPAD_CENTER)

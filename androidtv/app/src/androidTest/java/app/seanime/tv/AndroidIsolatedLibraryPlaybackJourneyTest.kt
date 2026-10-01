@@ -199,7 +199,7 @@ class AndroidIsolatedLibraryPlaybackJourneyTest {
             assertEquals(1, first.subtitleChoices.size)
             awaitFocus("native-player-play")
             remote(KeyEvent.KEYCODE_DPAD_CENTER)
-            val pausedFirst = awaitPlayer(uri) { it.paused }
+            val pausedFirst = awaitPlayer(uri) { it.ready && it.paused }
             val firstPaint = awaitOwnedVideoPixels(pausedFirst.position)
             val info = JSONObject(NativePlaybackBus.playbackInfoJson)
             assertEquals(video.absolutePath, info.getString("streamPath"))
@@ -218,7 +218,11 @@ class AndroidIsolatedLibraryPlaybackJourneyTest {
             remote(KeyEvent.KEYCODE_DPAD_UP)
             awaitFocus("native-player-seek")
             remote(KeyEvent.KEYCODE_DPAD_RIGHT)
-            val sought = awaitPlayer(uri) { it.paused && it.position >= 9_000 }
+            // A seek updates currentPosition before the decoder/load state has
+            // settled. Require a new decoded frame and READY before inspecting
+            // pixels; the buffering badge otherwise covers the sample region.
+            val sought = awaitPlayer(uri) { it.ready && it.paused && it.position >= 9_000 &&
+                it.videoBuffers > pausedFirst.videoBuffers }
             val soughtPaint = awaitOwnedVideoPixels(sought.position)
             assertTrue("The remote seek must visibly paint a different generated frame",
                 firstPaint.rgb.zip(soughtPaint.rgb).sumOf { (before, after) -> abs(before - after) } > 40)
@@ -477,7 +481,7 @@ class AndroidIsolatedLibraryPlaybackJourneyTest {
     }
 
     private data class Frame(val decoder: ExoPlayer, val picturePreset: String, val codedWidth: Int, val codedHeight: Int,
-        val ready: Boolean, val paused: Boolean, val position: Long, val duration: Long,
+        val ready: Boolean, val paused: Boolean, val position: Long, val duration: Long, val bufferedPosition: Long,
         val width: Int, val height: Int, val videoBuffers: Int, val audioBuffers: Int,
         val audioChoices: List<String>, val audioSelected: String, val audioLanguage: String,
         val subtitleChoices: List<String>, val subtitlesDisabled: Boolean, val cue: String)
@@ -501,7 +505,7 @@ class AndroidIsolatedLibraryPlaybackJourneyTest {
                         (0 until group.length).firstOrNull { group.isTrackSelected(it) }?.let { selected = "$groupIndex-$it" }
                     }
                     last = Frame(player, NativePlayerActivity.currentAnime4K(), player.videoFormat?.width ?: 0, player.videoFormat?.height ?: 0,
-                        player.playbackState == Player.STATE_READY, !player.playWhenReady, player.currentPosition, player.duration,
+                        player.playbackState == Player.STATE_READY, !player.playWhenReady, player.currentPosition, player.duration, player.bufferedPosition,
                         player.videoSize.width, player.videoSize.height, player.videoDecoderCounters?.renderedOutputBufferCount ?: 0,
                         player.audioDecoderCounters?.renderedOutputBufferCount ?: 0, choices(C.TRACK_TYPE_AUDIO), selected, player.audioFormat?.language.orEmpty(),
                         choices(C.TRACK_TYPE_TEXT), C.TRACK_TYPE_TEXT in player.trackSelectionParameters.disabledTrackTypes,
@@ -537,6 +541,9 @@ class AndroidIsolatedLibraryPlaybackJourneyTest {
 
     /** Observe actual compositor pixels; no player/surface mutation or synthetic image. */
     private fun awaitOwnedVideoPixels(positionMs: Long): VideoPaint {
+        // Presentation state follows the decoder on its normal update callback.
+        // Sampling a real loading overlay would measure UI ink, not video.
+        awaitMissing("native-player-buffering")
         fun expected(at: Long): List<Int> {
             val second = at.coerceIn(0, 59_999) / 1_000
             val y = 70 + (second % 4).toInt() * 15 - 16

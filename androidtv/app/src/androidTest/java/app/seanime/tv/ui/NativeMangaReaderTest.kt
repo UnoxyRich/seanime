@@ -10,6 +10,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.compose.runtime.*
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -90,11 +91,25 @@ class NativeMangaReaderTest {
         assertReaderControlFocused()
 
         activateControl("manga-jump")
+        awaitFocused(hasSetTextAction())
         compose.onNode(hasSetTextAction()).performTextReplacement("2")
-        compose.onNodeWithText("Save").performTvClick()
+        compose.waitUntil(10_000) { imeVisible() }
+        compose.onNode(hasSetTextAction()).performImeAction()
+        compose.waitUntil(10_000) { !imeVisible() }
+        awaitFocused(hasSetTextAction())
+        compose.onNode(hasSetTextAction()).assertIsFocused()
+        waitForPage(3)
+        pressRemote(KeyEvent.KEYCODE_DPAD_DOWN)
+        compose.onNodeWithTag("text-entry-cancel").assertIsFocused()
+        pressRemote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        compose.onNodeWithTag("text-entry-save").assertIsFocused()
+        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
+        compose.waitUntil(10_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isEmpty() }
         waitForPage(2)
+        awaitFocused(hasTestTag("manga-page"))
         compose.onNodeWithTag("manga-page").assertIsFocused()
         activateControl("manga-jump")
+        awaitFocused(hasSetTextAction())
         compose.onNode(hasSetTextAction()).performTextReplacement("4")
         compose.waitUntil(10_000) { imeVisible() }
         pressBack()
@@ -108,6 +123,7 @@ class NativeMangaReaderTest {
         assertTrue(fixture.progress.isEmpty())
         pressBack()
         compose.waitUntil(10_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isEmpty() }
+        awaitFocused(hasTestTag("manga-page"))
         compose.onNodeWithTag("manga-page").assertIsFocused()
         waitForPage(2)
         assertEquals(0, fixture.closed.get())
@@ -238,6 +254,16 @@ class NativeMangaReaderTest {
     private fun activateControl(tag: String) {
         compose.onNodeWithTag("manga-controls").performScrollToNode(hasTestTag(tag))
         compose.onNodeWithTag(tag).performTvClick()
+    }
+
+    private fun pressRemote(key: Int) {
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(key)
+        compose.waitForIdle()
+    }
+
+    private fun awaitFocused(matcher: SemanticsMatcher) = compose.waitUntil(10_000) {
+        compose.onAllNodes(matcher and isFocused()).fetchSemanticsNodes()
+            .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
     }
 
     @RequiresApi(29)

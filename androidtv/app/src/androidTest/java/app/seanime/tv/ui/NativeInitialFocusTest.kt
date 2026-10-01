@@ -8,6 +8,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.WindowInfo
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
@@ -123,6 +124,16 @@ class NativeInitialFocusTest {
             assertTrue("Footer must not overlap focused navigation", row.bottom < footer.top)
         }
         compose.onNodeWithTag("nav-LOGS").performTvClick()
+        // Navigation changes the content composition. Enter the newly placed Logs
+        // controls, not a departing Library focus group between animation frames.
+        compose.waitUntil(10_000) {
+            val control = compose.onAllNodes(hasText("Filter") and isEnabled() and
+                hasAnyAncestor(hasTestTag("native-content"))).fetchSemanticsNodes().singleOrNull()
+            control != null && control.boundsInRoot.width > 0 && control.boundsInRoot.height > 0 &&
+                (control.root as ViewRootForTest).view.hasWindowFocus() &&
+                compose.onAllNodesWithText("Logs & diagnostics").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("nav-LOGS").assertIsFocused()
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
         compose.waitUntil(10_000) {
             compose.onAllNodes(isFocused() and hasAnyAncestor(hasTestTag("native-content"))).fetchSemanticsNodes().isNotEmpty()
@@ -174,7 +185,20 @@ class NativeInitialFocusTest {
                     .setBody("""{"data":{"lists":[],"Page":{"media":[]}}}""")
             }
             server.start(InetAddress.getByName("127.0.0.1"), 0)
-            SeanimeApiClient(server.url("/").newBuilder().host("127.0.0.1").build().toString()).use(test)
+            SeanimeApiClient(server.url("/").newBuilder().host("127.0.0.1").build().toString()).use { api ->
+                try { test(api) }
+                catch (failure: Throwable) {
+                    runCatching {
+                        val roots = compose.onAllNodes(isRoot())
+                        roots.fetchSemanticsNodes().forEachIndexed { index, root ->
+                            val view = (root.root as ViewRootForTest).view
+                            println("Initial focus failure root $index: attached=${view.isAttachedToWindow}, windowFocused=${view.hasWindowFocus()}\n" +
+                                roots[index].printToString())
+                        }
+                    }.onFailure { failure.addSuppressed(it) }
+                    throw failure
+                }
+            }
         }
     }
 }

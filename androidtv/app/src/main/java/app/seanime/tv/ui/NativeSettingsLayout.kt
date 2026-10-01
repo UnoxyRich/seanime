@@ -47,8 +47,9 @@ internal fun NativeSettingsList(
     onRefresh: (() -> Unit)? = null,
     rowModifier: @Composable (String) -> Modifier = { Modifier },
     onRowFocused: (String) -> Unit = {},
+    modifier: Modifier = Modifier,
 ) {
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(title, style = MaterialTheme.typography.headlineMedium, maxLines = 1,

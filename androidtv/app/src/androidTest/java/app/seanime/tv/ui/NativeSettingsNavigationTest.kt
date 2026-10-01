@@ -1,5 +1,6 @@
 package app.seanime.tv.ui
 
+import android.util.Log
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -138,11 +139,22 @@ class NativeSettingsNavigationTest {
     }
 
     private fun awaitFocused(tag: String) {
-        compose.waitUntil(10_000) {
-            compose.onAllNodes(hasTestTag(tag) and isFocused() and isEnabled()).fetchSemanticsNodes()
-                .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+        var observed = emptyList<String>()
+        try {
+            compose.waitUntil(10_000) {
+                val ready = compose.onAllNodes(hasTestTag(tag) and isFocused() and isEnabled()).fetchSemanticsNodes()
+                    .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+                if (!ready) observed = compose.onAllNodes(isFocused()).fetchSemanticsNodes().map { node ->
+                    val name = node.config.getOrElseNullable(androidx.compose.ui.semantics.SemanticsProperties.TestTag) { null }
+                    "${name ?: "untagged"}:window=${(node.root as ViewRootForTest).view.hasWindowFocus()}"
+                }
+                ready
+            }
+            compose.waitForIdle()
+        } catch (failure: Throwable) {
+            Log.e("NativeSettingsFocus", "Expected $tag; observed=$observed", failure)
+            throw failure
         }
-        compose.waitForIdle()
     }
 
     private fun assertWholeRowVisible(tag: String) {

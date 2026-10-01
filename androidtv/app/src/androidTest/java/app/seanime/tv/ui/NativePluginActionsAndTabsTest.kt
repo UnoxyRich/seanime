@@ -1,5 +1,6 @@
 package app.seanime.tv.ui
 
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import app.seanime.tv.NativeScreenshotEvidence
@@ -53,20 +54,19 @@ class NativePluginActionsAndTabsTest {
         val library = awaitAction(fixture, "library")
         assertEquals("actions-plugin", library.getString("extensionId"))
         assertEquals(0, library.getJSONObject("payload").getJSONObject("event").length())
-        compose.onNodeWithTag("plugin-action-close").performTvClick()
-        compose.onNodeWithTag("plugin-actions-ANIME_LIBRARY-0").assertIsFocused()
+        closeActionsAndAwait("plugin-actions-ANIME_LIBRARY-0")
         compose.onNodeWithTag("plugin-actions-MEDIA_CARD-21").performTvClick()
         compose.onNodeWithTag("plugin-action-actions-plugin-blocked").assertIsNotEnabled()
         compose.onNodeWithTag("plugin-action-actions-plugin-manga-only").assertDoesNotExist()
         compose.onNodeWithTag("plugin-action-actions-plugin-media").performTvClick()
         assertEquals(21, awaitAction(fixture, "media").getJSONObject("payload").getJSONObject("event").getJSONObject("media").getInt("id"))
-        compose.onNodeWithTag("plugin-action-close").performTvClick()
+        closeActionsAndAwait("plugin-actions-MEDIA_CARD-21")
         compose.onNodeWithTag("media-21").performTvClick()
         awaitTag("plugin-actions-ANIME_PAGE_BUTTON-21")
         compose.onNodeWithTag("plugin-actions-ANIME_PAGE_BUTTON-21").performTvClick()
         compose.onNodeWithTag("plugin-action-actions-plugin-page").performTvClick()
         assertEquals("kept", awaitAction(fixture, "page").getJSONObject("payload").getJSONObject("event").getJSONObject("media").getString("custom"))
-        compose.onNodeWithTag("plugin-action-close").performTvClick()
+        closeActionsAndAwait("plugin-actions-ANIME_PAGE_BUTTON-21")
         compose.onNodeWithTag("anime-detail-content").performScrollToNode(hasTestTag("plugin-actions-EPISODE_CARD-3"))
         compose.onNodeWithTag("plugin-actions-EPISODE_CARD-3").performTvClick()
         compose.onNodeWithTag("plugin-action-actions-plugin-episode").performTvClick()
@@ -77,8 +77,7 @@ class NativePluginActionsAndTabsTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("plugin-action-actions-plugin-episode").fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithTag("plugin-action-close").assertIsFocused()
         NativeScreenshotEvidence.capture("plugin-action-unloaded-native-focus")
-        compose.onNodeWithTag("plugin-action-close").performTvClick()
-        compose.onNodeWithTag("plugin-actions-EPISODE_CARD-3").assertIsFocused()
+        closeActionsAndAwait("plugin-actions-EPISODE_CARD-3")
         assertFalse(fixture.received.any { it.optString("type") == "action:clicked" && it.getJSONObject("payload").optString("actionId") == "blocked" })
     }
 
@@ -170,12 +169,24 @@ class NativePluginActionsAndTabsTest {
     }
     private fun awaitTag(tag: String) = compose.waitUntil(10_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
     private fun awaitText(text: String) = compose.waitUntil(10_000) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
+    private fun closeActionsAndAwait(opener: String) {
+        compose.onNodeWithTag("plugin-action-close").performTvClick()
+        compose.waitUntil(10_000) {
+            val closed = compose.onAllNodesWithTag("plugin-action-close").fetchSemanticsNodes().isEmpty()
+            val restored = compose.onAllNodes(hasTestTag(opener) and isFocused()).fetchSemanticsNodes()
+                .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+            closed && restored
+        }
+        compose.onNodeWithTag(opener).assertIsFocused()
+    }
     private fun fixture(test: (PluginFixture) -> Unit) {
         val fixture = PluginFixture()
         val server = MockWebServer().apply { dispatcher = fixture; start(InetAddress.getByName("127.0.0.1"), 0) }
         val api = SeanimeApiClient(server.url("/").newBuilder().host("127.0.0.1").build().toString())
         try {
-            compose.setContent { SeanimeTheme { SeanimeTvApp(SeanimeRepository(api), SeanimeJson.status(fixture.status()), { fixture.playRequests.incrementAndGet() }, {}, {}) } }
+            val repo = SeanimeRepository(api)
+            val status = SeanimeJson.status(fixture.status())
+            compose.setContent { SeanimeTheme { SeanimeTvApp(repo, status, { fixture.playRequests.incrementAndGet() }, {}, {}) } }
             api.connectEvents()
             compose.waitUntil(10_000) { fixture.socket.get() != null }
             test(fixture)

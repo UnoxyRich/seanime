@@ -1278,8 +1278,23 @@ private fun SettingsScreen(repo: SeanimeRepository, onPlatformAction: (String) -
             onRefresh = { action.run { reload() } },
             rowModifier = { id -> if (id == requestedRow) Modifier.initialTvFocus(rowFocus, rowFocusGranted) else Modifier },
             onRowFocused = { id ->
-                lastFocusedRow = id
-                if (restorePage == pageKey && requestedRow == id) { restorePage = null; restoreRow = null }
+                // Reattaching a page may briefly focus another visible row. That
+                // fallback must not replace the saved row we are still restoring.
+                if (restorePage != pageKey || requestedRow == id) {
+                    lastFocusedRow = id
+                    if (restorePage == pageKey) { restorePage = null; restoreRow = null }
+                }
+            },
+            modifier = Modifier.onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key in listOf(
+                        Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight,
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
+                    ) && restorePage == pageKey) {
+                    // An actual newer remote action owns focus. A pending restore
+                    // must not steal it back after layout or a refresh completes.
+                    restorePage = null; restoreRow = null; rowFocusGranted.value = true
+                }
+                false
             },
         )
     }

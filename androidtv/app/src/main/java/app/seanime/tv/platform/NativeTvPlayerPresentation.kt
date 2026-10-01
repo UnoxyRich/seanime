@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -151,7 +152,8 @@ fun NativeTvPlayerPresentation(state: NativeTvPlayerState, onAction: (String) ->
                     .widthIn(max = 800.dp).background(Panel, RoundedCornerShape(12.dp)).border(1.dp, Accent, RoundedCornerShape(12.dp))
                     .padding(20.dp).testTag("native-player-notice"))
             if (state.buffering && state.error.isBlank() && !state.screenshot) Text("Buffering…", color = Color.White, fontSize = 22.sp,
-                modifier = Modifier.align(Alignment.Center).background(Ink.copy(alpha = .9f), RoundedCornerShape(14.dp)).padding(22.dp))
+                modifier = Modifier.align(Alignment.Center).testTag("native-player-buffering")
+                    .background(Ink.copy(alpha = .9f), RoundedCornerShape(14.dp)).padding(22.dp))
             if (state.controls && state.error.isBlank() && !state.screenshot) {
                 Box(Modifier.fillMaxWidth().height(170.dp).background(Brush.verticalGradient(listOf(Ink.copy(alpha = .95f), Color.Transparent))))
                 Column(Modifier.align(Alignment.TopStart).padding(horizontal = 48.dp, vertical = 32.dp)) {
@@ -164,7 +166,28 @@ fun NativeTvPlayerPresentation(state: NativeTvPlayerState, onAction: (String) ->
                     SeekRail(state, onSeek, requesters.getOrPut("seek") { FocusRequester() }, focus.modifier("seek")) { onControlFocused("seek") }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         listOf("previous" to "Previous", "rewind" to "−10 sec", "play" to if (state.paused) "Play" else "Pause", "forward" to "+10 sec", "next" to "Next").forEach { (id, label) ->
-                            PlayerTile(label, "native-player-$id", requesters.getOrPut(id) { FocusRequester() }, Modifier.weight(1f).then(focus.modifier(id)),
+                            // Keep horizontal transport movement in this row.
+                            // Spatial search otherwise jumps diagonally into
+                            // Audio/More when an episode edge is unavailable.
+                            val leftId = when (id) {
+                                "rewind" -> "previous".takeIf { state.canPrevious }
+                                "play" -> "rewind"
+                                "forward" -> "play"
+                                "next" -> "forward"
+                                else -> null
+                            }
+                            val rightId = when (id) {
+                                "previous" -> "rewind"
+                                "rewind" -> "play"
+                                "play" -> "forward"
+                                "forward" -> "next".takeIf { state.canNext }
+                                else -> null
+                            }
+                            PlayerTile(label, "native-player-$id", requesters.getOrPut(id) { FocusRequester() }, Modifier.weight(1f).then(focus.modifier(id))
+                                .focusProperties {
+                                    left = leftId?.let { requesters.getOrPut(it) { FocusRequester() } } ?: FocusRequester.Cancel
+                                    right = rightId?.let { requesters.getOrPut(it) { FocusRequester() } } ?: FocusRequester.Cancel
+                                },
                                 enabled = when (id) { "previous" -> state.canPrevious; "next" -> state.canNext; else -> true }, onFocused = { onControlFocused(id) }) {
                                 touch(); onAction(id)
                             }

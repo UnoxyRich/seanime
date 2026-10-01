@@ -23,6 +23,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -52,16 +54,30 @@ internal fun NativeTvScaffold(
     railState: LazyListState = rememberLazyListState(),
     onContentInteraction: () -> Unit = {},
     onRailInteraction: () -> Unit = {},
+    contentIdentity: Any = destination,
+    contentEntryRequested: Boolean = false,
+    onEnterContent: () -> Unit = { contentFocus.requestFocus() },
+    onContentEntryFinished: (Boolean) -> Unit = {},
     content: @Composable () -> Unit,
 ) {
+    var contentPlaced by remember(contentIdentity) { mutableStateOf(false) }
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(contentIdentity, contentPlaced, windowFocused, contentEntryRequested) {
+        if (contentEntryRequested && contentPlaced && windowFocused) {
+            onContentEntryFinished(contentFocus.requestFocus())
+        }
+    }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
         .padding(horizontal = 40.dp, vertical = 24.dp).testTag("native-navigation")) {
+        key(contentIdentity) {
         Box(Modifier.fillMaxSize().padding(start = 84.dp).testTag("native-content")
             .onPreviewKeyEvent {
                 if (it.type == KeyEventType.KeyDown && it.key != Key.Back && it.key != Key.Escape) onContentInteraction()
                 false
             }
-            .focusRequester(contentFocus).focusRestorer().focusGroup()) { content() }
+            .focusRequester(contentFocus).focusRestorer().focusGroup()
+            .onGloballyPositioned { contentPlaced = it.isAttached }) { content() }
+        }
         if (railExpanded) Box(Modifier.fillMaxSize().padding(start = 64.dp)
             .background(Color.Black.copy(alpha = .24f)))
         Column(Modifier.width(if (railExpanded) 216.dp else 64.dp).fillMaxHeight()
@@ -72,7 +88,7 @@ internal fun NativeTvScaffold(
                 if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
                     // An expanded overlay overlaps the first content column. Use the
                     // content focus group instead of unreliable spatial overlap search.
-                    contentFocus.requestFocus()
+                    onEnterContent()
                     true
                 } else false
             }.focusGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
