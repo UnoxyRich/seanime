@@ -53,7 +53,9 @@ class NativeTvPlayerPresentationTest {
         // The production transfer waits for placement and a focused Android
         // window. Observe that bounded transfer before asserting its result.
         awaitFocus("native-player-play")
-        compose.onNodeWithTag("native-player-previous").assertIsNotEnabled().assertIsNotFocused()
+        // A disabled clickable is no longer focusable and removes the Focused
+        // semantics key; assertIsNotFocused incorrectly requires that key=false.
+        compose.onNodeWithTag("native-player-previous").assertIsNotEnabled().assert(isNotFocusable())
         remote(KeyEvent.KEYCODE_DPAD_LEFT)
         remote(KeyEvent.KEYCODE_DPAD_LEFT)
         awaitFocus("native-player-rewind")
@@ -64,7 +66,7 @@ class NativeTvPlayerPresentationTest {
         compose.onNodeWithTag("native-player-next").assertIsEnabled()
         compose.runOnIdle { state.canNext = false }
         awaitFocus("native-player-play")
-        compose.onNodeWithTag("native-player-next").assertIsNotEnabled().assertIsNotFocused()
+        compose.onNodeWithTag("native-player-next").assertIsNotEnabled().assert(isNotFocusable())
         remote(KeyEvent.KEYCODE_DPAD_RIGHT)
         remote(KeyEvent.KEYCODE_DPAD_RIGHT)
         awaitFocus("native-player-forward")

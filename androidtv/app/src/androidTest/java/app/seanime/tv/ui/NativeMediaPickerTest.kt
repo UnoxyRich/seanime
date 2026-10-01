@@ -1,6 +1,7 @@
 package app.seanime.tv.ui
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import app.seanime.tv.NativeScreenshotEvidence
@@ -37,8 +38,9 @@ class NativeMediaPickerTest {
             awaitTag("media-picker-collection")
             compose.onNodeWithTag("media-picker-cancel").performTvClick()
             compose.runOnIdle { assertNull(selected.get()); open.value = true }
+            awaitFocused("media-picker-collection")
             compose.onNodeWithTag("media-picker-query").performTextInput("Fixture title")
-            compose.onNodeWithTag("media-picker-search").performTvClick()
+            compose.onNodeWithTag("media-picker-query").performImeAction()
             awaitTag("media-picker-42")
             compose.onNodeWithTag("media-picker-search").assertIsFocused()
             NativeScreenshotEvidence.capture("native-title-picker-search-focus")
@@ -57,13 +59,16 @@ class NativeMediaPickerTest {
             "/api/v1/local/track" -> if (request.method == "POST") { submitted.set(JSONObject(request.body.readUtf8())); true } else JSONArray()
             "/api/v1/local/storage/size" -> "0 B"
             "/api/v1/local/updated" -> false
+            "/api/v1/local/queue" -> JSONObject().put("animeTasks", JSONObject()).put("mangaTasks", JSONObject())
             "/api/v1/status" -> JSONObject().put("isOffline", false)
             "/api/v1/library/collection" -> JSONArray().put(media(42))
             else -> error("Unexpected fixture route: ${request.method} ${request.path}")
         } }) { repo ->
             compose.setContent { SeanimeTheme { NativeArtworkProvider(repo.client) { FeatureScreen(TvFeature.OFFLINE, repo, {}, {}) } } }
+            compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Track anime"))
             compose.waitUntil(30_000) { compose.onAllNodes(hasText("Track anime") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Track anime").performTvClick()
+            awaitFocused("media-picker-collection")
             awaitTag("media-picker-42")
             compose.onNodeWithTag("media-picker-42").performTvClick()
             compose.waitUntil(30_000) { submitted.get() != null }
@@ -91,6 +96,7 @@ class NativeMediaPickerTest {
             compose.waitUntil(30_000) { compose.onAllNodesWithText("Open").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Open").performTvClick()
             compose.onNodeWithText("Add anime").performTvClick()
+            awaitFocused("media-picker-collection")
             awaitTag("media-picker-42")
             compose.onNodeWithTag("media-picker-42").performTvClick()
             compose.waitUntil(30_000) { patch.get() != null }
@@ -118,8 +124,10 @@ class NativeMediaPickerTest {
                 assertNull(saved.get()); assertEquals(42, original.getInt(0)); open.value = true
             }
             compose.onNodeWithText("Add title").performTvClick()
+            awaitFocused("media-picker-collection")
             awaitTag("media-picker-43")
             compose.onNodeWithTag("media-picker-43").performTvClick()
+            awaitFocused("hidden-titles-add")
             compose.onNodeWithText("Save list").performTvClick()
             compose.runOnIdle {
                 assertEquals(2, saved.get().length()); assertEquals(43, saved.get().getInt(1))
@@ -133,6 +141,10 @@ class NativeMediaPickerTest {
         .put("episode", JSONObject().put("baseAnime", media(42)).put("episodeNumber", number).put("providerMetadata", "opaque-fixture")
             .put("localFile", JSONObject().put("path", "/fixture/$number.mkv")))
     private fun awaitTag(tag: String) = compose.waitUntil(30_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
+    private fun awaitFocused(tag: String) = compose.waitUntil(10_000) {
+        compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes()
+            .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+    }
     private fun withServer(respond: (RecordedRequest) -> Any, block: (SeanimeRepository) -> Unit) {
         val server = MockWebServer().apply {
             dispatcher = object : Dispatcher() { override fun dispatch(request: RecordedRequest): MockResponse =

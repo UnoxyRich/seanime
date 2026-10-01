@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.*
@@ -14,6 +16,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -43,6 +47,8 @@ internal fun NativeMediaPickerDialog(
     var error by remember { mutableStateOf<String?>(null) }
     val collectionFocus = remember { FocusRequester() }
     val focusGranted = remember { mutableStateOf(false) }
+    val searchFocus = remember { FocusRequester() }
+    val searchFocusGranted = remember { mutableStateOf(true) }
     LaunchedEffect(repo, manga, catalog, submitted, page, retry) {
         loading = true
         error = null
@@ -54,6 +60,12 @@ internal fun NativeMediaPickerDialog(
         finally { loading = false }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        val keyboard = LocalSoftwareKeyboardController.current
+        fun submitSearch() {
+            keyboard?.hide()
+            submitted = query.trim(); catalog = true; page = 1; retry++
+            searchFocusGranted.value = false
+        }
         Column(Modifier.width(820.dp).heightIn(min = 350.dp, max = 470.dp)
             .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(24.dp)).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -63,10 +75,11 @@ internal fun NativeMediaPickerDialog(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(query, { query = it }, label = { Text(if (manga) "Manga title" else "Anime title") },
-                    singleLine = true, modifier = Modifier.weight(1f).testTag("media-picker-query"))
-                ActionButton("Search titles", modifier = Modifier.testTag("media-picker-search")) {
-                    submitted = query.trim(); catalog = true; page = 1; retry++
-                }
+                    singleLine = true, modifier = Modifier.weight(1f).testTag("media-picker-query"),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { submitSearch() }))
+                ActionButton("Search titles", modifier = Modifier.testTag("media-picker-search")
+                    .initialTvFocus(searchFocus, searchFocusGranted), onClick = ::submitSearch)
             }
             ActionRow {
                 ActionButton(if (catalog) "My collection" else "✓ My collection",

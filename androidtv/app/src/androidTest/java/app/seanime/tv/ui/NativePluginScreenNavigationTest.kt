@@ -8,6 +8,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -118,7 +119,13 @@ class NativePluginScreenNavigationTest {
         awaitText("Debrid provider")
         assertCurrent(fixture, "reload-check", "/settings", "?tab=debrid")
         compose.onNodeWithText("All settings").performTvClick()
-        awaitText("Device & accounts")
+        // All settings returns to the category that opened this page. The root's
+        // first rows may be outside the lazy viewport when Debrid is restored.
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasTestTag("settings-row-section:debrid") and isFocused()).fetchSemanticsNodes()
+                .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+        }
+        compose.onNodeWithTag("settings-row-section:debrid").assertIsDisplayed()
         assertCurrent(fixture, "manual-navigation-check", "/settings", "")
         fixture.send("screen:navigate-to", JSONObject().put("path", "/entry?id=21&tab=onlinestream&episode=3"))
         awaitText("No enabled provider")

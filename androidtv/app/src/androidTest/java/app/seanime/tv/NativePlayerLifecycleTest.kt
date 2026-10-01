@@ -523,7 +523,7 @@ class NativePlayerLifecycleTest {
             "Remote focus", "[]", 1000, "{}", """{"paused":true}""")).use { scenario ->
             try {
                 awaitReady(scenario)
-                compose.onNodeWithTag("native-player-play").assertIsFocused()
+                awaitHudFocus(scenario, "native-player-play")
                 NativeScreenshotEvidence.capture("player-fresh-hud-play-focus")
                 scenario.onActivity { assertFalse(requireNotNull(findPlayerView(it.window.decorView)).useController) }
                 // Left edge of transport, then down, deterministically reaches the first options tile.
@@ -540,26 +540,41 @@ class NativePlayerLifecycleTest {
                 scenario.onActivity { assertTrue(requireNotNull(findPlayerView(it.window.decorView)?.player).playWhenReady) }
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_MEDIA_PAUSE)
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-                compose.onNodeWithTag("native-player-dialog").assertDoesNotExist()
-                compose.onNodeWithTag("native-player-audio").assertIsFocused()
+                awaitTrackDialogClosed(scenario, "native-player-audio")
                 // Reopening creates another dialog window and must transfer
                 // focus again without disturbing the remembered HUD control.
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
                 compose.onNodeWithTag("native-player-choice-0-0").assertIsFocused()
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-                compose.onNodeWithTag("native-player-audio").assertIsFocused()
+                awaitTrackDialogClosed(scenario, "native-player-audio")
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                compose.waitUntil(5_000) { compose.onAllNodesWithTag("native-player-play").fetchSemanticsNodes().isEmpty() }
                 compose.onNodeWithTag("native-player-play").assertDoesNotExist()
                 scenario.onActivity { assertFalse(requireNotNull(findPlayerView(it.window.decorView)?.player).playWhenReady) }
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
-                compose.onNodeWithTag("native-player-audio").assertIsFocused()
+                awaitHudFocus(scenario, "native-player-audio")
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                compose.waitUntil(5_000) { compose.onAllNodesWithTag("native-player-play").fetchSemanticsNodes().isEmpty() }
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
                 val deadline = SystemClock.elapsedRealtime() + 10_000
                 while (scenario.state != Lifecycle.State.DESTROYED && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50)
                 assertEquals(Lifecycle.State.DESTROYED, scenario.state)
             } finally { fixture.delete() }
         }
+    }
+
+    private fun awaitTrackDialogClosed(scenario: ActivityScenario<NativePlayerActivity>, tag: String) {
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("native-player-dialog").fetchSemanticsNodes().isEmpty() }
+        awaitHudFocus(scenario, tag)
+    }
+
+    private fun awaitHudFocus(scenario: ActivityScenario<NativePlayerActivity>, tag: String) {
+        compose.waitUntil(5_000) {
+            var windowFocused = false
+            scenario.onActivity { windowFocused = it.window.decorView.hasWindowFocus() }
+            windowFocused && compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag(tag).assertIsDisplayed().assertIsFocused()
     }
 
     private fun awaitReady(scenario: ActivityScenario<NativePlayerActivity>) {

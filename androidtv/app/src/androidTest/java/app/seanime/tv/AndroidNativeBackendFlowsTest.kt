@@ -6,11 +6,14 @@ import android.view.KeyEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import app.seanime.tv.data.ApiException
 import app.seanime.tv.data.Playlist
 import app.seanime.tv.data.PlaylistEpisode
@@ -284,9 +287,13 @@ class AndroidNativeBackendFlowsTest {
     private fun hideKeyboardKeepingDialog() {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val previousFlags = automation.serviceInfo.flags
+        val editorView = (compose.onNode(hasSetTextAction()).fetchSemanticsNode().root as ViewRootForTest).view
         fun keyboardVisible(): Boolean {
             val windows = automation.windows
-            return try { windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } }
+            return try {
+                windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } ||
+                    ViewCompat.getRootWindowInsets(editorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
             finally { windows.forEach { it.recycle() } }
         }
         try {
@@ -297,6 +304,9 @@ class AndroidNativeBackendFlowsTest {
                 key(KeyEvent.KEYCODE_BACK)
                 compose.waitUntil(10_000) { !keyboardVisible() }
             }
+            // The editor's Down handler uses these insets, while the keyboard itself is a
+            // separate accessibility window. Both must settle before sending the next key.
+            compose.waitUntil(10_000) { editorView.hasWindowFocus() && !keyboardVisible() }
             compose.waitForIdle()
             compose.onNode(hasSetTextAction()).assertIsDisplayed().assertIsFocused()
         } finally {

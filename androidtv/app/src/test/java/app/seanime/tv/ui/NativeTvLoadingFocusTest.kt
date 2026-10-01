@@ -10,6 +10,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.core.view.WindowCompat
@@ -42,7 +43,8 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Bounded-response regressions on production routes.
  * Each gate is explicitly released in finally and times out after eight seconds.
- * No focus assignment, semantic click, forced scrolling, or enlarged focus wait is used.
+ * Remote journeys use no focus assignment, semantic click, forced scrolling, or enlarged wait.
+ * One explicitly labeled regression injects Android's automatic rail fallback to model a removed view.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [34],
@@ -132,6 +134,36 @@ class NativeTvLoadingFocusTest {
         rail.assertIsFocused()
         compose.onNodeWithTag("media-1").assertIsNotFocused()
         compose.onNodeWithText("Leave Seanime?").assertDoesNotExist()
+    }
+
+    @Test fun automaticRailFallbackDuringDetailReturnDoesNotCancelSavedCard() = fixture(Delay.COLLECTION_RETURN) { backend ->
+        openDetail()
+        activityBack()
+        awaitBlocked(backend)
+        // Model the Android window's automatic focus fallback while its detail view
+        // disappears. This is a regression injection, not evidence of a remote input.
+        compose.onNodeWithTag("nav-LIBRARY").performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.onNodeWithTag("nav-LIBRARY").assertIsFocused()
+        backend.gate.release()
+        awaitTag("media-1")
+        compose.onNodeWithTag("media-1").assertIsFocused()
+    }
+
+    @Test fun aNewToolbarKeyDuringDetailReturnCancelsThePendingCardRestore() = fixture(Delay.COLLECTION_RETURN) { backend ->
+        openDetail()
+        activityBack()
+        awaitBlocked(backend)
+        // The window may still be assigning fallback focus after detail removal.
+        // Establish the newer choice with actual keys, without assigning focus.
+        repeat(4) {
+            if (compose.onAllNodes(hasTestTag("anime-collection-options") and isFocused()).fetchSemanticsNodes().isEmpty())
+                key(compose.onRoot(), Key.DirectionRight)
+        }
+        val options = compose.onNodeWithTag("anime-collection-options").assertIsFocused()
+        backend.gate.release()
+        awaitTag("media-1")
+        options.assertIsFocused()
+        compose.onNodeWithTag("media-1").assertIsNotFocused()
     }
 
     @Test fun sourcePreparationKeepsAVisibleRemoteTargetBeforeStatusReturns() = fixture(Delay.SOURCE_STATUS) { backend ->

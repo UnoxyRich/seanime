@@ -143,13 +143,31 @@ private fun SeanimeTvAppContent(
     val pluginScreens = remember(repo) { NativePluginScreens() }
     var showExit by remember { mutableStateOf(false) }
     var railHasFocus by remember { mutableStateOf(false) }
+    var detailReturnPending by remember { mutableStateOf(false) }
+    var detailReturnCancelled by remember { mutableStateOf(false) }
     val contentFocus = remember { FocusRequester() }
     val railFocus = remember { FocusRequester() }
     val railFocusGranted = remember { mutableStateOf(false) }
     val screenStates = rememberSaveableStateHolder()
     val railState = rememberLazyListState()
     val navigationScope = rememberCoroutineScope()
+    fun cancelDetailReturn() {
+        if (detailReturnPending) { detailReturnPending = false; detailReturnCancelled = true }
+    }
+    fun closeDetails() {
+        // Removing the detail's focused node can temporarily give focus to the rail.
+        // That automatic fallback is not a newer remote navigation choice.
+        detailReturnPending = true
+        detailReturnCancelled = false
+        selectedId = 0L
+    }
+    fun openDetails(id: Long) {
+        detailReturnPending = false
+        detailReturnCancelled = false
+        selectedId = id
+    }
     fun navigatePlugin(target: NativePluginDestination) {
+        cancelDetailReturn()
         pluginRoutePath = target.location.path
         pluginRouteGeneration++
         destinationName = target.feature.name
@@ -167,8 +185,9 @@ private fun SeanimeTvAppContent(
     }
     BackHandler {
         when {
-            selectedId != 0L -> selectedId = 0L
-            !railHasFocus -> {
+            selectedId != 0L -> closeDetails()
+            !railHasFocus || detailReturnPending -> {
+                cancelDetailReturn()
                 railFocusGranted.value = false
                 navigationScope.launch {
                     railState.scrollToItem(destination.ordinal)
@@ -178,22 +197,25 @@ private fun SeanimeTvAppContent(
         }
     }
     CompositionLocalProvider(LocalNativePluginScreens provides pluginScreens,
-        LocalNativeNavigationOwnsFocus provides railHasFocus) {
+        LocalNativeNavigationOwnsFocus provides (railHasFocus && !detailReturnPending)) {
     ReportNativePluginScreen(nativeFeatureLocation(destination), priority = 0)
     NativeTvScaffold(destination, if (status.offline) "Offline mode" else "Server connected", railHasFocus,
-        onNavigate = { feature -> destinationName = feature.name; selectedId = 0L; pluginRoutePath = null },
+        onNavigate = { feature -> cancelDetailReturn(); destinationName = feature.name; selectedId = 0L; pluginRoutePath = null },
         onRailFocusChanged = { railHasFocus = it }, contentFocus = contentFocus, railFocus = railFocus,
-        railFocusGranted = railFocusGranted, railState = railState) {
+        railFocusGranted = railFocusGranted, railState = railState,
+        onContentInteraction = ::cancelDetailReturn, onRailInteraction = ::cancelDetailReturn) {
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 key(pluginRouteGeneration) {
                 screenStates.SaveableStateProvider("$pluginRouteGeneration-" + if (selectedId != 0L) "details-$selectedId" else "destination-${destination.name}") {
                 when {
-                    selectedId != 0L -> AnimeDetailScreen(selectedId, repo, onPlay, onBack = { selectedId = 0L },
+                    selectedId != 0L -> AnimeDetailScreen(selectedId, repo, onPlay, onBack = ::closeDetails,
                         initialSourceMode = initialRoute?.takeIf { it.animeId == selectedId }?.sourceMode,
                         initialEpisode = initialRoute?.takeIf { it.animeId == selectedId }?.episode ?: 1)
                     destination in setOf(TvFeature.LIBRARY, TvFeature.ANILIST, TvFeature.STREAMING) ->
-                        BrowseScreen(destination, repo, { selectedId = it }, onPlatformAction, onPlay, initialRoute, status.userName, railHasFocus)
+                        BrowseScreen(destination, repo, ::openDetails, onPlatformAction, onPlay, initialRoute, status.userName,
+                            railHasFocus && !detailReturnPending, detailReturnPending, detailReturnCancelled,
+                            onDetailFocusRestored = { detailReturnPending = false })
                     else -> FeatureScreen(destination, repo, onPlay, onPlatformAction, initialRoute)
                 }
                 }
@@ -214,7 +236,8 @@ private fun SeanimeTvAppContent(
 
 @Composable
 private fun BrowseScreen(feature: TvFeature, repo: SeanimeRepository, onDetails: (Long) -> Unit, onPlatformAction: (String) -> Unit, onPlay: (PlaybackRequest) -> Unit,
-    initialRoute: NativePluginDestination? = null, profileName: String = "", navigationOwnsFocus: Boolean = false) {
+    initialRoute: NativePluginDestination? = null, profileName: String = "", navigationOwnsFocus: Boolean = false,
+    detailReturnPending: Boolean = false, detailReturnCancelled: Boolean = false, onDetailFocusRestored: () -> Unit = {}) {
     var tools by rememberSaveable { mutableStateOf(initialRoute?.libraryTab != null) }
     var discovery by rememberSaveable(feature) { mutableStateOf(initialRoute?.discovery != null) }
     var airing by rememberSaveable(feature) { mutableStateOf(initialRoute?.airing != null) }
@@ -253,6 +276,9 @@ private fun BrowseScreen(feature: TvFeature, repo: SeanimeRepository, onDetails:
     LaunchedEffect(navigationOwnsFocus) {
         if (navigationOwnsFocus) cardFocusGranted.value = true
     }
+    LaunchedEffect(detailReturnCancelled) {
+        if (detailReturnCancelled) cardFocusGranted.value = true
+    }
     LaunchedEffect(feature, refresh, collectionSort) {
         loading = true; error = null
         try {
@@ -277,6 +303,7 @@ private fun BrowseScreen(feature: TvFeature, repo: SeanimeRepository, onDetails:
             } else {
                 searchFocusGranted.value = false
                 cardFocusGranted.value = true
+                onDetailFocusRestored()
             }
         }
     }
@@ -312,7 +339,7 @@ private fun BrowseScreen(feature: TvFeature, repo: SeanimeRepository, onDetails:
             optionsModifier = Modifier.initialTvFocus(optionsFocus, optionsFocusGranted),
             discoverModifier = Modifier.initialTvFocus(discoveryFocus, discoveryFocusGranted),
             manageModifier = Modifier.initialTvFocus(manageFocus, manageFocusGranted),
-            onFocused = { cardFocusGranted.value = true },
+            onFocused = { if (!detailReturnPending) cardFocusGranted.value = true },
             onSearch = { showSearch = true }, onOptions = { options = true },
             onDiscover = { cardFocusGranted.value = true; discoveryFocusGranted.value = false; discovery = true },
             onManage = { tools = true })
@@ -328,7 +355,11 @@ private fun BrowseScreen(feature: TvFeature, repo: SeanimeRepository, onDetails:
                 else "Try a different collection search or choose All statuses in Lists & sort.")
             else -> NativeCollectionGrid(media, gridState,
                 cardModifier = { id -> if (!navigationOwnsFocus && lastFocused == id) Modifier.initialTvFocus(cardFocus, cardFocusGranted) else Modifier },
-                onCardFocused = { lastFocused = it; cardFocusGranted.value = true },
+                onCardFocused = { id ->
+                    if (!detailReturnPending || id == lastFocused) {
+                        lastFocused = id; cardFocusGranted.value = true; onDetailFocusRestored()
+                    }
+                },
                 cardActions = { card -> NativePluginActions(repo, listOf(NativePluginActionKind.MEDIA_CARD), media = card, label = "Title actions") },
                 onDetails = { id -> lastFocused = id; cardFocusGranted.value = false; onDetails(id) })
         }

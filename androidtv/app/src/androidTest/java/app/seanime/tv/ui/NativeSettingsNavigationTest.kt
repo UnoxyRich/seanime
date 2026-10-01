@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
@@ -45,10 +46,14 @@ class NativeSettingsNavigationTest {
             "torrent-folder" to "storage:torrent-stream", "folder-access" to "storage:manage",
             "anilist" to "oauth:anilist", "mal" to "oauth:mal", "accounts" to "accounts", "update" to "update",
         )
-        actions.forEach { (id, action) ->
+        pressRemote(KeyEvent.KEYCODE_DPAD_UP)
+        actions.forEachIndexed { index, (id, action) ->
             val tag = "settings-row-device:$id"
-            scrollTo(tag).performTvClick()
+            awaitFocused(tag)
+            assertWholeRowVisible(tag)
+            pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
             assertEquals(action, fixture.platformActions.last())
+            if (index < actions.lastIndex) pressRemote(KeyEvent.KEYCODE_DPAD_DOWN)
         }
         assertEquals(actions.map { it.second }, fixture.platformActions.takeLast(actions.size))
         val lastPosition = compose.onNodeWithTag("settings-row-device:update").fetchSemanticsNode().positionInRoot.y
@@ -74,19 +79,32 @@ class NativeSettingsNavigationTest {
         compose.waitUntil(10_000) { fixture.patches.any { it.optString("path") == "library.autoPlayNextEpisode" && it.optBoolean("value") } }
         awaitFocused("settings-row-field:autoPlayNextEpisode")
         compose.onNodeWithTag("settings-row-field:autoPlayNextEpisode").assertTextContains("Enabled")
-        scrollTo("settings-row-field:defaultPlaybackSource").performTvClick()
-        compose.waitUntil(10_000) { compose.onAllNodes(hasText("✓ Online streaming") and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        pressRemote(KeyEvent.KEYCODE_DPAD_DOWN)
+        awaitFocused("settings-row-field:defaultPlaybackSource")
+        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasText("✓ Online streaming") and isFocused()).fetchSemanticsNodes()
+                .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+        }
         pressRemote(KeyEvent.KEYCODE_DPAD_UP)
         compose.onNodeWithText("Local library").assertIsFocused()
         pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
         compose.waitUntil(10_000) { fixture.patches.any { it.optString("path") == "library.defaultPlaybackSource" && it.optString("value") == "library" } }
         awaitFocused("settings-row-field:defaultPlaybackSource")
 
-        scrollTo("settings-row-field:libraryPaths").assertTextContains("2 folders").performTvClick()
+        pressRemote(KeyEvent.KEYCODE_DPAD_DOWN)
+        awaitFocused("settings-row-field:libraryPaths")
+        compose.onNodeWithTag("settings-row-field:libraryPaths").assertTextContains("2 folders")
+        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
         compose.onNodeWithText("/media/anime-a").assertIsDisplayed()
         compose.onNodeWithText("/media/anime-b").assertIsDisplayed()
         val patchesBeforeCancel = fixture.patches.size
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasText("Add entry") and isFocused()).fetchSemanticsNodes()
+                .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+        }
         compose.onNodeWithText("Cancel").performTvClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Add entry").fetchSemanticsNodes().isEmpty() }
         awaitFocused("settings-row-field:libraryPaths")
         assertEquals(patchesBeforeCancel, fixture.patches.size)
         assertWholeRowVisible("settings-row-field:libraryPaths")
@@ -120,7 +138,10 @@ class NativeSettingsNavigationTest {
     }
 
     private fun awaitFocused(tag: String) {
-        compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasTestTag(tag) and isFocused() and isEnabled()).fetchSemanticsNodes()
+                .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+        }
         compose.waitForIdle()
     }
 

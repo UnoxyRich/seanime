@@ -50,11 +50,17 @@ internal fun NativeTvScaffold(
     railFocus: FocusRequester,
     railFocusGranted: MutableState<Boolean>,
     railState: LazyListState = rememberLazyListState(),
+    onContentInteraction: () -> Unit = {},
+    onRailInteraction: () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
         .padding(horizontal = 40.dp, vertical = 24.dp).testTag("native-navigation")) {
         Box(Modifier.fillMaxSize().padding(start = 84.dp).testTag("native-content")
+            .onPreviewKeyEvent {
+                if (it.type == KeyEventType.KeyDown && it.key != Key.Back && it.key != Key.Escape) onContentInteraction()
+                false
+            }
             .focusRequester(contentFocus).focusRestorer().focusGroup()) { content() }
         if (railExpanded) Box(Modifier.fillMaxSize().padding(start = 64.dp)
             .background(Color.Black.copy(alpha = .24f)))
@@ -62,6 +68,7 @@ internal fun NativeTvScaffold(
             .background(MaterialTheme.colorScheme.background, RoundedCornerShape(16.dp))
             .onFocusChanged { onRailFocusChanged(it.hasFocus) }
             .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key != Key.Back && event.key != Key.Escape) onRailInteraction()
                 if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
                     // An expanded overlay overlaps the first content column. Use the
                     // content focus group instead of unreliable spatial overlap search.

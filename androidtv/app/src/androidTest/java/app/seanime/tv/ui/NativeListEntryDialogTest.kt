@@ -1,6 +1,7 @@
 package app.seanime.tv.ui
 
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import app.seanime.tv.NativeScreenshotEvidence
@@ -106,7 +107,9 @@ class NativeListEntryDialogTest {
     @Test fun mangaRemovalRequiresConfirmationAndUsesOnlyTheSelectedTitle() = fixture(manga = true) { fixture ->
         awaitEditor()
         compose.onNodeWithTag("list-entry-remove").performScrollTo().performTvClick()
+        awaitFocused("list-entry-cancel-remove")
         compose.onNodeWithTag("list-entry-cancel-remove").assertIsFocused().performTvClick()
+        awaitFocused("list-entry-status")
         compose.onNodeWithTag("list-entry-status").assertIsFocused()
         assertTrue(fixture.writes.isEmpty())
         compose.onNodeWithTag("list-entry-remove").performScrollTo().performTvClick()
@@ -227,6 +230,10 @@ class NativeListEntryDialogTest {
 
     private fun awaitEditor() = compose.waitUntil(10_000) { compose.onAllNodesWithTag("list-entry-status").fetchSemanticsNodes().isNotEmpty() }
     private fun awaitClosed() = compose.waitUntil(10_000) { compose.onAllNodesWithTag("list-entry-dialog").fetchSemanticsNodes().isEmpty() }
+    private fun awaitFocused(tag: String) = compose.waitUntil(10_000) {
+        compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes()
+            .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+    }
     private fun editNumber(field: String, value: String, save: Boolean = true, evidenceName: String? = null) {
         compose.onNodeWithTag("list-entry-$field").performScrollTo().performTvClick()
         val input = hasTestTag("list-entry-editor-$field")
@@ -238,6 +245,7 @@ class NativeListEntryDialogTest {
         // window containing this field, so the underlying Save/Cancel controls cannot win.
         compose.onNode(hasText(if (save) "Save" else "Cancel") and hasAnyAncestor(isDialog() and hasAnyDescendant(input))).performTvClick()
         compose.onNode(input).assertDoesNotExist()
+        awaitFocused("list-entry-$field")
         compose.onNodeWithTag("list-entry-$field").assertIsFocused()
     }
     private fun openDate(field: String, evidenceName: String? = null) {

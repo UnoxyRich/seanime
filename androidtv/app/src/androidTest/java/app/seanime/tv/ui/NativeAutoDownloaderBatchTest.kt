@@ -1,10 +1,13 @@
 package app.seanime.tv.ui
 
 import android.util.Log
+import android.view.KeyEvent
 import androidx.compose.runtime.*
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.test.platform.app.InstrumentationRegistry
 import app.seanime.tv.NativeScreenshotEvidence
 import app.seanime.tv.data.*
 import okhttp3.mockwebserver.Dispatcher
@@ -85,19 +88,31 @@ class NativeAutoDownloaderBatchTest {
 
     @Test fun finishedRuleCleanupCancelsThenRetriesOnlyExplicitFailedIds() = fixture(withRules = true) { fixture ->
         fixture.falseDeleteOnce += 1
-        awaitTag("auto-cleanup-open"); scrollMain("auto-cleanup-open").performTvClick()
+        awaitTag("auto-cleanup-open"); scrollMain("auto-cleanup-open")
+        compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag("auto-cleanup-open") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("auto-cleanup-open").performTvClick()
         awaitTag("auto-cleanup-dialog")
         compose.onNodeWithTag("auto-cleanup-rule-3").assertDoesNotExist()
-        compose.onNodeWithTag("auto-cleanup-cancel").assertIsFocused().performTvClick()
+        awaitFocused("auto-cleanup-cancel")
+        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
         assertTrue(fixture.deleted.isEmpty())
         awaitFocused("auto-cleanup-open")
-        compose.onNodeWithTag("auto-cleanup-open").performTvClick(); awaitTag("auto-cleanup-dialog")
+        // TV controls retain focus while disabled. Wait for the close-triggered
+        // refresh to enable this opener before sending its next remote action.
+        compose.waitUntil(15_000) {
+            compose.onAllNodes(hasTestTag("auto-cleanup-open") and isFocused() and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+        }
+        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER); awaitTag("auto-cleanup-dialog")
+        awaitFocused("auto-cleanup-cancel")
         NativeScreenshotEvidence.capture("auto-finished-rule-cleanup-preview")
-        compose.onNodeWithTag("auto-cleanup-confirm").performTvClick()
-        compose.waitUntil(15_000) { fixture.deleted.size == 2 && compose.onAllNodesWithText("1 of 2 removals confirmed").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("auto-cleanup-confirm").assertIsFocused().performTvClick()
+        pressRemote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        compose.onNodeWithTag("auto-cleanup-confirm").assertIsFocused().assertIsEnabled()
+        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
+        compose.waitUntil(15_000) { compose.onAllNodesWithText("1 of 2 removals confirmed").fetchSemanticsNodes().isNotEmpty() && fixture.deleted.size == 2 }
+        awaitFocused("auto-cleanup-confirm")
+        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
         compose.waitUntil(15_000) { compose.onAllNodesWithText("2 of 2 removals confirmed").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("auto-cleanup-cancel").assertIsFocused()
+        awaitFocused("auto-cleanup-cancel")
         assertEquals(listOf(1, 2, 1), fixture.deleted.toList())
         assertTrue(fixture.deleted.none { it == -1 })
         assertEquals(setOf(3), fixture.ruleIds())
@@ -123,7 +138,14 @@ class NativeAutoDownloaderBatchTest {
         return compose.onNodeWithTag(tag).performScrollTo()
     }
     private fun awaitTag(tag: String) = compose.waitUntil(15_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
-    private fun awaitFocused(tag: String) = compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+    private fun awaitFocused(tag: String) = compose.waitUntil(15_000) {
+        compose.onAllNodes(hasTestTag(tag) and isFocused() and isEnabled()).fetchSemanticsNodes()
+            .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+    }
+    private fun pressRemote(key: Int) {
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(key)
+        compose.waitForIdle()
+    }
     private fun fixture(withRules: Boolean = false, block: (Fixture) -> Unit) {
         val fixture = Fixture(withRules)
         val server = MockWebServer().apply { dispatcher = fixture; start(InetAddress.getByName("127.0.0.1"), 0) }

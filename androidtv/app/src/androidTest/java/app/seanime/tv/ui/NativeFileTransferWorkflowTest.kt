@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import app.seanime.tv.data.*
@@ -31,7 +32,9 @@ class NativeFileTransferWorkflowTest {
         scroll("settings-library-index"); click("settings-library-index")
         await("metadata-export"); click("metadata-export")
         await("native-export-prepare"); click("native-export-prepare")
-        await("native-export-error"); assertTrue(fixture.saved.isEmpty())
+        await("native-export-error")
+        compose.onNodeWithTag("native-export-error").assertTextEquals("Fixture export failure")
+        assertTrue(fixture.saved.isEmpty())
         click("native-export-prepare"); await("native-export-save"); click("native-export-save")
         compose.waitUntil(10_000) { fixture.saved.size == 1 }
         assertEquals("application/json", fixture.saved.single().mimeType)
@@ -82,7 +85,13 @@ class NativeFileTransferWorkflowTest {
     }
 
     private fun await(tag: String) = compose.waitUntil(10_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
-    private fun click(tag: String) { compose.onNodeWithTag(tag).performTvClick() }
+    private fun click(tag: String) {
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasTestTag(tag) and isEnabled()).fetchSemanticsNodes()
+                .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+        }
+        compose.onNodeWithTag(tag).performTvClick()
+    }
     private fun scroll(tag: String) {
         compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasTestTag(tag))
         await(tag)
@@ -91,7 +100,9 @@ class NativeFileTransferWorkflowTest {
         val fixture = Fixture()
         MockWebServer().use { server ->
             server.dispatcher = fixture; server.start(InetAddress.getByName("127.0.0.1"), 0)
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            // Match production's permitted loopback origin. "localhost" is intentionally
+            // not a cleartext exception in Android's network security configuration.
+            SeanimeApiClient(server.url("/").newBuilder().host("127.0.0.1").build().toString()).use { api ->
                 val repo = SeanimeRepository(api)
                 compose.setContent { SeanimeTheme { CompositionLocalProvider(LocalNativeLibraryFiles provides fixture) {
                     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {

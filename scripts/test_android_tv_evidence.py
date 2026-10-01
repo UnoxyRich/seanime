@@ -1,10 +1,12 @@
 import contextlib
+import copy
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import struct
 import subprocess
 import tarfile
@@ -70,10 +72,6 @@ if args == ['shell', 'getprop', 'ro.product.cpu.abi']:
     sys.exit(0)
 if args == ['shell', 'am', 'force-stop', 'app.seanime.tv']:
     sys.exit(0)
-if args[:4] == ['exec-out', 'run-as', 'app.seanime.tv', 'head']:
-    from pathlib import Path
-    sys.stdout.buffer.write((Path(os.environ['FAKE_DEVICE']) / args[-1]).read_bytes()[:131073])
-    sys.exit(0)
 if args[:3] == ['shell', 'pm', 'path']:
     package = args[3]
     if os.environ.get('FAKE_MALFORMED_APK_PATH'):
@@ -86,12 +84,25 @@ if args[:2] == ['shell', 'sha256sum']:
     digest = '0' * 64 if os.environ.get('FAKE_APK_DIGEST_MISMATCH') else hashlib.sha256(b'fixture APK bytes').hexdigest()
     print(digest + '  ' + args[2])
     sys.exit(0)
-assert args[:5] == ['exec-out', 'run-as', 'app.seanime.tv', 'sh', '-c'], args
+assert args[:3] == ['exec-out', 'run-as', 'app.seanime.tv'], args
 if os.environ.get('FAKE_ADB_FAILURE'):
     sys.exit(9)
-sys.exit(subprocess.run(['sh', '-c', shlex.split(args[5])[0]], cwd=os.environ['FAKE_DEVICE']).returncode)
+# AOSP client/commandline.cpp escapes all exec-out arguments after argv[1],
+# then adbd executes the resulting command through a shell. The raw exec
+# service merges stderr into stdout and does NOT forward remote exit status.
+command = args[1] + ''.join(' ' + shlex.quote(arg) for arg in args[2:])
+subprocess.run(['sh', '-c', command], stderr=subprocess.STDOUT)
+sys.exit(0)
 """)
         adb.chmod(0o755)
+        run_as = fake_bin / "run-as"
+        run_as.write_text("""#!/usr/bin/env python3
+import os, sys
+assert sys.argv[1] == 'app.seanime.tv'
+os.chdir(os.environ['FAKE_DEVICE'])
+os.execvp(sys.argv[2], sys.argv[2:])
+""")
+        run_as.chmod(0o755)
         self.environment = patch.dict(os.environ, {
             "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
             "ANDROID_SERIAL": "emulator-5554", "FAKE_DEVICE": str(device),
@@ -102,6 +113,61 @@ sys.exit(subprocess.run(['sh', '-c', shlex.split(args[5])[0]], cwd=os.environ['F
     def write_pair(self):
         (self.screenshots / (SCENARIO + ".png")).write_bytes(png())
         (self.screenshots / (SCENARIO + ".json")).write_text(json.dumps(metadata()))
+
+    def test_exec_out_shell_roundtrip_preserves_script_and_merges_errors_without_exit_status(self):
+        script = ('set -- "fixture with spaces" "quoted\'value"; printf "%s\\n" "$@"; '
+                  'printf "remote-error\\n" >&2; exit 17')
+        result = subprocess.run(evidence.exec_out_run_as("sh", "-c", script), capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, b"fixture with spaces\nquoted'value\nremote-error\n")
+        self.assertEqual(result.stderr, b"")
+
+    def test_extra_script_quoting_reproduces_ci_archive_and_manifest_failures(self):
+        self.write_pair()
+        original = evidence.exec_out_run_as
+        def incorrectly_quoted(*arguments):
+            if arguments[:2] == ("sh", "-c"):
+                arguments = (*arguments[:2], shlex.quote(arguments[2]))
+            return original(*arguments)
+        with patch.object(evidence, "exec_out_run_as", side_effect=incorrectly_quoted):
+            with self.assertRaises(tarfile.ReadError):
+                evidence.collect_screenshots()
+            with self.assertRaisesRegex(ValueError, "Unexpected owned fixture path"):
+                evidence.collect_journey_manifest()
+            self.assertEqual(evidence.clear_prior_screenshots(), "app-cache-not-available")
+        self.assertTrue((self.screenshots / (SCENARIO + ".png")).is_file())
+
+    def test_cleanup_requires_remote_receipt_despite_zero_transport_status(self):
+        self.screenshots.rmdir()
+        self.assertEqual(evidence.clear_prior_screenshots(), "app-cache-not-available")
+        self.screenshots.mkdir()
+        # rm fails for an unexpected directory with an otherwise allowed name.
+        (self.screenshots / (SCENARIO + ".png")).mkdir()
+        self.assertEqual(evidence.clear_prior_screenshots(), "app-cache-not-available")
+        (self.screenshots / (SCENARIO + ".png")).rmdir()
+        self.write_pair()
+        self.assertEqual(evidence.clear_prior_screenshots(), "cleared")
+        self.assertFalse(list(self.screenshots.iterdir()))
+
+    def test_zero_exit_remote_errors_are_rejected_without_retaining_shell_output(self):
+        command = evidence.exec_out_run_as("sh", "-c", 'printf "PRIVATE_SENTINEL\\n" >&2; exit 17')
+        with patch.object(evidence, "screenshot_command", return_value=command):
+            evidence.collect(self.root, 0, {"status": "app-process-not-observed"}, {})
+        with zipfile.ZipFile(self.root / evidence.OUTPUT / "evidence.zip") as saved:
+            state = json.loads(saved.read("collection-status.json"))
+            self.assertEqual(state["screenshots"], {"status": "capture-failed", "errorType": "ReadError",
+                                                   "reason": "Invalid or truncated screenshot archive"})
+            self.assertNotIn(b"PRIVATE_SENTINEL", b"".join(saved.read(name) for name in saved.namelist()))
+
+    def test_capture_failure_retains_only_allowlisted_reason_text(self):
+        errors = [ValueError("PRIVATE_SENTINEL"), OSError("PRIVATE_SENTINEL"),
+                  json.JSONDecodeError("PRIVATE_SENTINEL", "PRIVATE_SENTINEL", 0),
+                  subprocess.TimeoutExpired("PRIVATE_SENTINEL", 5, output=b"PRIVATE_SENTINEL")]
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(evidence.capture_failure(error)))
+        self.assertEqual(evidence.capture_failure(ValueError("Unexpected owned fixture path"))["reason"],
+                         "Unexpected owned fixture path")
 
     def test_fake_adb_collects_only_exact_regular_fixture_pairs(self):
         self.write_pair()
@@ -218,6 +284,128 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
             with self.subTest(field=field), self.assertRaises(ValueError):
                 evidence.sanitize_journey_manifest({**self.journey_manifest(directory), field: value}, directory)
 
+    def picture_manifest(self):
+        manifest = self.journey_manifest()
+        paint = {"positionMs": 10000, "meanRgb": [100, 80, 60], "expectedRgb": [101, 81, 61],
+                 "channelTolerance": 25, "region": "PRIVATE_SENTINEL"}
+        aspect = {"viewportWidth": 1280, "viewportHeight": 720, "markerLeft": 820, "markerTop": 210,
+                  "markerWidth": 72, "markerHeight": 72, "expectedLeft": 820.0, "expectedTop": 210.0,
+                  "expectedSide": 72.0, "pillarboxWidth": 160.0, "maxBarChannel": 8, "path": "PRIVATE_SENTINEL"}
+        manifest.update(picturePreferencesRestored=True,
+                        stage="remote-picture-round-trip-and-checkpoint-verified",
+                        verified=["remote-picture-round-trip"],
+                        generatedVideoProbe={"streams": [{"codec_name": "h264", "width": 320, "height": 240,
+                                                          "tags": {"title": "PRIVATE_SENTINEL"}}],
+                                             "filename": "/private/PRIVATE_SENTINEL"},
+                        pictureRoundTrip={"preset": "mode-c", "positionMs": 10000, "offWidth": 320, "offHeight": 240,
+                                          "ownerRetained": True, "sourceRetained": True, "checkpointRetained": True,
+                                          "audioTrackRetained": True, "subtitlesDisabledRetained": True,
+                                          "enhancedPaint": paint, "directPaint": copy.deepcopy(paint),
+                                          "enhancedAspect": aspect, "directAspect": copy.deepcopy(aspect),
+                                          "sourcePath": "PRIVATE_SENTINEL"})
+        manifest["keyTrace"] += [{"key": "KEYCODE_DPAD_CENTER", "focused": focused}
+                                 for focused in ("native-player-picture", "native-player-choice-mode-c", "native-player-choice-off")]
+        return manifest
+
+    def test_picture_manifest_roundtrip_retains_only_typed_observations_and_known_tags(self):
+        manifest = self.picture_manifest()
+        fixture = self.root / "device/files" / manifest["root"].split("/")[-1] / "fixture.json"
+        fixture.parent.mkdir(parents=True)
+        fixture.write_text(json.dumps(manifest))
+        files, state = evidence.collect_journey_manifest()
+        self.assertEqual(state["status"], "captured")
+        raw = files["fixtures/owned-library-journey.json"]
+        clean = json.loads(raw)
+        self.assertTrue(clean["picturePreferencesRestored"])
+        self.assertEqual(clean["verified"], ["remote-picture-round-trip"])
+        self.assertEqual(clean["stage"], "remote-picture-round-trip-and-checkpoint-verified")
+        picture = clean["pictureRoundTrip"]
+        self.assertEqual(picture["preset"], "mode-c")
+        self.assertEqual((picture["offWidth"], picture["offHeight"]), (320, 240))
+        self.assertEqual(picture["directAspect"]["pillarboxWidth"], 160.0)
+        self.assertEqual(picture["enhancedPaint"]["meanRgb"], [100, 80, 60])
+        self.assertEqual([event["focused"] for event in clean["keyTrace"][-3:]],
+                         ["native-player-picture", "native-player-choice-mode-c", "native-player-choice-off"])
+        self.assertEqual(clean["unrecognizedFocusObservations"], 0)
+        self.assertNotIn("generatedVideoProbe", clean)
+        self.assertNotIn(b"PRIVATE_SENTINEL", raw)
+        self.assertNotIn(b"/data/user/", raw)
+
+    def test_picture_manifest_rejects_malformed_or_untrusted_typed_fields(self):
+        base = self.picture_manifest()
+        mutations = [
+            (("picturePreferencesRestored",), 1),
+            (("verified",), ["remote-picture-round-trip", "PRIVATE_SENTINEL"]),
+            (("verified",), ["remote-picture-round-trip"] * 2),
+            (("verified",), [{"token": "PRIVATE_SENTINEL"}]),
+            (("pictureRoundTrip",), []),
+            (("pictureRoundTrip", "preset"), "PRIVATE_SENTINEL"),
+            (("pictureRoundTrip", "positionMs"), 60_001),
+            (("pictureRoundTrip", "positionMs"), True),
+            (("pictureRoundTrip", "offWidth"), 1920),
+            (("pictureRoundTrip", "offHeight"), 240.0),
+            *[(("pictureRoundTrip", field), "PRIVATE_SENTINEL") for field in
+              ("ownerRetained", "sourceRetained", "checkpointRetained", "audioTrackRetained", "subtitlesDisabledRetained")],
+            (("pictureRoundTrip", "enhancedPaint", "meanRgb"), [100, 80, 256]),
+            (("pictureRoundTrip", "directPaint", "channelTolerance"), 25.0),
+            (("pictureRoundTrip", "directPaint"), None),
+            (("pictureRoundTrip", "enhancedAspect", "viewportWidth"), 8193),
+            (("pictureRoundTrip", "enhancedAspect", "markerWidth"), True),
+            (("pictureRoundTrip", "enhancedAspect", "markerLeft"), 1279),
+            (("pictureRoundTrip", "enhancedAspect", "expectedTop"), "PRIVATE_SENTINEL"),
+            (("pictureRoundTrip", "enhancedAspect", "expectedLeft"), float("nan")),
+            (("pictureRoundTrip", "directAspect", "expectedSide"), float("inf")),
+            (("pictureRoundTrip", "directAspect", "expectedSide"), 0),
+            (("pictureRoundTrip", "directAspect", "pillarboxWidth"), 641),
+            (("pictureRoundTrip", "directAspect", "maxBarChannel"), -1),
+            (("pictureRoundTrip", "directAspect"), None),
+        ]
+        for path, value in mutations:
+            data = copy.deepcopy(base)
+            target = data
+            for field in path[:-1]:
+                target = target[field]
+            target[path[-1]] = value
+            with self.subTest(path=path, value=value), self.assertRaises(ValueError) as rejected:
+                evidence.sanitize_journey_manifest(data, data["root"].split("/")[-1])
+            diagnostic = evidence.capture_failure(rejected.exception)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(diagnostic))
+            self.assertNotEqual(diagnostic["reason"], "Unexpected collector failure")
+
+    def test_picture_manifest_preserves_false_observations_and_terminal_stage(self):
+        data = self.picture_manifest()
+        data["picturePreferencesRestored"] = False
+        data["pictureRoundTrip"]["ownerRetained"] = False
+        data["failedAt"] = data["stage"]
+        data["stage"] += "-terminal"
+        data["outcome"] = "failed"
+        clean = evidence.sanitize_journey_manifest(data, data["root"].split("/")[-1])
+        self.assertFalse(clean["picturePreferencesRestored"])
+        self.assertFalse(clean["pictureRoundTrip"]["ownerRetained"])
+        self.assertEqual(clean["failedAt"], "remote-picture-round-trip-and-checkpoint-verified")
+        self.assertEqual(clean["outcome"], "failed")
+
+    def test_journey_manifest_rejects_oversize_data_and_symbolic_links(self):
+        directory = "native-go-fixture-12345678-1234-4123-8123-123456789abc"
+        fixture = self.root / "device/files" / directory / "fixture.json"
+        fixture.parent.mkdir(parents=True)
+        fixture.write_bytes(b" " * 131073)
+        with self.assertRaisesRegex(ValueError, "Missing or oversized owned fixture manifest"):
+            evidence.collect_journey_manifest()
+        fixture.unlink()
+        private = self.root / "private.json"
+        private.write_text("PRIVATE_SENTINEL")
+        fixture.symlink_to(private)
+        files, state = evidence.collect_journey_manifest()
+        self.assertFalse(files)
+        self.assertEqual(state["status"], "missing-or-unreadable")
+        fixture.unlink()
+        fixture.parent.rmdir()
+        fixture.parent.symlink_to(self.root, target_is_directory=True)
+        files, state = evidence.collect_journey_manifest()
+        self.assertFalse(files)
+        self.assertEqual(state["status"], "missing-or-unreadable")
+
     def test_gradle_exit_status_survives_missing_adb_evidence(self):
         with patch.dict(os.environ, {"FAKE_ADB_FAILURE": "1"}):
             for status in (0, 23, 137):
@@ -245,21 +433,89 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
         self.assertEqual(state["gradleExitCode"], 19)
 
     def test_recording_uses_bounded_settings_and_labels_no_audio(self):
-        state, video, calls = {}, {}, []
         fake_mp4 = b"\x00\x00\x00\x10ftypisom0000moovmdat"
-        def run(command, **kwargs):
-            calls.append((command, kwargs["timeout"]))
-            if command[3:] == ["exec-out", "cat", evidence.REMOTE_VIDEO]:
-                kwargs["stdout"].write(fake_mp4)
-            return subprocess.CompletedProcess(command, 0)
-        with patch.object(evidence.subprocess, "run", side_effect=run), patch.object(
-                evidence, "capture_installed_apks", return_value={"status": "test-fixture"}):
-            evidence.record_startup(threading.Event(), state, video)
-        self.assertEqual(state["status"], "captured")
-        self.assertEqual(calls[1], (["adb", "-s", "emulator-5554", "shell", "screenrecord",
-                                   "--time-limit", "60", "--size", "1280x720", "--bit-rate",
-                                   "2000000", evidence.REMOTE_VIDEO], 75))
-        self.assertEqual(video["recordings/instrumentation-startup-excerpt.mp4"], fake_mp4)
+        for invocation, selected, seconds, bitrate in (
+                ("connected-suite", None, 60, 2_000_000),
+                ("owned-library-journey", evidence.OWNED_JOURNEY, 120, 1_000_000)):
+            state, video, calls = {"audioRecorded": False}, {}, []
+            command = evidence.COMMAND + (["-Pandroid.testInstrumentationRunnerArguments.class=" + selected] if selected else [])
+            profile = evidence.recording_profile(invocation, command)
+            def run(command, **kwargs):
+                calls.append((command, kwargs["timeout"]))
+                if command[3:] == ["exec-out", "cat", evidence.REMOTE_VIDEO]:
+                    kwargs["stdout"].write(fake_mp4)
+                return subprocess.CompletedProcess(command, 0)
+            with self.subTest(invocation=invocation), patch.object(evidence.subprocess, "run", side_effect=run), patch.object(
+                    evidence, "capture_installed_apks", return_value={"status": "test-fixture"}):
+                evidence.record_startup(threading.Event(), state, video, profile)
+            self.assertEqual(state["status"], "captured")
+            self.assertEqual(calls[1], (["adb", "-s", "emulator-5554", "shell", "screenrecord",
+                                       "--time-limit", str(seconds), "--size", "1280x720", "--bit-rate",
+                                       str(bitrate), evidence.REMOTE_VIDEO], seconds + 15))
+            self.assertEqual(calls[2][1], 15)
+            self.assertEqual(state["maxSeconds"], seconds)
+            self.assertEqual(state["bitRateBitsPerSecond"], bitrate)
+            self.assertEqual(state["maxBytes"], 32 * 1024 * 1024)
+            self.assertEqual(state["fileBytes"], len(fake_mp4))
+            self.assertFalse(state["audioRecorded"])
+            self.assertIn("bounded excerpt only", state["coverage"])
+            self.assertEqual(video["recordings/instrumentation-startup-excerpt.mp4"], fake_mp4)
+
+    def test_recording_profile_requires_exact_owned_journey_invocation_and_method(self):
+        for invocation, selected, seconds in (
+                ("owned-library-journey", evidence.OWNED_JOURNEY, 120),
+                ("other-journey", evidence.OWNED_JOURNEY, 60),
+                ("owned-library-journey", evidence.OWNED_JOURNEY + "Other", 60),
+                ("owned-library-journey", evidence.OWNED_JOURNEY.split("#")[0], 60),
+                ("owned-library-journey", None, 60),
+                ("connected-suite", None, 60)):
+            command = evidence.COMMAND + (["-Pandroid.testInstrumentationRunnerArguments.class=" + selected] if selected else [])
+            with self.subTest(invocation=invocation, selected=selected):
+                profile = evidence.recording_profile(invocation, command)
+                self.assertEqual(profile["maxSeconds"], seconds)
+                self.assertEqual(profile["recordCommandTimeoutSeconds"], seconds + 15)
+                self.assertEqual(profile["workerJoinTimeoutSeconds"], seconds + 75)
+                self.assertEqual(profile["appWaitMaxSeconds"], 180)
+
+    def test_main_forwards_selected_recording_settings_and_wait_budget(self):
+        gradle = self.root / "androidtv/gradlew"
+        gradle.write_text("#!/bin/sh\nexit 0\n")
+        gradle.chmod(0o755)
+        for invocation, selected, seconds in (
+                ("connected-suite", None, 60),
+                ("owned-library-journey", evidence.OWNED_JOURNEY, 120)):
+            with self.subTest(invocation=invocation), patch.object(evidence.threading, "Thread") as thread, patch.object(
+                    evidence, "collect") as collect:
+                thread.return_value.is_alive.return_value = False
+                self.assertEqual(evidence.main(self.root, invocation, selected), 0)
+                profile = thread.call_args.kwargs["args"][3]
+                self.assertEqual(profile["maxSeconds"], seconds)
+                self.assertEqual(thread.call_args.kwargs["target"], evidence.record_startup)
+                thread.return_value.join.assert_called_once_with(seconds + 75)
+                recording = collect.call_args.args[2]
+                self.assertEqual(recording["maxSeconds"], seconds)
+                self.assertEqual(recording["workerJoinTimeoutSeconds"], seconds + 75)
+                self.assertFalse(recording["audioRecorded"])
+
+    def test_recording_rejects_oversized_and_unfinalized_mp4_for_both_profiles(self):
+        for invocation, oversized in (("connected-suite", False), ("connected-suite", True),
+                                      ("owned-library-journey", False), ("owned-library-journey", True)):
+            state, video = {}, {}
+            command = evidence.COMMAND + ["-Pandroid.testInstrumentationRunnerArguments.class=" + evidence.OWNED_JOURNEY]
+            profile = evidence.recording_profile(invocation, command)
+            def run(command, **kwargs):
+                if command[3:] == ["exec-out", "cat", evidence.REMOTE_VIDEO]:
+                    if oversized:
+                        kwargs["stdout"].seek(32 * 1024 * 1024)
+                    kwargs["stdout"].write(b"\x00\x00\x00\x10ftypisom0000mdat")
+                return subprocess.CompletedProcess(command, 0)
+            with self.subTest(invocation=invocation, oversized=oversized), patch.object(
+                    evidence.subprocess, "run", side_effect=run), patch.object(
+                    evidence, "capture_installed_apks", return_value={"status": "test-fixture"}):
+                evidence.record_startup(threading.Event(), state, video, profile)
+            self.assertEqual(state["status"], "capture-failed")
+            self.assertFalse(video)
+            self.assertNotIn("fileBytes", state)
 
     def test_installed_app_and_test_apks_match_relevant_build_hashes(self):
         snapshot = evidence.capture_installed_apks()

@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import struct
 import subprocess
 import sys
@@ -28,6 +27,10 @@ COMMAND = ["./gradlew", ":app:connectedDebugAndroidTest", "--no-daemon"]
 OUTPUT = "androidtv/build/native-ci-evidence/connected-suite"
 REMOTE_VIDEO = "/data/local/tmp/seanime-native-ci-startup.mp4"
 VIDEO_SECONDS = 60
+VIDEO_BIT_RATE = 2_000_000
+OWNED_JOURNEY_VIDEO_SECONDS = 120
+OWNED_JOURNEY_VIDEO_BIT_RATE = 1_000_000
+VIDEO_MAX_BYTES = 32 * 1024 * 1024
 APP_WAIT_SECONDS = 180
 # Exact NativeScreenshotEvidence names, including the two parameterized fixtures.
 # Deliberately do not enumerate or copy any other application cache files.
@@ -81,6 +84,8 @@ owned-go-journey-explorer-return-focus
 owned-go-journey-files-play-focus
 owned-go-journey-files-return-focus
 owned-go-journey-library-manage
+owned-go-journey-picture-mode-c
+owned-go-journey-picture-off-return
 owned-go-journey-seek-focus
 owned-go-journey-subtitle-enabled
 owned-go-journey-subtitle-off
@@ -151,6 +156,15 @@ def adb_command():
     return ["adb", "-s", serial]
 
 
+def exec_out_run_as(*arguments):
+    # adb exec-out itself escapes each argument after the executable. Unlike
+    # adb shell, pre-quoting a sh -c script here adds a second quoting layer.
+    # The raw exec service also merges remote stderr and does not return the
+    # remote exit code: validate the payload, never just adb's return code.
+    # https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/client/commandline.cpp
+    return adb_command() + ["exec-out", "run-as", PACKAGE, *arguments]
+
+
 def screenshot_command():
     names = " ".join(sorted(EXPECTED_FILES))
     script = (
@@ -159,17 +173,48 @@ def screenshot_command():
         '[ -f "$name" ] && [ ! -L "$name" ] && set -- "$@" "$name"; '
         'done; [ "$#" -gt 0 ] || exit 3; exec tar -cf - "$@"'
     )
-    return adb_command() + ["exec-out", "run-as", PACKAGE, "sh", "-c", shlex.quote(script)]
+    return exec_out_run_as("sh", "-c", script)
 
 
 def clear_prior_screenshots():
-    script = "cd cache/native-acceptance-screenshots || exit 2; rm -f " + " ".join(sorted(EXPECTED_FILES))
+    receipt = b"seanime-native-screenshots-cleared\n"
+    script = ("cd cache/native-acceptance-screenshots || exit 2; rm -f "
+              + " ".join(sorted(EXPECTED_FILES))
+              + ' && printf "seanime-native-screenshots-cleared\\n"')
     try:
-        result = subprocess.run(adb_command() + ["exec-out", "run-as", PACKAGE, "sh", "-c", shlex.quote(script)],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
-        return "cleared" if result.returncode == 0 else "app-cache-not-available"
+        result = subprocess.run(exec_out_run_as("sh", "-c", script),
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
+        return "cleared" if result.returncode == 0 and result.stdout == receipt else "app-cache-not-available"
     except Exception as error:
         return "cleanup-unavailable-" + type(error).__name__
+
+
+def capture_failure(error):
+    # Only collector-authored constants may be retained. Exception text can
+    # include device paths, shell output, command arguments or JSON contents.
+    safe_reasons = {
+        "Unexpected screenshot archive member", "Screenshot archive too large",
+        "Empty screenshot archive", "Invalid fixture object", "Invalid fixture UUID",
+        "Invalid owned fixture root", "Invalid fixture schema or path relationships",
+        "Invalid fixture stage or outcome", "Invalid or oversized key trace",
+        "Invalid key trace enum", "Invalid numeric observation", "Invalid pixel observation",
+        "Invalid picture observation", "Invalid aspect observation", "Invalid boolean observation",
+        "Invalid verified observation",
+        "Invalid observation enum", "Unexpected owned fixture path",
+        "Missing or oversized owned fixture manifest",
+    }
+    reason = "Unexpected collector failure"
+    if type(error) is ValueError and str(error) in safe_reasons:
+        reason = str(error)
+    elif isinstance(error, tarfile.ReadError):
+        reason = "Invalid or truncated screenshot archive"
+    elif isinstance(error, json.JSONDecodeError):
+        reason = "Invalid owned fixture JSON"
+    elif isinstance(error, UnicodeDecodeError):
+        reason = "Invalid evidence text encoding"
+    elif isinstance(error, subprocess.TimeoutExpired):
+        reason = "Evidence command timed out"
+    return {"status": "capture-failed", "errorType": type(error).__name__, "reason": reason}
 
 
 def validate_screenshots(stream):
@@ -219,6 +264,8 @@ def collect_screenshots():
             return {}, {"status": "missing-or-adb-failed", "adbExitCode": result.returncode}
         if stream.tell() > 257 * 1024 * 1024:
             raise ValueError("Screenshot archive too large")
+        if stream.tell() == 0:
+            raise ValueError("Empty screenshot archive")
         stream.seek(0)
         files, invalid = validate_screenshots(stream)
     captured = sorted(Path(name).stem for name in files if name.endswith(".png"))
@@ -352,7 +399,70 @@ def is_owned_journey(invocation, command):
     return invocation == "owned-library-journey" and "-Pandroid.testInstrumentationRunnerArguments.class=" + OWNED_JOURNEY in command
 
 
+def recording_profile(invocation, command):
+    owned = is_owned_journey(invocation, command)
+    seconds = OWNED_JOURNEY_VIDEO_SECONDS if owned else VIDEO_SECONDS
+    scope = "owned library journey" if owned else "connected instrumentation invocation"
+    return {"maxSeconds": seconds,
+            "bitRateBitsPerSecond": OWNED_JOURNEY_VIDEO_BIT_RATE if owned else VIDEO_BIT_RATE,
+            "resolution": "1280x720", "maxBytes": VIDEO_MAX_BYTES,
+            "recordCommandTimeoutSeconds": seconds + 15, "workerJoinTimeoutSeconds": seconds + 75,
+            "appWaitMaxSeconds": APP_WAIT_SECONDS,
+            "coverage": f"First app process observed during {scope}; bounded excerpt only, without a complete-flow or real-service acceptance claim."}
+
+
+def sanitize_video_paint(paint):
+    if (not isinstance(paint, dict) or type(paint.get("positionMs")) is not int or not 0 <= paint["positionMs"] <= 60_000
+            or type(paint.get("channelTolerance")) is not int or paint["channelTolerance"] != 25
+            or any(not isinstance(paint.get(field), list) or len(paint[field]) != 3
+                   or any(type(value) is not int or not 0 <= value <= 255 for value in paint[field])
+                   for field in ("meanRgb", "expectedRgb"))):
+        raise ValueError("Invalid pixel observation")
+    return {field: paint[field] for field in ("positionMs", "meanRgb", "expectedRgb", "channelTolerance")}
+
+
+def sanitize_video_aspect(aspect):
+    if not isinstance(aspect, dict):
+        raise ValueError("Invalid aspect observation")
+    integers = {"viewportWidth": (1, 8192), "viewportHeight": (1, 8192),
+                "markerLeft": (0, 8192), "markerTop": (0, 8192),
+                "markerWidth": (1, 8192), "markerHeight": (1, 8192), "maxBarChannel": (0, 255)}
+    for field, (minimum, maximum) in integers.items():
+        if type(aspect.get(field)) is not int or not minimum <= aspect[field] <= maximum:
+            raise ValueError("Invalid aspect observation")
+    width, height = aspect["viewportWidth"], aspect["viewportHeight"]
+    numbers = {"expectedLeft": width, "expectedTop": height, "expectedSide": min(width, height), "pillarboxWidth": width / 2}
+    for field, maximum in numbers.items():
+        # Exact numeric types reject booleans; chained bounds also reject NaN/Infinity.
+        if type(aspect.get(field)) not in (int, float) or not 0 <= aspect[field] <= maximum:
+            raise ValueError("Invalid aspect observation")
+    if (aspect["expectedSide"] <= 0 or aspect["markerLeft"] + aspect["markerWidth"] > width
+            or aspect["markerTop"] + aspect["markerHeight"] > height
+            or aspect["expectedLeft"] + aspect["expectedSide"] > width
+            or aspect["expectedTop"] + aspect["expectedSide"] > height):
+        raise ValueError("Invalid aspect observation")
+    return {field: aspect[field] for field in (*integers, *numbers)}
+
+
+def sanitize_picture_round_trip(picture):
+    booleans = ("ownerRetained", "sourceRetained", "checkpointRetained", "audioTrackRetained", "subtitlesDisabledRetained")
+    if (not isinstance(picture, dict) or picture.get("preset") != "mode-c"
+            or type(picture.get("positionMs")) is not int or not 0 <= picture["positionMs"] <= 60_000
+            or type(picture.get("offWidth")) is not int or picture["offWidth"] != 320
+            or type(picture.get("offHeight")) is not int or picture["offHeight"] != 240
+            or any(type(picture.get(field)) is not bool for field in booleans)):
+        raise ValueError("Invalid picture observation")
+    clean = {field: picture[field] for field in ("preset", "positionMs", "offWidth", "offHeight", *booleans)}
+    for field in ("enhancedPaint", "directPaint"):
+        clean[field] = sanitize_video_paint(picture.get(field))
+    for field in ("enhancedAspect", "directAspect"):
+        clean[field] = sanitize_video_aspect(picture.get(field))
+    return clean
+
+
 def sanitize_journey_manifest(data, directory):
+    if not isinstance(data, dict):
+        raise ValueError("Invalid fixture object")
     identifier = directory.removeprefix("native-go-fixture-")
     if not directory.startswith("native-go-fixture-") or str(uuid.UUID(identifier)) != identifier or uuid.UUID(identifier).version != 4:
         raise ValueError("Invalid fixture UUID")
@@ -367,6 +477,7 @@ def sanitize_journey_manifest(data, directory):
     stages = {"created", "generating-owned-color-video-two-audio-tracks-and-srt",
               "existing-import-signed-range-and-root-boundary-verified", "remote-library-manage-files-play-focus",
               "remote-decoding-seek-audio-and-embedded-cues-verified", "remote-only-owned-library-playback-verified",
+              "remote-picture-round-trip-and-checkpoint-verified",
               "stopped-awaiting-force-stop-and-reviewed-cleanup"}
     if data.get("stage") not in stages | {stage + "-terminal" for stage in stages} or data.get("outcome") not in {"running", "passed", "failed"}:
         raise ValueError("Invalid fixture stage or outcome")
@@ -382,7 +493,8 @@ def sanitize_journey_manifest(data, directory):
         native-player-play native-player-seek native-player-previous native-player-next native-player-back
         native-player-rewind native-player-forward
         native-player-audio native-player-subtitles native-player-speed native-player-fit native-player-quality
-        native-player-anime4k native-player-screenshot native-player-dialog-close native-player-choice-off""".split())
+        native-player-anime4k native-player-picture native-player-screenshot native-player-dialog-close
+        native-player-choice-mode-c native-player-choice-off""".split())
     path_controls = {f"library-file-{action}-{root}/{paths['mediaPath']}": f"library-file-{action}-{paths['mediaPath']}"
                      for action in ("select", "edit", "play", "rename", "delete")}
     path_controls.update({f"library-folder-{action}-{root}/library": f"library-folder-{action}-library"
@@ -406,12 +518,24 @@ def sanitize_journey_manifest(data, directory):
             clean[key] = data[key]
     for key in ("videoPaintBeforeSeek", "videoPaintAfterSeek"):
         if key in data:
-            paint = data[key]
-            if (not isinstance(paint, dict) or type(paint.get("positionMs")) is not int or not 0 <= paint["positionMs"] <= 60_000
-                    or paint.get("channelTolerance") != 25 or any(not isinstance(paint.get(field), list) or len(paint[field]) != 3
-                    or any(type(value) is not int or not 0 <= value <= 255 for value in paint[field]) for field in ("meanRgb", "expectedRgb"))):
-                raise ValueError("Invalid pixel observation")
-            clean[key] = {field: paint[field] for field in ("positionMs", "meanRgb", "expectedRgb", "channelTolerance")}
+            clean[key] = sanitize_video_paint(data[key])
+    if "pictureRoundTrip" in data:
+        clean["pictureRoundTrip"] = sanitize_picture_round_trip(data["pictureRoundTrip"])
+    if "picturePreferencesRestored" in data:
+        if type(data["picturePreferencesRestored"]) is not bool:
+            raise ValueError("Invalid boolean observation")
+        clean["picturePreferencesRestored"] = data["picturePreferencesRestored"]
+    if "verified" in data:
+        allowed = {"owned-generated-multitrack-mkv", "existing-index-import", "signed-go-ranges", "library-root-boundary",
+                   "remote-library-manage-files-play", "remote-explorer-play", "decoded-video-and-selected-audio",
+                   "embedded-subtitle-cue-pixels", "remote-seek-and-pause", "same-file-return-focus",
+                   "fresh-playback-identity", "owned-native-recovery", "remote-picture-round-trip"}
+        verified = data["verified"]
+        if (not isinstance(verified, list) or len(verified) > len(allowed)
+                or any(type(value) is not str or value not in allowed for value in verified)
+                or len(set(verified)) != len(verified)):
+            raise ValueError("Invalid verified observation")
+        clean["verified"] = verified
     for key, allowed in (("selectedAudioLanguage", {"eng", "fra", "en", "fr"}),
                          ("hostStatusAfterRun", {"stopped", "starting", "ready", "running", "stopping", "error"}),
                          ("failedAt", stages)):
@@ -425,11 +549,10 @@ def sanitize_journey_manifest(data, directory):
 
 
 def collect_journey_manifest():
-    adb = adb_command()
     script = ('for dir in files/native-go-fixture-*; do [ -d "$dir" ] && [ ! -L "$dir" ] '
               '&& [ -f "$dir/fixture.json" ] && [ ! -L "$dir/fixture.json" ] '
               '&& printf "%s\\n" "$dir/fixture.json"; done')
-    result = subprocess.run(adb + ["exec-out", "run-as", PACKAGE, "sh", "-c", shlex.quote(script)],
+    result = subprocess.run(exec_out_run_as("sh", "-c", script),
                             capture_output=True, text=True, timeout=5)
     paths = result.stdout.splitlines()
     if result.returncode != 0 or not paths:
@@ -439,7 +562,7 @@ def collect_journey_manifest():
     match = re.fullmatch(r"files/(native-go-fixture-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/fixture\.json", paths[0])
     if match is None:
         raise ValueError("Unexpected owned fixture path")
-    result = subprocess.run(adb + ["exec-out", "run-as", PACKAGE, "head", "-c", "131073", paths[0]],
+    result = subprocess.run(exec_out_run_as("head", "-c", "131073", paths[0]),
                             capture_output=True, timeout=5)
     if result.returncode != 0 or not 0 < len(result.stdout) <= 131072:
         raise ValueError("Missing or oversized owned fixture manifest")
@@ -447,7 +570,9 @@ def collect_journey_manifest():
     return {"fixtures/owned-library-journey.json": json_bytes(clean)}, {"status": "captured", "fixtureRoot": match.group(1), "outcome": clean["outcome"]}
 
 
-def record_startup(stop, state, video):
+def record_startup(stop, state, video, profile=None):
+    profile = profile or recording_profile("connected-suite", COMMAND)
+    state.update(profile)
     try:
         adb = adb_command()
         deadline = time.monotonic() + APP_WAIT_SECONDS
@@ -468,9 +593,11 @@ def record_startup(stop, state, video):
             state["status"] = "tests-finished-before-recording"
             return
         state["startedAtMs"] = int(time.time() * 1000)
-        result = subprocess.run(adb + ["shell", "screenrecord", "--time-limit", str(VIDEO_SECONDS),
-                                      "--size", "1280x720", "--bit-rate", "2000000", REMOTE_VIDEO],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=VIDEO_SECONDS + 15)
+        result = subprocess.run(adb + ["shell", "screenrecord", "--time-limit", str(profile["maxSeconds"]),
+                                      "--size", profile["resolution"], "--bit-rate",
+                                      str(profile["bitRateBitsPerSecond"]), REMOTE_VIDEO],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                timeout=profile["recordCommandTimeoutSeconds"])
         state["finishedAtMs"] = int(time.time() * 1000)
         if result.returncode != 0:
             state.update(status="screenrecord-failed", exitCode=result.returncode)
@@ -479,13 +606,14 @@ def record_startup(stop, state, video):
             result = subprocess.run(adb + ["exec-out", "cat", REMOTE_VIDEO], stdout=stream,
                                     stderr=subprocess.DEVNULL, timeout=15)
             size = stream.tell()
-            if result.returncode != 0 or not 16 <= size <= 32 * 1024 * 1024:
+            if result.returncode != 0 or not 16 <= size <= VIDEO_MAX_BYTES:
                 raise ValueError("Recording missing or too large")
             stream.seek(0)
             data = stream.read()
         if data[4:8] != b"ftyp" or b"moov" not in data or b"mdat" not in data:
             raise ValueError("Recording is not a finalized MP4")
         video["recordings/instrumentation-startup-excerpt.mp4"] = data
+        state["fileBytes"] = len(data)
         state["status"] = "captured"
     except Exception as error:
         state.update(status="capture-failed", errorType=type(error).__name__)
@@ -508,7 +636,7 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
         screenshots, manifest["screenshots"] = collect_screenshots()
         files.update(screenshots)
     except Exception as error:
-        manifest["screenshots"] = {"status": "capture-failed", "errorType": type(error).__name__}
+        manifest["screenshots"] = capture_failure(error)
     try:
         files["junit-summary.xml"], manifest["junit"] = collect_junit(root, recording.get("gradleStartedAtMs", 0))
     except Exception as error:
@@ -518,7 +646,7 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
             fixture, manifest["ownedJourneyManifest"] = collect_journey_manifest()
             files.update(fixture)
         except Exception as error:
-            manifest["ownedJourneyManifest"] = {"status": "capture-failed", "errorType": type(error).__name__}
+            manifest["ownedJourneyManifest"] = capture_failure(error)
         if manifest["ownedJourneyManifest"]["status"] != "captured":
             print("::warning::Owned journey fixture manifest is missing, ambiguous or invalid; evidence is incomplete", flush=True)
     hashes = {}
@@ -573,13 +701,12 @@ def main(root, invocation="connected-suite", test_class=None, runner_flags=()):
     except OSError:
         print("::warning::Unable to clear prior Android TV evidence outputs", flush=True)
     stop = threading.Event()
-    recording = {"status": "waiting-for-app-process", "maxSeconds": VIDEO_SECONDS,
-                 "appWaitMaxSeconds": APP_WAIT_SECONDS,
-                 "evidenceKind": "instrumentation-fixtures-early-run-excerpt", "audioRecorded": False,
-                 "coverage": "First app process observed during connected suite; not a complete player flow or real-service acceptance."}
+    profile = recording_profile(invocation, command)
+    recording = {"status": "waiting-for-app-process", **profile,
+                 "evidenceKind": "instrumentation-fixtures-early-run-excerpt", "audioRecorded": False}
     recording["priorScreenshotCleanup"] = clear_prior_screenshots()
     video = {}
-    worker = threading.Thread(target=record_startup, args=(stop, recording, video), daemon=True)
+    worker = threading.Thread(target=record_startup, args=(stop, recording, video, profile), daemon=True)
     worker.start()
     recording["gradleStartedAtMs"] = int(time.time() * 1000)
     try:
@@ -591,7 +718,7 @@ def main(root, invocation="connected-suite", test_class=None, runner_flags=()):
     finally:
         recording["gradleFinishedAtMs"] = int(time.time() * 1000)
         stop.set()
-    worker.join(VIDEO_SECONDS + 75)
+    worker.join(profile["workerJoinTimeoutSeconds"])
     if worker.is_alive():
         recording = {**recording, "status": "capture-timeout"}
         video = {}

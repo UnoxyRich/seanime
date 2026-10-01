@@ -2,6 +2,7 @@ package app.seanime.tv.ui
 
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -80,7 +81,7 @@ class NativePersonalCollectionTest {
         awaitTag("media-2")
         compose.onNodeWithTag("media-1").assertDoesNotExist()
         compose.onNodeWithTag("anime-collection-options").performTvClick()
-        compose.onNodeWithTag("collection-status").assertTextContains("Planning")
+        compose.onNodeWithTag("collection-status").assertTextEquals("Status: Planning")
         closeOptions("anime-collection-options")
         assertTrue(f.catalogRequests.isEmpty())
     }
@@ -114,8 +115,9 @@ class NativePersonalCollectionTest {
         toolbar("manga-search").performTvClick()
         compose.onNodeWithTag("manga-search-editor").assertTextContains("hidden alias")
         compose.onNodeWithTag("text-entry-cancel").performTvClick()
+        awaitFocused("manga-search")
         toolbar("manga-collection-options").performTvClick()
-        compose.onNodeWithTag("collection-status").assertTextContains("Planning")
+        compose.onNodeWithTag("collection-status").assertTextEquals("Status: Planning")
         closeOptions("manga-collection-options")
         assertTrue(f.paths.none { it.startsWith("POST /api/v1/anilist/list-entry") })
     }
@@ -125,7 +127,7 @@ class NativePersonalCollectionTest {
         compose.onNodeWithTag(field).performTvClick()
         val choices = hasScrollToNodeAction() and hasAnyAncestor(isDialog())
         compose.onNode(choices).performScrollToNode(hasText(value))
-        compose.onNodeWithText(value).performTvClick()
+        compose.onNode(hasText(value) and hasClickAction() and hasAnyAncestor(isDialog())).performTvClick()
         awaitFocused(field)
     }
     private fun closeOptions(opener: String) {
@@ -146,7 +148,10 @@ class NativePersonalCollectionTest {
     private fun mangaList() = compose.onNode(hasScrollToNodeAction() and !hasTestTag("manga-collection-toolbar"))
     private fun awaitTag(tag: String) = compose.waitUntil(10_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
     private fun awaitText(value: String) = compose.waitUntil(10_000) { compose.onAllNodesWithText(value).fetchSemanticsNodes().isNotEmpty() }
-    private fun awaitFocused(tag: String) = compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+    private fun awaitFocused(tag: String) = compose.waitUntil(10_000) {
+        compose.onAllNodes(hasTestTag(tag) and isFocused() and isEnabled()).fetchSemanticsNodes()
+            .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+    }
     private fun pressBack() { InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); compose.waitForIdle() }
     private fun fixture(manga: Boolean = false, highIds: Boolean = false, body: (CollectionFixture) -> Unit) {
         val f = CollectionFixture(highIds)

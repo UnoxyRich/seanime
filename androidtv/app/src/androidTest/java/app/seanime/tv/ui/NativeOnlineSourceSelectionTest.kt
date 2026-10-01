@@ -1,5 +1,6 @@
 package app.seanime.tv.ui
 
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import app.seanime.tv.NativeScreenshotEvidence
@@ -54,25 +55,30 @@ class NativeOnlineSourceSelectionTest {
     @Test fun sourceEditorsValidateSaveCancelAndRestoreTheirRemoteOpeners() = fixture("Torrent", providerCount = 12) { fixture ->
         openEditor("episode")
         compose.onNodeWithTag("source-editor-episode").performTextReplacement("0")
+        compose.onNodeWithTag("source-editor-episode").performImeAction()
         compose.onNodeWithText("Save").performTvClick()
         compose.onNodeWithTag("source-episode-edit").assertTextEquals("Episode: 1").assertIsFocused()
         // Providers push the old end-of-page error offscreen. Validation must stay beside its field.
         compose.onNodeWithTag("source-episode-error").assertTextEquals("Choose a positive episode number").assertIsDisplayed()
         openEditor("episode")
         compose.onNodeWithTag("source-editor-episode").performTextReplacement("4")
+        compose.onNodeWithTag("source-editor-episode").performImeAction()
         compose.onNodeWithText("Cancel").performTvClick()
         compose.onNodeWithTag("source-episode-edit").assertTextEquals("Episode: 1").assertIsFocused()
         openEditor("episode")
         compose.onNodeWithTag("source-editor-episode").performTextReplacement("4")
+        compose.onNodeWithTag("source-editor-episode").performImeAction()
         compose.onNodeWithText("Save").performTvClick()
         compose.onNodeWithTag("source-episode-edit").assertTextEquals("Episode: 4").assertIsFocused()
         compose.onNodeWithTag("source-episode-error").assertDoesNotExist()
         openEditor("query")
         compose.onNodeWithTag("source-editor-query").performTextReplacement("Discard this")
+        compose.onNodeWithTag("source-editor-query").performImeAction()
         compose.onNodeWithText("Cancel").performTvClick()
         compose.onNodeWithTag("source-query-edit").assertTextEquals("Torrent search: Fixture anime").assertIsFocused()
         openEditor("query")
         compose.onNodeWithTag("source-editor-query").performTextReplacement("Batch query")
+        compose.onNodeWithTag("source-editor-query").performImeAction()
         compose.onNodeWithTag("source-editor-query").assertIsDisplayed()
         NativeScreenshotEvidence.capture("source-bounded-query-editor")
         compose.onNodeWithText("Save").performTvClick()
@@ -101,7 +107,16 @@ class NativeOnlineSourceSelectionTest {
     private fun openEditor(field: String) {
         val tag = if (field == "episode") "source-episode-edit" else "source-query-edit"
         compose.onNodeWithTag("source-content").performScrollToNode(hasTestTag(tag))
+        // A dismissed editor can retain semantics focus before Android returns its input window.
+        // Wait for this route to own hardware input before opening the next editor.
+        compose.waitUntil(10_000) {
+            (compose.onNodeWithTag(tag).fetchSemanticsNode().root as ViewRootForTest).view.hasWindowFocus()
+        }
         compose.onNodeWithTag(tag).performTvClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasTestTag("source-editor-$field") and isFocused()).fetchSemanticsNodes()
+                .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+        }
         compose.onNodeWithTag("source-editor-$field").assertIsDisplayed().assertIsFocused()
     }
 

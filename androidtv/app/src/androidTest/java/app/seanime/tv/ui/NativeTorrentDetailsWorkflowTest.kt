@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -26,7 +27,7 @@ class NativeTorrentDetailsWorkflowTest {
     @get:Rule val compose = createComposeRule()
 
     @Test fun downloadsEntrySupportsExactTorrentActionsFileRetryTrackersAndLazyBackFocus() = fixture { state ->
-        await("torrent-global-limits")
+        enabled("torrent-global-limits")
         scroll("torrent-details-owned-18"); click("torrent-details-owned-18")
         await("torrent-detail-back"); enabled("torrent-detail-refresh")
         click("torrent-detail-force"); message("Force start enabled.")
@@ -36,10 +37,25 @@ class NativeTorrentDetailsWorkflowTest {
         click("torrent-detail-reannounce"); message("Tracker reannounce requested. Peer discovery may take time.")
         scroll("torrent-detail-tab-files"); click("torrent-detail-tab-files")
         scroll("torrent-detail-file-18"); click("torrent-detail-file-18")
-        compose.onNodeWithText("High").performTvClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasText("✓ Normal") and isFocused()).fetchSemanticsNodes()
+                .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+        }
+        pressRemote(KeyEvent.KEYCODE_DPAD_DOWN)
+        compose.onNodeWithText("High").assertIsFocused()
+        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
         await("torrent-action-error")
         compose.onNodeWithTag("torrent-action-error").assertTextContains("Owned priority retry")
-        click("torrent-action-retry")
+        focused("torrent-action-close")
+        pressRemote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        compose.onNodeWithTag("torrent-action-retry").assertIsFocused()
+        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
+        // The retry closes its error dialog before its HTTP mutation/readback
+        // finishes, while the disabled opener can still report focus.
+        compose.waitUntil(10_000) {
+            state.posts.count { it.optString("action") == "set-file-priority" } == 2 &&
+                compose.onAllNodes(hasTestTag("torrent-detail-file-18") and hasText("Priority: High") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+        }
         focused("torrent-detail-file-18")
         compose.onNodeWithTag("torrent-detail-file-18").assertTextContains("Priority: High")
         val changes = state.posts.size
@@ -79,9 +95,9 @@ class NativeTorrentDetailsWorkflowTest {
         compose.onNodeWithTag("torrent-limit-editor").performTextReplacement("2048"); click("text-entry-save")
         click("torrent-limits-upload"); compose.onNodeWithTag("torrent-limit-editor").performTextReplacement("0"); click("text-entry-save")
         click("torrent-limits-apply"); await("torrent-limits-error")
-        compose.onNodeWithTag("torrent-limits-download").assertTextContains("2048 KB/s")
+        compose.onNodeWithTag("torrent-limits-download").assertTextEquals("Download: 2048 KB/s")
         click("torrent-limits-apply"); await("torrent-limits-accepted")
-        compose.onNodeWithTag("torrent-limits-accepted").assertTextContains("not saved as startup defaults")
+        compose.onNodeWithTag("torrent-limits-accepted").assertTextEquals("Session limit request accepted. These values are not saved as startup defaults.")
         NativeScreenshotEvidence.capture("native-torrent-session-limits-accepted")
         click("torrent-limits-cancel"); focused("torrent-global-limits")
         assertEquals(2, state.posts.size)
@@ -103,7 +119,10 @@ class NativeTorrentDetailsWorkflowTest {
     }
     private fun await(tag: String) = compose.waitUntil(10_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
     private fun enabled(tag: String) = compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag(tag) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-    private fun focused(tag: String) = compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+    private fun focused(tag: String) = compose.waitUntil(10_000) {
+        compose.onAllNodes(hasTestTag(tag) and isFocused() and isEnabled()).fetchSemanticsNodes()
+            .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+    }
     private fun message(text: String) {
         // Result text is in the scrolling page header; don't assume a long file list keeps it composed.
         compose.onNode(hasScrollToIndexAction()).performScrollToIndex(0)
@@ -115,6 +134,7 @@ class NativeTorrentDetailsWorkflowTest {
     }
     private fun scroll(tag: String) { compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasTestTag(tag)); compose.waitForIdle() }
     private fun back() { InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); compose.waitForIdle() }
+    private fun pressRemote(key: Int) { InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(key); compose.waitForIdle() }
 
     private class Fixture : Dispatcher() {
         val posts = CopyOnWriteArrayList<JSONObject>()

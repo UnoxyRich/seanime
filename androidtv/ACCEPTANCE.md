@@ -4,9 +4,10 @@
 
 The active implementation is now native Compose for TV. Its current result is
 recorded in the [remote UI review](acceptance/2026-10-01-remote-ui-review.md):
-375 JVM tests and 34 host comparisons pass, while the current device rerun is
-pending. The previous GitHub TV run reached 71/181 methods, with nine failures
-and four skips, before a process crash. The resulting source/test corrections
+377 JVM tests and 34 host comparisons pass, while the current device rerun is
+pending. The latest completed GitHub TV run finished all 183 unique cases:
+150 passed, 28 failed and 5 isolated cases skipped. Its separate owned-video
+journey failed after reaching Files → Play. Current source/test corrections
 are not yet device passes. The [current inventory](acceptance/2026-10-01-remote-ui-device-plan.json)
 contains 183 methods. Feature-level and external gates remain in the
 [October 1 TV layout and live-data report](acceptance/2026-10-01-tv-layout-and-live-data.md).

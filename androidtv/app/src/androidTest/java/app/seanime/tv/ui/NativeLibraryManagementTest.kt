@@ -3,6 +3,7 @@ package app.seanime.tv.ui
 import android.view.KeyEvent
 import androidx.compose.runtime.*
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -99,7 +100,11 @@ class NativeLibraryManagementTest {
         awaitTag("library-bulk-error")
         assertTrue(fixture.bulk.isEmpty())
         compose.onNodeWithTag("library-bulk-confirm-cancel").performTvClick()
-        compose.onNodeWithTag("library-bulk-cancel").performTvClick()
+        // Dismissal restores the selected action after its window becomes active again.
+        // Back then closes this action chooser without racing its pending return-focus request.
+        awaitFocused("library-bulk-ignore")
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
         awaitFocused("library-selected-actions")
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
         compose.waitForIdle()
@@ -130,7 +135,10 @@ class NativeLibraryManagementTest {
         return compose.onNodeWithTag(tag).performScrollTo()
     }
     private fun awaitTag(tag: String) = compose.waitUntil(15_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
-    private fun awaitFocused(tag: String) = compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+    private fun awaitFocused(tag: String) = compose.waitUntil(15_000) {
+        compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes()
+            .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+    }
     private fun JSONArray.strings() = (0 until length()).map { getString(it) }.toSet()
 
     private fun fixture(failBulkOnce: Boolean = false, failRenameOnce: Boolean = false, block: (Fixture) -> Unit) {

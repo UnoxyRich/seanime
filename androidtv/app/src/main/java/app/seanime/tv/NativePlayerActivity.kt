@@ -32,6 +32,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
@@ -49,6 +50,8 @@ import kotlinx.coroutines.ensureActive
 import java.util.concurrent.TimeUnit
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DecoderReuseEvaluation
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.documentfile.provider.DocumentFile
@@ -86,6 +89,7 @@ class NativePlayerActivity : ComponentActivity() {
     private var anime4kPreset = "off"
     private var anime4kKey = ""
     private var anime4kGeneration = 0
+    private var anime4kEffectsApplied = false
     private var activePlayerView: PlayerView? = null
     private val presentation = NativeTvPlayerState()
     private var externalLaunchJob: Job? = null
@@ -272,7 +276,14 @@ class NativePlayerActivity : ComponentActivity() {
         assSession = nativeAss
         val exoPlayer = nativeAss.player
         player = exoPlayer
+        anime4kEffectsApplied = false
         activeInstance = WeakReference(this)
+        exoPlayer.addAnalyticsListener(object : AnalyticsListener {
+            override fun onVideoInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format,
+                decoderReuseEvaluation: DecoderReuseEvaluation?) {
+                if (player === exoPlayer) applyAnime4K(inputFormat = format)
+            }
+        })
         exoPlayer.addListener(object : Player.Listener {
             private fun ownsPlayer() = this@NativePlayerActivity.player === exoPlayer
 
@@ -372,13 +383,13 @@ class NativePlayerActivity : ComponentActivity() {
         savedTrackSelectionParameters?.let { exoPlayer.trackSelectionParameters = it }
         exoPlayer.volume = if (muted) 0f else savedVolume
         exoPlayer.setMediaItem(buildMediaItem(uri, mediaTitle, subtitleTracksJson), lastPositionMs.coerceAtLeast(0))
+        anime4kKey = ""
+        applyAnime4K(preparingPlayer = true)
         exoPlayer.prepare()
         exoPlayer.playWhenReady = resumePlayWhenReady && !completed
         nativePlayerVisible = true
         capturePlaybackSource(uri)
         eventSubtitles?.resume()
-        anime4kKey = ""
-        applyAnime4K()
         NativePlaybackBus.event("started", JSONObject().put("eventSubtitlesRestored", eventBridgeRestored))
         eventBridgeRestored = false
         progressHandler.postDelayed(publishProgress, 2_000)
@@ -889,32 +900,68 @@ class NativePlayerActivity : ComponentActivity() {
         }, "SDR video · demanding presets require a capable GPU")
     }
 
-    private fun applyAnime4K() {
+    private fun applyAnime4K(preparingPlayer: Boolean = false, inputFormat: Format? = null) {
         val current = player ?: return
+        val format = inputFormat ?: current.videoFormat
+        // Effect playback need not emit videoSize callbacks. Re-check the actual
+        // decoder input's transfer function before a cached configuration can return.
+        if (anime4kPreset != "off" && ColorInfo.isTransferHdr(format?.colorInfo)) {
+            anime4kPreset = "off"; anime4kKey = "off"
+            val generation = ++anime4kGeneration
+            getSharedPreferences("native-player-settings", MODE_PRIVATE).edit().putString("anime4k", "off").apply()
+            restartPlayerForPicture(current, generation)
+            NativePlaybackBus.event("anime4k", JSONObject().put("option", "off"))
+            showPlayerNotice("Anime4K is disabled for HDR; the available networks are trained for SDR")
+            return
+        }
         val view = activePlayerView ?: return
-        if (view.width <= 0 || view.height <= 0 || isFinishing) return
-        val format = current.videoFormat
-        if (anime4kPreset != "off" && format == null) return
+        if (isFinishing) return
+        val targetWidth = view.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val targetHeight = view.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+        if (targetWidth <= 0 || targetHeight <= 0) return
         val preset = anime4kPreset
-        val key = "$preset:${format?.width}:${format?.height}:${view.width}:${view.height}"
+        val key = if (preset == "off") "off" else "$preset:$targetWidth:$targetHeight"
         if (key == anime4kKey) return
         anime4kKey = key
         val generation = ++anime4kGeneration
+        if (preset == "off") {
+            if (anime4kEffectsApplied) restartPlayerForPicture(current, generation)
+            NativePlaybackBus.event("anime4k", JSONObject().put("option", "off"))
+            return
+        }
         val fail: (String) -> Unit = { reason -> runOnUiThread {
             if (player === current && anime4kGeneration == generation && anime4kPreset == preset && !isFinishing) {
-                anime4kPreset = "off"; anime4kKey = ""
+                anime4kPreset = "off"; anime4kKey = "off"
                 getSharedPreferences("native-player-settings", MODE_PRIVATE).edit().putString("anime4k", "off").apply()
-                current.setVideoEffects(emptyList())
+                restartPlayerForPicture(current, generation)
                 NativePlaybackBus.event("anime4k", JSONObject().put("option", "off"))
                 showPlayerNotice(reason)
             }
         } }
-        if (preset != "off" && ColorInfo.isTransferHdr(format?.colorInfo)) {
-            fail("Anime4K is disabled for HDR; the available networks are trained for SDR")
+        if (!preparingPlayer && !anime4kEffectsApplied) {
+            restartPlayerForPicture(current, generation)
             return
         }
-        current.setVideoEffects(NativeAnime4K.effects(preset, view.width, view.height, fail))
+        val effects = NativeAnime4K.effects(preset, targetWidth, targetHeight, fail)
+        if (effects.isNotEmpty()) {
+            current.setVideoEffects(effects)
+            anime4kEffectsApplied = true
+        }
         NativePlaybackBus.event("anime4k", JSONObject().put("option", anime4kPreset))
+    }
+
+    private fun restartPlayerForPicture(current: ExoPlayer, generation: Int) {
+        // Media3 picks its direct-surface or video-graph path at renderer enable.
+        // An empty effects list still creates a graph, and setting a first effect
+        // on an already enabled direct renderer cannot install that graph.
+        // Reuse the lifecycle checkpoint to preserve pause/position/tracks/speed.
+        // Post outside listener dispatch/initialization, including shader failures.
+        window.decorView.post {
+            if (player === current && anime4kGeneration == generation && !isFinishing) {
+                releasePlayer()
+                initializePlayer()
+            }
+        }
     }
 
     private fun showTranslationDialog() {

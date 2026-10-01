@@ -123,10 +123,20 @@ class NativeInitialFocusTest {
             assertTrue("Footer must not overlap focused navigation", row.bottom < footer.top)
         }
         compose.onNodeWithTag("nav-LOGS").performTvClick()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(isFocused() and hasAnyAncestor(hasTestTag("native-content"))).fetchSemanticsNodes().isNotEmpty()
+        }
+        // Stress restoration after content, rather than scrolling an already-focused
+        // rail row away and then mistaking the rail's Exit action for a content Back.
         compose.onNodeWithTag("navigation-rail").performScrollToIndex(0)
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
         InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-        compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("nav-LOGS") and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) {
+            val row = compose.onAllNodes(hasTestTag("nav-LOGS") and isFocused()).fetchSemanticsNodes().singleOrNull()
+            val rail = compose.onNodeWithTag("navigation-rail").fetchSemanticsNode().boundsInRoot
+            row != null && row.boundsInRoot.top >= rail.top && row.boundsInRoot.bottom <= rail.bottom
+        }
         compose.onNodeWithTag("nav-LOGS").assertIsDisplayed().assertIsFocused()
         compose.onNodeWithText("Leave Seanime?").assertDoesNotExist()
     }

@@ -120,7 +120,9 @@ internal fun NativeExtensionMarketplace(repo: SeanimeRepository, initialType: St
                 if (item.description.isNotBlank()) Text(item.description)
                 if (local != null) Text("Installed ${local.version}${if (local.disabled) " · Disabled" else ""}${if (local.manifestUrl != item.manifestUrl) " · Different source" else ""}")
                 ActionButton(if (current) "Installed" else if (local != null) "Review version ${item.version}" else "Review installation", !action.busy && !current,
-                    Modifier.testTag("marketplace-review-${item.id}").then(if (focusedId == item.id) Modifier.initialTvFocus(returnFocus, returnGranted) else Modifier)) {
+                    // A successfully installed row becomes disabled. Only restore
+                    // an actionable review row; installation returns to the header.
+                    Modifier.testTag("marketplace-review-${item.id}").then(if (focusedId == item.id && !current && !action.busy) Modifier.initialTvFocus(returnFocus, returnGranted) else Modifier)) {
                     focusedId = item.id
                     action.run {
                         validateNativeMarketplaceUrl(item.manifestUrl)

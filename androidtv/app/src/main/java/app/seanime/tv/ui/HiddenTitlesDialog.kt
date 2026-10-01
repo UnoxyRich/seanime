@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.tv.material3.MaterialTheme
@@ -34,7 +35,7 @@ internal fun HiddenTitlesDialog(repo: SeanimeRepository, current: JSONArray, onD
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Titles hidden from Nakama", style = MaterialTheme.typography.titleLarge)
             Text("These titles stay in your library and are hidden from peers.")
-            ActionButton("Add title", modifier = Modifier.initialTvFocus(addFocus, initialFocus)) { choosing = true }
+            ActionButton("Add title", modifier = Modifier.testTag("hidden-titles-add").initialTvFocus(addFocus, initialFocus)) { choosing = true }
             LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (ids.isEmpty()) item { Text("No hidden titles") }
                 items(ids, key = { it }) { id ->
@@ -50,7 +51,7 @@ internal fun HiddenTitlesDialog(repo: SeanimeRepository, current: JSONArray, onD
             }
         }
     }
-    if (choosing) NativeMediaPickerDialog(repo, "Hide a title from peers", onDismiss = { choosing = false }) { media ->
+    if (choosing) NativeMediaPickerDialog(repo, "Hide a title from peers", onDismiss = { choosing = false; initialFocus.value = false }) { media ->
         ids = (ids + media.id).distinct(); titles = titles + (media.id to media.title)
     }
 }
