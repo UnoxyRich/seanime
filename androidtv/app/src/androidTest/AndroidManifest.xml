@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:usesCleartextTraffic="true">
+        <activity android:name="app.seanime.tv.TestStreamingExternalPlayerActivity"
+            android:label="Owned test player" android:exported="true" android:process=":external_player">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="http" android:mimeType="video/*" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

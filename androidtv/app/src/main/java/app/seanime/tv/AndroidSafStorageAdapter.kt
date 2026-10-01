@@ -22,11 +22,11 @@ class AndroidSafStorageAdapter(context: Context) : AndroidStorageAdapter {
     private val appContext = context.applicationContext
     private val contentResolver = appContext.contentResolver
     private val pendingWrites = ConcurrentHashMap<String, WriteSession>()
-    private val activeWriteIds = ConcurrentHashMap.newKeySet<String>()
+    private val activeWriteIds = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
     private val journalPreferences = appContext.getSharedPreferences("android-tv-storage-writes", Context.MODE_PRIVATE)
     private val journalLock = Any()
     private val recoveryLock = Any()
-    private val recoveredRoots = ConcurrentHashMap.newKeySet<String>()
+    private val recoveredRoots = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
     override fun list(path: String): String {
         ensureJournalRecovered(path)

@@ -1,0 +1,5 @@
+<resources>
+    <!-- Android 6 has no per-domain network security config. The native API
+         client still enforces the canonical loopback origin for credentials. -->
+    <bool name="allow_legacy_loopback_http">true</bool>
+</resources>

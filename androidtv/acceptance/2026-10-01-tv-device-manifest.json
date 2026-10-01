@@ -1,0 +1,911 @@
+{
+  "version": 1,
+  "status": "frozen_current_tv_ui_device_plan_unrun",
+  "observedHead": "43c2f02ea9ceb7b5b856f57fee8a00380fc1438b",
+  "sourceFreeze": "43c2f02ea9ceb7b5b856f57fee8a00380fc1438b",
+  "tree": "11268b559798a2e1b1c31047f6eeb7ef9e2435e0",
+  "appSha256": "2912aeac66df240f0b4620fa23e93dc2cec0c6ae3d023ae041a1f0605f791f0f",
+  "testSha256": "eeadac9dba09772199e7c0e8b1ceb551a4f93ed5a200c0653c8c7180e7b983e0",
+  "createdUtc": "2026-10-01T06:51:10.245906+00:00",
+  "normalExpectedMethods": 172,
+  "normalBatches": [
+    {
+      "id": "01-ime-source-repairs",
+      "classFilter": "app.seanime.tv.ui.NativeTextEntryImeTest,app.seanime.tv.ui.NativeSourceDownloadTest",
+      "expectedMethodCount": 4,
+      "outerTimeoutSeconds": 1500,
+      "intendedScope": "Real IME frame/footer geometry; numeric Done then physical Down/Right/Center Save; 12-line draft/20-line helper overflow physical scroll and first Back; exact source Cancel/retry/destination requests retained. e639 adds bounded IME probe timeline diagnostics and hidden-IME physical Down-to-Cancel handling; original assertion deadlines retained.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeTextEntryImeTest",
+          "methods": [
+            "numericKeyboardLeavesTheFieldAndFooterVisibleAndDoneDoesNotSave",
+            "firstPhysicalBackHidesMultilineKeyboardAndLeavesTheDraftOpen"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeTextEntryImeTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeSourceDownloadTest",
+          "methods": [
+            "remoteSearchDownloadUsesFoldersSupportsCancelAndRetriesServerFailure",
+            "remoteDebridDownloadUsesChosenConfiguredFolder"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeSourceDownloadTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "02-identity-collection",
+      "classFilter": "app.seanime.tv.ui.NativePersonalCollectionTest,app.seanime.tv.ui.NativeCustomSourcesTest",
+      "expectedMethodCount": 5,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Native personal collection with current route reachability, search/status/sort,18-item custom source paging/query/offscreen focus return and exact anime/manga detail routes. IDs above signed32-bit and through9007199254740991, not a claim for all int64 values.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativePersonalCollectionTest",
+          "methods": [
+            "customSourceRangeIdsOpenExactDetailsAndRestoreTheirOwnCards",
+            "animePersonalSearchStatusSortAndDetailsRestoreWithoutCatalogRequests",
+            "collectionRefreshFailureRetriesWithoutDroppingPersonalFilters",
+            "mangaPersonalQueryAndStatusSurviveCatalogAndChapterBack"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativePersonalCollectionTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeCustomSourcesTest",
+          "methods": [
+            "actualExtensionRouteRetainsLargeIdsPageQueryAndFocusedTitleThroughBothDetailTypes"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeCustomSourcesTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "03-identity-coordinator-recovery",
+      "classFilter": "app.seanime.tv.NativePlaybackMediaIdentityTest,app.seanime.tv.PlaybackRecoverySnapshotTest",
+      "expectedMethodCount": 5,
+      "outerTimeoutSeconds": 1500,
+      "intendedScope": "Actual coordinator request/event construction for torrent/debrid/Nakama, continuity and playback-state identity; owned recovery disk/source refresh and legacy decoder/ticket cases. Coordinator uses generated HTTP/recording socket, not live providers.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.NativePlaybackMediaIdentityTest",
+          "methods": [
+            "customMediaIdsRemainExactInPlaylistContinuityAndPlaybackStateCommands"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/NativePlaybackMediaIdentityTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.PlaybackRecoverySnapshotTest",
+          "methods": [
+            "terminatedSourceCannotBeRewrittenAndNeverClearsANewerCheckpoint",
+            "customMediaIdsSurviveOwnedRecoveryDiskAndSourceRefresh",
+            "persistedSnapshotRetainsDecoderStateAndTrackPreferences",
+            "freshMainActivityDiscoversPersistedPlaybackRecoveryTicket"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/PlaybackRecoverySnapshotTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "03b-external-source-lifecycle",
+      "classFilter": "app.seanime.tv.NativeExternalPlaybackLifecycleTest#exactDocumentGrantFollowsTheLeaseAndRetainedTreeAccessSurvivesEveryRelease,app.seanime.tv.NativeExternalPlaybackLifecycleTest#remoteTerminationReleasesOnlyItsCurrentSourceWithoutALiveMedia3Player",
+      "expectedMethodCount": 2,
+      "outerTimeoutSeconds": 1200,
+      "intendedScope": "Exact temporary URI grant lifecycle and source/generation/server ownership of remote termination without a live Media3 Activity. The delayed range method has a separate recovery-preserving gate.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.NativeExternalPlaybackLifecycleTest",
+          "methods": [
+            "exactDocumentGrantFollowsTheLeaseAndRetainedTreeAccessSurvivesEveryRelease",
+            "remoteTerminationReleasesOnlyItsCurrentSourceWithoutALiveMedia3Player"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/NativeExternalPlaybackLifecycleTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "04-plugin-actions-identity",
+      "classFilter": "app.seanime.tv.ui.NativePluginActionsAndTabsTest",
+      "expectedMethodCount": 4,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "High-ID plugin navigation/open/select payloads plus existing action/tab ownership, late source and close focus regressions.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativePluginActionsAndTabsTest",
+          "methods": [
+            "highMediaIdsSurviveActualPluginNavigationOpenAndEpisodeSelection",
+            "libraryMediaPageAndEpisodeActionsKeepTheirPayloadsAndUnloadFocus",
+            "configuredPluginSourceOpensSelectsAndClosesWithoutOverridingManualChoice",
+            "lateCollectionsCannotBecomeSelectableAfterSwitchingTitles"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativePluginActionsAndTabsTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "05-plugin-navigation",
+      "classFilter": "app.seanime.tv.ui.NativePluginScreenNavigationTest,app.seanime.tv.ui.NativePluginPresentationTest",
+      "expectedMethodCount": 7,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Main-thread WebSocket route/Back/reload, typed anime/manga targets, initial broadcast viewport/native device alternatives, relative links and global tray/command ownership; no arbitrary browser DOM parity.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativePluginScreenNavigationTest",
+          "methods": [
+            "globalPluginDeviceRequestsUseNativeViewportAndConfirmedClipboardWithEmptyDomResults",
+            "webSocketNavigationAndReloadCallbacksAlwaysRunOnAndroidMainThread",
+            "globalPluginNavigationOpensSubpagesReportsManualBackAndReloadsTheActualScreen",
+            "filteredDiscoveryAndMangaEntryUseTypedTargetsAndUnsupportedRequestsStayNative"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativePluginScreenNavigationTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativePluginPresentationTest",
+          "methods": [
+            "globalTrayOpenRendersOnlyItsSurfaceAndBackRestoresTheOpener",
+            "globalCommandsUseTheirOwnerAndIgnoreUnrelatedCloseRequests",
+            "relativeAnchorItemsNavigateNativelyAndHandlerLinksKeepTheirCallbackContract"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativePluginPresentationTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "06-library-files",
+      "classFilter": "app.seanime.tv.ui.NativeLibraryFileActionsTest,app.seanime.tv.ui.NativeLibraryManagementTest",
+      "expectedMethodCount": 6,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Corrected full-label matching assertion then draft/failure/retry; file deletion confirmations; selected/directory bulk actions, indexed-only scope, stale selections, rename preview/ack and restored focus. HTTP fixture only.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeLibraryFileActionsTest",
+          "methods": [
+            "matchFailureKeepsEditedDraftAndRetryClosesOnlyAfterConfirmation",
+            "deletionRequiresExplicitConfirmationRetainsFailureAndRestoresRefreshFocus"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeLibraryFileActionsTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeLibraryManagementTest",
+          "methods": [
+            "selectedFileActionCancelsThenRetainsFalseAckForExactRetry",
+            "folderActionsUseTypedAnimeAndExcludeUnindexedAndOtherFolderFiles",
+            "renamePreviewCancelAndFailureRetainTheFilenameUntilServerAck",
+            "staleSelectionBlocksWholeActionAndBackClearsSelectionBeforeLeaving"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeLibraryManagementTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "07-marketplace-file-transfer",
+      "classFilter": "app.seanime.tv.ui.NativeExtensionMarketplaceTest,app.seanime.tv.ui.NativeFileTransferWorkflowTest",
+      "expectedMethodCount": 4,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Native16-item marketplace filter/review/Cancel/install retry and actual later-row focus return, settings metadata exact-byte export/import preview/confirm, binary profile save callback, torrent rename/move review and retry. Does not prove a system document-provider write or live extension install.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeExtensionMarketplaceTest",
+          "methods": [
+            "actualExtensionEntryBrowsesFiltersReviewsCancelsAndRetriesInstallWithoutLosingManifest"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeExtensionMarketplaceTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeFileTransferWorkflowTest",
+          "methods": [
+            "settingsBackupExportsExactBytesAndImportsOnlyAfterPreviewAndConfirmation",
+            "logsProfileExportReachesBinaryEndpointAndPlatformSaveBoundary",
+            "torrentRenamePreservesDraftOnFailureAndMoveRequiresReview"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeFileTransferWorkflowTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "07b-torrent-details",
+      "classFilter": "app.seanime.tv.ui.NativeTorrentDetailsWorkflowTest",
+      "expectedMethodCount": 2,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Actual Downloads entry,20-row Back focus,24-file priorities/Cancel/failure retry, tracker actions, peers and session-limit failure/retry. Generated HTTP fixture, no live torrent client.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeTorrentDetailsWorkflowTest",
+          "methods": [
+            "downloadsEntrySupportsExactTorrentActionsFileRetryTrackersAndLazyBackFocus",
+            "sessionLimitsPreserveDraftOnFailureCancelDoesNotSubmitAndReadbackIsNotInvented"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeTorrentDetailsWorkflowTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "07c-auto-batch-cleanup",
+      "classFilter": "app.seanime.tv.ui.NativeAutoDownloaderBatchTest",
+      "expectedMethodCount": 3,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Native auto-rule batch review/shared preferences/Cancel/per-title partial retry, uncertain creation surviving close/reopen without duplicate POST, and cleanup retry of explicit failed IDs only.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeAutoDownloaderBatchTest",
+          "methods": [
+            "batchReviewCancelSharedPreferencesAndPartialRetryUseExactPerTitlePayloads",
+            "uncertainCreationSurvivesClosingAndReopeningBatchWithoutAnotherPost",
+            "finishedRuleCleanupCancelsThenRetriesOnlyExplicitFailedIds"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeAutoDownloaderBatchTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "07d-manga-airing-discovery",
+      "classFilter": "app.seanime.tv.ui.NativeCatalogDiscoveryTest",
+      "expectedMethodCount": 3,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Advanced manga native route/filter/page/detail payloads and restoration; airing entry/page/actual episode/detail return, error retry and empty navigation. Public catalog responses are fixtures.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeCatalogDiscoveryTest",
+          "methods": [
+            "advancedMangaRouteFiltersPagesAndDetailsUseNativeControlsAndExactPayloads",
+            "nativeAiringEntryPaginatesUsesActualEpisodeAndRestoresDiscoveryAfterDetails",
+            "airingFailuresRetryAndEmptyPagesKeepUsableNavigation"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeCatalogDiscoveryTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "08-list-editors",
+      "classFilter": "app.seanime.tv.ui.NativeListEntryDialogTest",
+      "expectedMethodCount": 14,
+      "outerTimeoutSeconds": 2400,
+      "intendedScope": "All14 list/editor date/removal/Cancel/retry/sparse-payload paths rerun because Long identity and shared Dialog controller changed.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeListEntryDialogTest",
+          "methods": [
+            "loadsCurrentRatingAndCancelPreservesTheBackend",
+            "statusEditOmitsTheExistingScoreProgressAndDates",
+            "cancellingNumericEditorsRestoresEachOpenerAndUnchangedSaveWritesNothing",
+            "numericEditorSavesOnlyDraftUntilTheMainEditorIsSavedOrCancelled",
+            "numericEditorCommitsExactProgressAndRatingWithUntouchedFieldsOmitted",
+            "failedMangaRatingSaveRetainsTheExactDraftForRetry",
+            "mangaRemovalRequiresConfirmationAndUsesOnlyTheSelectedTitle",
+            "changingToOfflineBeforeConfirmationBlocksRemovalAndKeepsDraft",
+            "offlineEditorDisablesRemovalButLeavesOrdinaryEditsAvailable",
+            "addingAnUnlistedTitleUsesPlanningWithoutADeleteAction",
+            "rawPartialDatesSurviveCancelledDateDraftAndNoOpSave",
+            "fullCalendarDateValidatesAndFailedSaveKeepsTheDateForRetry",
+            "simulatedMangaCanExplicitlyClearADateAndOneComponent",
+            "livePartialDateRequiresFullReplacementAndDoesNotExposeClear"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeListEntryDialogTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "09-player-lifecycle",
+      "classFilter": "app.seanime.tv.NativePlayerLifecycleTest",
+      "expectedMethodCount": 8,
+      "outerTimeoutSeconds": 2400,
+      "intendedScope": "Full8 native decoder/coordinator cases: retry/conversion/return, matching sources, live status/seek, Skip/caption schema, paused recreation and fresh HUD/media keys. Rerun after identity/external-player changes.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.NativePlayerLifecycleTest",
+          "methods": [
+            "dismissingPlaybackDoesNotRecreateItsRecoverySnapshotOnStop",
+            "failedSourceCanRetryWithRemoteAndKeepPausedPosition",
+            "failedSourceOffersRemoteConvertAndReturnToNativeLibrary",
+            "nativeCommandsControlOnlyTheMatchingSource",
+            "serverStatusAndRelativeSeekReadLivePositionInsteadOfCachedProgress",
+            "pluginSkipDataDrivesNativeHudAndCaptionQueriesUseExactWireSchema",
+            "stoppedAndRecreatedPlayerRestoresLatestMediaAndPlaybackSettings",
+            "freshComposeControlsKeepMediaKeysAndBackNavigationIndependent"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/NativePlayerLifecycleTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "10-player-presentation",
+      "classFilter": "app.seanime.tv.platform.NativeTvPlayerPresentationTest",
+      "expectedMethodCount": 4,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "External error action, unavailable episode controls, same-frame Skip\u2192Play and many-track selected/scroll/reopen/Back bounds.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.platform.NativeTvPlayerPresentationTest",
+          "methods": [
+            "errorScreenKeepsExternalPlayerAndReturnActionsVisibleToTheRemote",
+            "unavailableEpisodeControlsAreDisabledAndReturnFocusToPlay",
+            "skipActivationRestoresPlayWhenTheNextIntervalAppearsInTheSameFrame",
+            "manyTrackChoicesKeepSelectionVisibleAndRestoreFocusAcrossReopen"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/platform/NativeTvPlayerPresentationTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "11-event-subtitles",
+      "classFilter": "app.seanime.tv.platform.NativeEventSubtitleOverlayTest",
+      "expectedMethodCount": 2,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "HLS fixture authored ASS/PGS pixels, seek/pause/recreation, strict zero native TEXT and queued generation cleanup through the changed player/coordinator integration.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.platform.NativeEventSubtitleOverlayTest",
+          "methods": [
+            "queuedSubtitleFramesCannotReappearAfterSeekOrPauseResume",
+            "hlsRendersAuthoredAssAndPgsAcrossSeekAndLifecycle"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/platform/NativeEventSubtitleOverlayTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "12-reader",
+      "classFilter": "app.seanime.tv.ui.NativeMangaReaderTest",
+      "expectedMethodCount": 8,
+      "outerTimeoutSeconds": 2400,
+      "intendedScope": "Full8 chapter controls, per-title state, keyboard/Back/focus, image/list retry, final progress and portrait/wide/Cover-alone grouping after Long/shared-editor changes.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeMangaReaderTest",
+          "methods": [
+            "decodedPagesSupportRemoteDirectionSpreadsZoomJumpProgressAndBack",
+            "pageListFailureCanBeRetriedWithTheRemoteAndLoadsRealImages",
+            "failedImageRetriesWithoutRefetchingTheChapterOrChangingItsPage",
+            "automaticProgressWaitsForTheRenderedLastPageAndOnlyRunsOnce",
+            "disabledAutomaticProgressLeavesTheLastPageUnmarked",
+            "markingAnEarlierChapterReadPreservesNewerServerProgress",
+            "failedFinalImageDoesNotAutoMarkUntilItsRetryRenders",
+            "portraitWideAndCoverSpreadsKeepPixelsPageAnchorAndFinalProgress"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeMangaReaderTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "13-pdf",
+      "classFilter": "app.seanime.tv.platform.NativeMangaPdfTest",
+      "expectedMethodCount": 3,
+      "outerTimeoutSeconds": 1500,
+      "intendedScope": "Real Android PDF metadata/pixels, serialized work, bounded raster cache and cleanup after LocalMangaPdfSource identity changes. Does not imply UI picker/SAF PDF entry.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.platform.NativeMangaPdfTest",
+          "methods": [
+            "generatedPdfRendersPagesAndClosesItsSessionCache",
+            "visiblePageWorkIsSerializedAndRasterCacheIsBounded",
+            "invalidPdfFailsWithoutLeavingItsPrivateCopyBehind"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/platform/NativeMangaPdfTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "14-manga-entry-preferences",
+      "classFilter": "app.seanime.tv.ui.NativeMangaPreferencesTest,app.seanime.tv.ui.NativeMangaWorkflowTest",
+      "expectedMethodCount": 7,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Per-provider language/scanlator state and event/retry, offline/downloading entry fallback, confirmed mapping reset and chapter refresh after Long identity propagation.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeMangaPreferencesTest",
+          "methods": [
+            "providerFiltersLoadAndSparseLanguageEditSurvivesProviderSwitches",
+            "failedScanlatorSaveRetainsSelectionForRetryAndLeavesLanguageUntouched",
+            "matchingPreferenceEventReloadsCurrentProviderFilters",
+            "downloadedOfflineFiltersNeedNoSourcePreferenceRequests"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeMangaPreferencesTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeMangaWorkflowTest",
+          "methods": [
+            "offlineCollectionEntryOpensDownloadsWithoutAnOnlineSourceLookup",
+            "unavailableProviderFallsBackToExistingDownloads",
+            "explicitRefreshAndConfirmedMappingResetRefetchTheRightChapterList"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeMangaWorkflowTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "15-discovery-online",
+      "classFilter": "app.seanime.tv.ui.NativeAnimeDiscoveryTest,app.seanime.tv.ui.NativeOnlineSourceSelectionTest",
+      "expectedMethodCount": 7,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Anime discovery pagination/filter/search/detail restoration and canonical special-episode online source selection before metadata arrives; editor Save/Cancel/focus.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeAnimeDiscoveryTest",
+          "methods": [
+            "searchDialogCancelPreservesQueryAndRemoteNavigationKeepsWholePostersVisible",
+            "trendingPaginationAndDetailsRestoreThePageCardAndOpener",
+            "effectiveFiltersApplyTogetherAndCancelDoesNotChangeTheRequest",
+            "emptySearchAndRetryKeepRemoteControlsUsableAndBlankSearchReturnsTrending"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeAnimeDiscoveryTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeOnlineSourceSelectionTest",
+          "methods": [
+            "findingSourcesBeforeEpisodeListStillPlaysTheReturnedCanonicalSpecial",
+            "sourceEditorsValidateSaveCancelAndRestoreTheirRemoteOpeners",
+            "switchingSourceClearsOldProvidersAndFailedLoadCanBeRetried"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeOnlineSourceSelectionTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "16-picker-library-focus",
+      "classFilter": "app.seanime.tv.ui.NativeMediaPickerTest,app.seanime.tv.ui.NativeEmptyNavigationTest",
+      "expectedMethodCount": 7,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Identity through catalog/offline tracking/playlist/hidden-title pickers; native empty/search/retry and offscreen detail return.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeMediaPickerTest",
+          "methods": [
+            "catalogSearchSelectsTheReturnedTitleAndCancelDoesNotSelect",
+            "offlineTrackingUsesSelectedMediaAndExactExistingPayload",
+            "playlistTitleSelectionAppendsOnceAndPreservesEpisodePayload",
+            "hiddenTitlesCancelPreservesOriginalAndChosenTitlesSaveNumericIds"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeMediaPickerTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeEmptyNavigationTest",
+          "methods": [
+            "emptyLibraryAndZeroSearchResultsKeepRemoteControlsFocused",
+            "retryAfterServerFailureRestoresStableRemoteFocus",
+            "returningFromOffscreenDetailsRestoresCardButSearchKeepsItsFocus"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeEmptyNavigationTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "17-artwork-identity",
+      "classFilter": "app.seanime.tv.ui.NativeArtworkFallbackTest,app.seanime.tv.ui.NativeOfflineArtworkTest",
+      "expectedMethodCount": 4,
+      "outerTimeoutSeconds": 1200,
+      "intendedScope": "ID-derived artwork/asset routes, HTTP\u2192Coil real pixels, stable fallback/semantics/sizing without stealing focus.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeArtworkFallbackTest",
+          "methods": [
+            "missingCoverHasUsefulSemanticsKeepsItsSizeAndDoesNotTakeRemoteFocus",
+            "failedCoverUsesAStableFallbackWhilePendingCoverShowsStaticLoading",
+            "smallPickerArtworkUsesIconOnlyButRetainsAccessibleStateAndExactBounds"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeArtworkFallbackTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeOfflineArtworkTest",
+          "methods": [
+            "offlinePosterLoadsThroughTheExistingAssetRouteAndRemainsVisibleWithRemoteFocus"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeOfflineArtworkTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "18-account-offline",
+      "classFilter": "app.seanime.tv.ui.NativeAccountPromptTest,app.seanime.tv.ui.NativeOfflineAndRefreshTest",
+      "expectedMethodCount": 10,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Named account confirmation/local-list migration, local/offline fresh-status guards, explorer invalidation and playlist player-return/event refresh. No real account mutation.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeAccountPromptTest",
+          "methods": [
+            "changingConnectionsRequiresTheNamedActionAndDisconnectConfirmation",
+            "localProfileDoesNotOfferAnAniListDisconnectOrGuessMalConnectionState",
+            "offlineAccountKeepsAniListChangesUnavailableWithoutChangingMalActions",
+            "localCollectionUploadNamesItsTargetAndRequiresItsOwnConfirmation"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeAccountPromptTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeOfflineAndRefreshTest",
+          "methods": [
+            "localAccountDisablesOfflineModeAndAniListSynchronization",
+            "connectedAccountCanToggleAndSyncUsingFreshStatus",
+            "accountDisconnectedAfterRenderingCannotUseCachedEnabledToggle",
+            "explorerRefreshInvalidatesServerTreeBeforeReadingNewFiles",
+            "returningFromPlayerRefreshesSavedPlaylistCompletion",
+            "playlistEventUpdatesCompletionBeforeAsynchronousDatabaseSave"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeOfflineAndRefreshTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "19-transfer-report",
+      "classFilter": "app.seanime.tv.ui.NativeTransferStatusTest,app.seanime.tv.ui.NativeConfigurationReportTest",
+      "expectedMethodCount": 5,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Metadata event-vs-ack wording, cancellation/terminal-only clearing, config load/save retry and report category/description acknowledgement. Rerun shared FeatureScreen/Long changes; save callback is not persisted document bytes.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeTransferStatusTest",
+          "methods": [
+            "liveMangaQueueRefreshBlocksCanceledWorkersAndRechecksBeforeClearingFailures",
+            "metadataAcknowledgementAndEmptyQueueStayPendingUntilTheFinishEvent",
+            "metadataStatusFailureAndRejectedRequestRemainRetryable"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeTransferStatusTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeConfigurationReportTest",
+          "methods": [
+            "enabledExtensionShowsConfigurationErrorAndKeepsDraftThroughLoadAndSaveRetry",
+            "reportChoicePreservesDescriptionOnFailureAndExportsOnlyAfterAcknowledgement"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeConfigurationReportTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "20-download-destination",
+      "classFilter": "app.seanime.tv.ui.NativeExistingDebridDownloadTest,app.seanime.tv.ui.NativeDownloadCapabilitiesTest",
+      "expectedMethodCount": 3,
+      "outerTimeoutSeconds": 1500,
+      "intendedScope": "Existing transfer destination Cancel/retry/removal and refreshed client capability guard after typed media/destination changes.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeExistingDebridDownloadTest",
+          "methods": [
+            "remoteFolderPickerCancelsReturnsFocusAndRetriesAnExistingDebridTransfer",
+            "hardwareBackCancelsAndSuccessfulRemovedTransferReturnsToRefresh"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeExistingDebridDownloadTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeDownloadCapabilitiesTest",
+          "methods": [
+            "clientSpecificActionsRefreshAndRecheckBeforeSendingAnyBulkMutation"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeDownloadCapabilitiesTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "21-normal-go-integrations",
+      "classFilter": "app.seanime.tv.AndroidNativeBackendFlowsTest,app.seanime.tv.ui.NativeNakamaRoutingTest",
+      "expectedMethodCount": 4,
+      "outerTimeoutSeconds": 1500,
+      "intendedScope": "Real unchanged Go SQLite playlist/native-dialog CRUD and typed settings rollback; separate Nakama routing fixture after coordinator/ID changes. No two-peer claim.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.AndroidNativeBackendFlowsTest",
+          "methods": [
+            "nativePlaylistDialogCancelsThenCreatesInTheRealBackend",
+            "repositoryPlaylistCreateRenameReorderCompleteAndDeleteRoundTrips",
+            "typedSettingsPersistPreserveOtherFieldsAndRejectInvalidWritesAtomically"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidNativeBackendFlowsTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeNakamaRoutingTest",
+          "methods": [
+            "initialRefreshAndReconnectAdvertiseNativeWatchPartyPlayback"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeNakamaRoutingTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "22-native-startup",
+      "classFilter": "app.seanime.tv.AndroidTvStartupTest,app.seanime.tv.AndroidExternalPlayerTest,app.seanime.tv.platform.NativeHostQueueAndroidTest",
+      "expectedMethodCount": 11,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Full9 real startup/route/recreation/search/policy/update/manifest checks, direct external adapter delivery fixture and Android main-looper responsiveness while host initialization is blocked. Rerun after NativeHostQueue/MainActivity/Application retirement and cancelled-readiness changes. Actual external workflow is a separate cold test.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.AndroidTvStartupTest",
+          "methods": [
+            "nativeComposeUiStartsAndRestartsTheRealServer",
+            "dpadMovesBetweenNativeDestinationsAndBackOffersAnExit",
+            "nativeRouteAndTextSurviveRecreationAndBackgroundReturn",
+            "remoteLetterKeysEnterNativeSearchWithoutStealingCursorFocus",
+            "oauthBrowserDeclaresResizeForTheTvKeyboard",
+            "updateInstallerRejectsApksOutsideTheManagedUpdateCache",
+            "networkPolicyKeepsTheEmbeddedServerReachableAndModernRemoteHttpBlocked",
+            "callbackDestinationsStayOnTheCanonicalLoopbackOrigin",
+            "packageIsDiscoverableAsAnAndroidTvLauncherApp"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidTvStartupTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.AndroidExternalPlayerTest",
+          "methods": [
+            "configuredPlayerSchemeLaunchesAndReturnsToNativeCompose"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidExternalPlayerTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.platform.NativeHostQueueAndroidTest",
+          "methods": [
+            "androidMainLooperRemainsResponsiveWhileRuntimeInitializationIsBlocked"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/platform/NativeHostQueueAndroidTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "23-storage-media",
+      "classFilter": "app.seanime.tv.AndroidSafStorageAdapterTest,app.seanime.tv.AndroidMediaToolsTest",
+      "expectedMethodCount": 7,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Full5 owned-provider SAF/journal/regrant/signed Go selector plus installed FFmpeg/ffprobe encode/decode/frame/seek integration through changed native player. No physical USB/hardware throughput.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.AndroidSafStorageAdapterTest",
+          "methods": [
+            "revokedPersistedGrantIsRejectedAndWorksAgainAfterRestoration",
+            "selectedTreeSupportsLibraryReadsWritesListingAndRemoval",
+            "failedFallbackCleanupKeepsJournalUntilPartialDestinationIsRemoved",
+            "abandonedWritesAreRecoveredWithoutLosingCommittedOrOriginalFiles",
+            "goDirectorySelectorUsesThePersistedSafAdapter"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidSafStorageAdapterTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.AndroidMediaToolsTest",
+          "methods": [
+            "bundledToolsAndNativePlayerEncodeProbeDecodeAndSeekVideo",
+            "bundledToolsExecuteFromTheirInstalledNativeLibraryDirectory"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/AndroidMediaToolsTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "24-focus-dialogs",
+      "classFilter": "app.seanime.tv.ui.NativeInitialFocusTest,app.seanime.tv.ui.NativePlatformDialogsTest,app.seanime.tv.ui.NativeActionRowFocusTest",
+      "expectedMethodCount": 12,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "All5 window/placement/setup/locked-password/root/rail cases;4 platform prompts; scaled first/last action-row bounds after shared TV presentation changes.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeInitialFocusTest",
+          "methods": [
+            "latePlacementWaitsForWindowAndFulfilledFocusDoesNotStealButCanBeRearmed",
+            "setupFocusWaitsForWindowAndOnlyTheExplicitContinueActionCompletes",
+            "lockedServerFocusWaitsForWindowAndSubmittingClearsThePasswordField",
+            "rootInitialFocusWaitsForWindowThenPreservesUserFocus",
+            "bottomRailRowsStayAboveFooterAndBackRestoresAnOffscreenSelectedRow",
+            "compactRailReturnsToLastContentControlWithoutMovingContentBounds"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeInitialFocusTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativePlatformDialogsTest",
+          "methods": [
+            "lateInformationalNoticeFocusesCloseOnlyAfterDialogPlacement",
+            "destructivePromptInitiallyFocusesCancelAndNeverInvokesActionWhenCancelled",
+            "selectingActionCanReplacePromptWithoutItsDismissalClosingTheReplacement",
+            "longPromptActionListRemainsRemoteNavigable",
+            "longPromptMessageIsReadableWithArrowsWithoutInvokingTheAction"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativePlatformDialogsTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeActionRowFocusTest",
+          "methods": [
+            "firstLastAndAutomaticallyScrolledButtonsKeepTheirFullScaledFocusBounds"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeActionRowFocusTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "25-forms-settings-theme",
+      "classFilter": "app.seanime.tv.ui.NativeFeatureDialogsTest,app.seanime.tv.ui.NativeSettingsFieldsTest,app.seanime.tv.ui.NativeThemeContrastTest",
+      "expectedMethodCount": 8,
+      "outerTimeoutSeconds": 1500,
+      "intendedScope": "Previously unrecorded blank-name, list/choice typed setting payloads, numeric/cancel clearing and native contrast, with all related small class regressions.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeFeatureDialogsTest",
+          "methods": [
+            "cancellingConfirmationNeverInvokesMutation",
+            "blankNameCannotBeSubmitted",
+            "optionalSettingsCanBeClearedExplicitly",
+            "longConfirmationCanBeReadWithArrowsAndReturnsToCancel"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeFeatureDialogsTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeSettingsFieldsTest",
+          "methods": [
+            "cancellingListEditsDoesNotMutateOriginalOrSubmit",
+            "listRemovalSavesNumericServerPayload",
+            "nativeChoiceReturnsContractValueAndKeepsCurrentVisible"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeSettingsFieldsTest.kt"
+        },
+        {
+          "class": "app.seanime.tv.ui.NativeThemeContrastTest",
+          "methods": [
+            "defaultNativeBodyTextRemainsReadableOnTheDarkRootSurface"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeThemeContrastTest.kt"
+        }
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "26-tv-settings-navigation",
+      "classFilter": "app.seanime.tv.ui.NativeSettingsNavigationTest",
+      "expectedMethodCount": 3,
+      "outerTimeoutSeconds": 1800,
+      "intendedScope": "Current native Device actions, typed category edits, Back/opener restoration and offscreen category behavior on Android TV. Host equivalents do not replace this device gate.",
+      "classes": [
+        {
+          "class": "app.seanime.tv.ui.NativeSettingsNavigationTest",
+          "methods": [
+            "devicePageRetainsAllActionsAndRestoresItsLastRowAfterBack",
+            "settingRowsKeepChoiceAndBooleanPayloadsAndRestoreListDialogOpener",
+            "allSettingsRestoresOffscreenCategoryAndKeepsSecondarySettingsEndpoint"
+          ],
+          "sourceFile": "androidtv/app/src/androidTest/java/app/seanime/tv/ui/NativeSettingsNavigationTest.kt"
+        }
+      ],
+      "status": "unrun"
+    }
+  ],
+  "guardedRecovery": [
+    {
+      "id": "R1-external-probe-cancellation",
+      "classFilter": "app.seanime.tv.NativeExternalPlaybackLifecycleTest#aRealPendingRangeProbeIsCancelledOnStopAndCannotLaunchOnResume",
+      "manifestKind": "native-external-lifecycle-probe-v1",
+      "wrapper": "toolchain/run-native-external-recovery-alt.py",
+      "scope": "Real pending HTTP range cancellation on Stop and no delayed chooser on Resume; owned one-byte cancellation fixture only. Preserve both normal recovery files first, validate sidecar UUID/mediaUri/mediaPath/streamPath/playbackId before moving generated recovery, restore prior bytes, and verify cold signed normal status. An assumption skip is not a pass.",
+      "status": "unrun"
+    }
+  ],
+  "coldIsolated": [
+    {
+      "id": "C1-raw-go-media",
+      "classFilter": "app.seanime.tv.AndroidIsolatedRawMediaPlaybackTest#generatedVideoUsesSignedGoRangeRouteAndNativePlayerWithoutMetadata",
+      "extras": {
+        "isolatedNativeGoRawMediaFixture": "true",
+        "freshInstrumentationProcess": "true"
+      },
+      "manifestKind": "native-isolated-go-raw-media-v1",
+      "wrapper": "toolchain/run-isolated-native-raw-go-alt.py",
+      "scope": "Actual unchanged Go signed206 ranges/library boundary, generated H264/native decoding/remote seek/paused recovery and standalone disabled episode actions. No scan/import/metadata/continuity inference.",
+      "status": "unrun"
+    },
+    {
+      "id": "C2-native-external-go",
+      "classFilter": "app.seanime.tv.AndroidIsolatedRawMediaPlaybackTest#nativeMoreHandsOwnedGoVideoToSeparatePlayerAcrossBackgroundAndReturnsPaused",
+      "extras": {
+        "isolatedNativeGoExternalPlayerFixture": "true",
+        "freshInstrumentationProcess": "true"
+      },
+      "manifestKind": "native-isolated-go-external-player-v1",
+      "wrapper": "toolchain/run-isolated-native-external-go-alt.py",
+      "scope": "Actual native More\u2192Android chooser\u2192owned separate UID/process receiver, zero started Seanime activities, foreground host and900ms background policy,3 anonymous exact ranges over3s, paused/More focus return and service/lease cleanup. No third-party player compatibility claim.",
+      "status": "unrun"
+    },
+    {
+      "id": "C3-isolated-go-library",
+      "classFilter": "app.seanime.tv.AndroidIsolatedLibraryManagementTest#importedOwnedUnmatchedIndexSupportsNativeBulkRenameExplorerAndDelete",
+      "extras": {
+        "isolatedNativeGoLibraryManagementFixture": "true",
+        "freshInstrumentationProcess": "true"
+      },
+      "manifestKind": "native-isolated-go-library-management-v1",
+      "wrapper": "toolchain/run-isolated-native-library-go-alt.py",
+      "scope": "Actual unchanged Go API imports two owned generated copies with mediaId0; native Library Manage bulk-ignore, rename, Explorer, reviewed copy deletion and signed index/byte readback. Original video and second copy retained. No scan/matching/external metadata or retained user-file mutation.",
+      "status": "unrun"
+    }
+  ],
+  "retainedUnchangedEvidence": [
+    {
+      "class": "app.seanime.tv.platform.NativeAnime4KShaderTest",
+      "evidence": "f66d183c all12 presets PASS1/214.884s; dd77ef69/a87a8b8c Medium reference/reconfigure and memory/HDR PASS2",
+      "reason": "Shader graph/weights/runtime and its named direct-test sources are unchanged; current artifact engine comparison passed. Prior8x8 SwiftShader only, no current integration or physical GPU/HD/4K claim."
+    },
+    {
+      "class": "app.seanime.tv.platform.NativeAssRendererTest",
+      "evidence": "dd77ef69/a87a8b8c direct libass PASS1",
+      "reason": "Direct libass engine unchanged; changed NativePlayer/HLS integration reruns in11-event-subtitles."
+    }
+  ],
+  "externalGate": {
+    "classFilter": "app.seanime.tv.AndroidIsolatedLocalPlaybackTest#generatedMediaScansImportsPlaysAndResumesThroughIsolatedGo",
+    "status": "not_scheduled_transport_gate_retained",
+    "reason": "Unchanged official Go Bloom Into You request at05:56UTC returned403Cloudflare HTML; no catalog. No retry/reroute. Real scan/matching remains blocked independently from raw owned-media fixtures."
+  },
+  "pendingFiniteOwnerSlots": [],
+  "preconditions": [
+    "Use only the exact current app/test pair above; no mixed or stale artifacts.",
+    "One authorized runtime owner must verify all saved image kernel locks before ordinary launch. Never infer process death from another PID/network namespace, remove lock files or force another VM.",
+    "Preserve existing keys, database and recovery presence/bytes. Use ordinary same-certificate installation and verify installed APK hashes. No clear-data/uninstall or security/network changes.",
+    "Require responsive Android framework, unchanged system_server identity and no new ANR/watchdog during a60-second gate before app tests; stop and preserve evidence if it fails.",
+    "Normal startup must prove signed local Go status with normal data directory. No live AniList retries or substitute proxy routes while its existing403gate applies.",
+    "Run bounded classes sequentially without builds, keeping exact XML/assertion deadlines and source/hash identity. Classify every method pass,fail,blocked or unrun; missing results are not passes.",
+    "Guarded recovery and cold isolated methods require their recorded wrappers,opt-ins and data-preserving checks; do not run a package-wide all-opt-ins suite.",
+    "Live account/provider actions, unrecognized extension execution, physical USB/TV and release-signing acceptance retain separate authorization/device gates."
+  ],
+  "retainedEvidenceVerification": {
+    "file": "toolchain/runtime-tv-host-focus-r21/retained-engine-comparison.json",
+    "scope": "Only unchanged direct shader/libass engine evidence; no fresh Go or app integration runtime claim"
+  },
+  "invalidatedRetainedEvidence": [
+    {
+      "class": "app.seanime.tv.platform.NativeHostQueueAndroidTest",
+      "historicalEvidence": "d6ea4760 PASS1",
+      "reason": "NativeHostQueue, MainActivity and SeanimeTvApplication changed in5a90. The former Android pass is historical only.",
+      "currentBatch": "22-native-startup",
+      "status": "unrun"
+    }
+  ],
+  "catalogDeltaSinceE639": {
+    "baseSource": "e639525dcabaf18e2c6082f3ec7ce1459f2bb7fc",
+    "baseManifestSha256": "f48cef781c0ec8f3c387e00c996d813641da4a0062d68358fe66a60b1e6bb689",
+    "androidTestSourceFilesChanged": [],
+    "androidMethodsAdded": [],
+    "ordinaryMethodsMovedFromRetainedEvidence": [
+      "app.seanime.tv.platform.NativeHostQueueAndroidTest#androidMainLooperRemainsResponsiveWhileRuntimeInitializationIsBlocked"
+    ],
+    "ordinaryCountBefore": 163,
+    "ordinaryCountAfter": 164,
+    "totalCountBefore": 167,
+    "totalCountAfter": 168,
+    "batchCount": 29
+  },
+  "artifactDirectory": "toolchain/runtime-tv-host-focus-r21 (relative to the build workspace; supplied APK hashes are authoritative)",
+  "arm64AppSha256": "a0da5319e157f2e26b1637e51db68a94a16b33d829cc8054a4351ed34db1a19d",
+  "buildValidation": {
+    "jvmTests": 366,
+    "screenshotCases": 34,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "lint": "passed; zero errors, 82 warnings",
+    "abiBuilds": [
+      "arm64-v8a",
+      "x86_64"
+    ],
+    "apiContracts": 145,
+    "artifactSignaturesAndAlignment": "passed"
+  },
+  "newDeviceMethodsSincePriorCatalog": 8
+}

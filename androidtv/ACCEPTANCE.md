@@ -1,11 +1,29 @@
 # Android TV acceptance
 
+## Native Compose migration
+
+The active implementation is now native Compose for TV. Its current result,
+feature matrix and device gates are recorded in the
+[October 1 TV layout and live-data report](acceptance/2026-10-01-tv-layout-and-live-data.md).
+Current source `43c2f02e` passes 366 JVM tests and 34 host layout comparisons,
+but all 176 planned current-device methods remain unrun after a preinstall
+framework gate failure. The [exact manifest](acceptance/2026-10-01-tv-device-manifest.json)
+separates these from four retained direct-engine results and one externally
+blocked scan/matching method. The
+[September 30 native report](acceptance/2026-09-30-native-compose.md) retains
+the earlier implementation history and API boundary evidence.
+The evidence below is preserved historical evidence from base commit
+`63200d6a850a6843b52f90ff7775d940416a534d` and earlier WebView APKs. It does not
+prove any rewritten Compose navigation, feature UI or native API workflow.
+No historical test result has been promoted to a new native pass.
+
+
 The target remains the full Seanime feature set in the Android TV host. Device
 acceptance requires running the scenarios below on the APK being evaluated.
 Record its commit, ABI, Android/WebView versions, page size, storage provider,
 and device model with each result.
 
-## Current source evidence
+## Historical source evidence (WebView baseline)
 
 - The shared frontend suite passes 156 tests in 24 files in 3.05 seconds,
   including 19 focused source-conversion/player regressions. Coverage includes playback recovery,

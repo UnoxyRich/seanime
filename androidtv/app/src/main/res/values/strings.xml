@@ -3,8 +3,8 @@
     <string name="server_starting">Starting Seanime…</string>
     <string name="server_retry">Retry</string>
     <string name="player_retry">Retry playback</string>
-    <string name="player_return">Return to web player</string>
-    <string name="player_error">Playback stopped\n\nCheck the source or storage connection, then retry. You can also return to the web player to choose another source or playback mode.\n\n%1$s</string>
+    <string name="player_return">Return to library</string>
+    <string name="player_error">Playback stopped\n\nCheck the source or storage connection, then retry. You can also return to the library to choose another source.\n\n%1$s</string>
     <string name="storage_picker_title">Choose an anime or manga folder</string>
     <string name="storage_picker_unavailable_title">Folder picker unavailable</string>
     <string name="storage_picker_unavailable_message">This TV does not provide a system folder picker. Install or enable a file manager that can grant access to USB folders, then try again.</string>

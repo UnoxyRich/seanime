@@ -9,16 +9,41 @@ import android.os.Looper
 import android.system.Os
 import android.util.Log
 import app.seanime.tv.gomobile.mobile.Mobile
+import app.seanime.tv.data.SeanimeApiClient
+import app.seanime.tv.platform.NativeHostQueue
+import app.seanime.tv.platform.NativeExternalHostLease
+import app.seanime.tv.platform.NativeExternalPlaybackService
 import java.io.File
-import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import java.util.UUID
 
 class SeanimeTvApplication : Application(), Application.ActivityLifecycleCallbacks {
     val processSessionId: String = UUID.randomUUID().toString()
     @Volatile private var playbackRecoveryTicket: String = ""
     private val handler = Handler(Looper.getMainLooper())
-    private val lifecycleExecutor = Executors.newSingleThreadExecutor()
+    private lateinit var host: NativeHostQueue
+    private val foregroundRevision = AtomicLong()
     private var startedActivities = 0
+    @Volatile private var serverOwner = 0L
+    private var deferredServerStop: Long? = null
+    internal val externalPlaybackLease = NativeExternalHostLease { ticket ->
+        ticket.grantedDocument?.let { document ->
+            // Revoke only our outgoing, exact-document read grant. Persisted tree
+            // access belongs to the user and is never released here.
+            runCatching { revokeUriPermission(android.net.Uri.parse(document), android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                .onFailure { Log.w("SeanimeTV", "Could not revoke external document access", it) }
+        }
+    }
+    @Volatile private var nativeSession: SeanimeApiClient.SessionSnapshot? = null
+
+    /** Process memory only: Activity recreation must not change the server's playlist owner. */
+    fun restoreNativeSession(client: SeanimeApiClient) {
+        nativeSession?.let(client::restoreSession)
+    }
+
+    fun saveNativeSession(client: SeanimeApiClient) {
+        nativeSession = client.snapshotSession()
+    }
 
     @Synchronized
     fun claimPlaybackRecovery(ticket: String) {
@@ -35,15 +60,80 @@ class SeanimeTvApplication : Application(), Application.ActivityLifecycleCallbac
 
     private val pauseBackgroundWork = Runnable {
         if (startedActivities == 0) {
-            lifecycleExecutor.execute { runCatching { Mobile.setAppInForeground(false) } }
+            postForeground(false)
         }
     }
 
     override fun onCreate() {
         super.onCreate()
         installBundledMediaTools()
-        Mobile.setAndroidStorageAdapter(AndroidSafStorageAdapter(this))
+        // The first gomobile call loads and initializes the Go shared library.
+        // On slower TV devices this can exceed the main-thread startup deadline.
+        // Keep it ordered ahead of lifecycle work, without blocking app drawing.
+        host = NativeHostQueue {
+            try {
+                Mobile.setAndroidStorageAdapter(AndroidSafStorageAdapter(this))
+            } catch (error: Throwable) {
+                Log.e("SeanimeTV", "Android runtime initialization failed", error)
+                throw error
+            }
+        }
         registerActivityLifecycleCallbacks(this)
+    }
+
+    /** Call from the server startup worker, before any operation can use SAF. */
+    fun awaitAndroidRuntime() {
+        check(Looper.myLooper() != Looper.getMainLooper()) { "Android runtime readiness must be awaited off the main thread" }
+        host.awaitInitialized()
+    }
+
+    fun claimServerOwner(): Long = host.claimOwner().also { serverOwner = it }
+    internal fun currentServerOwner(): Long = serverOwner
+
+    fun startEmbeddedServer(owner: Long, dataPath: String, cachePath: String): Boolean {
+        check(Looper.myLooper() != Looper.getMainLooper()) { "Server startup must run off the main thread" }
+        return host.runForOwner(owner) {
+            Mobile.startServer(dataPath, cachePath, 43211L)
+            check(Mobile.waitForServer(60_000)) { Mobile.serverError().ifBlank { "Server startup timed out. Your files and settings are safe; try again." } }
+        }.get()
+    }
+
+    fun stopEmbeddedServer(owner: Long) {
+        if (externalPlaybackLease.protects(owner)) { deferredServerStop = owner; return }
+        host.stopForOwner(owner) { Mobile.setAppInForeground(false); Mobile.stopServer() }
+    }
+
+    internal fun beginExternalPlayback(playbackId: String, sourceUrl: String, needsHost: Boolean, sourceGeneration: Int = 0,
+        grantedDocument: String? = null, expectedServerOwner: Long = serverOwner): NativeExternalHostLease.Ticket {
+        check(expectedServerOwner == serverOwner) { "The server changed. Reopen the source before choosing another player." }
+        externalPlaybackLease.current?.let { endExternalPlayback(it.id) }
+        val ticket = NativeExternalHostLease.Ticket(UUID.randomUUID().toString(), playbackId, sourceUrl, serverOwner, needsHost, sourceGeneration, grantedDocument)
+        externalPlaybackLease.acquire(ticket)
+        return ticket
+    }
+
+    internal fun endExternalPlaybackForSource(playbackId: String, sourceUrl: String, sourceGeneration: Int, expectedServerOwner: Long): Boolean {
+        if (expectedServerOwner != serverOwner) return false
+        val ticket = externalPlaybackLease.matchingSource(playbackId, sourceUrl, sourceGeneration, expectedServerOwner) ?: return false
+        endExternalPlayback(ticket.id)
+        return true
+    }
+
+    internal fun endExternalPlayback(id: String) {
+        val released = externalPlaybackLease.release(id) ?: return
+        if (released.needsHost) stopService(android.content.Intent(this, NativeExternalPlaybackService::class.java))
+        val pending = deferredServerStop
+        deferredServerStop = null
+        if (startedActivities == 0 && pending != null && pending == released.serverOwner && pending == serverOwner) {
+            host.stopForOwner(pending) { Mobile.setAppInForeground(false); Mobile.stopServer() }
+        }
+    }
+
+    private fun postForeground(foreground: Boolean) {
+        val revision = foregroundRevision.incrementAndGet()
+        host.submit {
+            if (foregroundRevision.get() == revision) Mobile.setAppInForeground(foreground)
+        }
     }
 
     private fun installBundledMediaTools() {
@@ -85,12 +175,14 @@ class SeanimeTvApplication : Application(), Application.ActivityLifecycleCallbac
     override fun onActivityStarted(activity: Activity) {
         startedActivities += 1
         handler.removeCallbacks(pauseBackgroundWork)
-        lifecycleExecutor.execute { runCatching { Mobile.setAppInForeground(true) } }
+        postForeground(true)
+        if (externalPlaybackLease.leftApplication) externalPlaybackLease.current?.let { endExternalPlayback(it.id) }
     }
 
     override fun onActivityStopped(activity: Activity) {
         startedActivities = (startedActivities - 1).coerceAtLeast(0)
         if (startedActivities == 0) {
+            externalPlaybackLease.markBackground()
             handler.removeCallbacks(pauseBackgroundWork)
             handler.postDelayed(pauseBackgroundWork, 900)
         }

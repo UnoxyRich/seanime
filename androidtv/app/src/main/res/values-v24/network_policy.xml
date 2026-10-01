@@ -1,0 +1,4 @@
+<resources>
+    <!-- Android 7+ uses network_security_config to permit only loopback HTTP. -->
+    <bool name="allow_legacy_loopback_http">false</bool>
+</resources>

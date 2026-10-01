@@ -1,192 +1,146 @@
 # Seanime TV
 
-Android TV client shell for Seanime. It packages the shared React client in an
-Android WebView and starts the existing Go server inside the app process.
-The application label and package ID are provisional (`Seanime TV`,
-`app.seanime.tv`). The repository's GPL-3.0 license and upstream attribution
-remain in place.
+Native Android TV client built with Jetpack Compose for TV and Media3. The app
+hosts the existing Go server in-process and uses its unchanged REST and WebSocket
+APIs. The launcher, first-run setup, navigation, feature screens, dialogs and
+manga reader are native Kotlin. The React app is only a behavior/API reference:
+no React page, component, style, hook or bundle is loaded or packaged by this
+Android build. A restricted separate browser activity is used only for provider
+OAuth.
 
-See [the acceptance matrix](ACCEPTANCE.md) for the full feature scope and
-remaining device validation.
+The package ID remains `app.seanime.tv`, so signed in-place upgrades retain the
+existing Android data/cache directories, databases and persisted SAF grants.
+The repository's GPL-3.0 license and upstream attribution remain unchanged.
+
+Current review source `43c2f02e` passes 366 host JVM tests, 34 layout comparisons,
+lint and both ABI builds. Device acceptance is incomplete: the cloud TV
+framework failed before installation, and live AniList returned HTTP 403.
+See the [current layout/data report and exact APK hashes](acceptance/2026-10-01-tv-layout-and-live-data.md)
+and [remaining device manifest](acceptance/2026-10-01-tv-device-manifest.json).
 
 ## Build
 
-Install Go at the version required by the repository, Node.js, JDK 17, Android
-SDK platform 36, and Android NDK `27.2.12479018`. The first build also needs
-`curl`, `gpg`, `git`, `make`, `nasm`, `pkg-config`, and a C toolchain. Gradle verifies and builds the
-FFmpeg source release and pinned x264 source for both supported ABIs. It finds
-the NDK in the Android SDK automatically. Run from this directory:
+Required tools: repository-pinned Go, JDK 17 or newer, Android SDK platform 36,
+build tools 36, NDK `27.2.12479018`, and `curl`, `gpg`, `gpgv`, `git`, `make`, `nasm`,
+`pkg-config`, Python 3 and a host C toolchain. The Gradle wrapper is 8.11.1. Node/npm are
+not required to build this app. Run these commands from the repository root.
 
 ```sh
-./gradlew :app:assembleDebug
+./androidtv/gradlew -p androidtv :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --max-workers=2
 ```
 
-The Gradle task builds the `androidtv` frontend, copies it under `mobile/web`
-for Go embedding, creates a gomobile AAR for ARM64 and x86_64, and packages
-ABI-split APKs for ARM64 and x86_64. Each APK includes only the media binaries
-for its matching ABI. The debug APKs are signed with Gradle's debug key.
-The frontend task tracks its sources, assets, configuration, and lockfiles, so
-native-only changes reuse the existing web bundle. Go package compilation uses
-two workers per ABI to limit memory pressure during a cold build; set
-`SEANIME_GO_BUILD_PARALLELISM` to a positive integer to tune it for your host.
-Retaining Go and dependency caches speeds subsequent builds.
-FFmpeg and the Go bridge are linked for 16 KiB pages. Check every native library
-and any uncompressed native ZIP entries in the built APKs from the repo root:
+Gradle builds the signed-source FFmpeg release and pinned x264 dependency,
+creates the real gomobile AAR for Android ARM64 and x86_64, and packages two
+ABI-split APKs. The original `mobile/web/.gitkeep` satisfies Go's unchanged embed
+directive; there is no generated frontend bundle. Keep build/dependency caches.
+`SEANIME_GO_BUILD_PARALLELISM` controls Go workers (default 2).
+
+The Android bind uses a generated driver module and a checksum-verified copy of
+`modernc.org/libc v1.41.0` under `app/build/generated`. Its Android/amd64 adapter
+maps legacy Linux filesystem calls to Android-permitted equivalents; the pinned
+module cache, root `go.mod`/`go.sum`, server code and ARM64 implementations stay
+unchanged. The generator fails on dependency/source drift. This is build-host
+compatibility, not a relaxed Android sandbox. See the acceptance report for the
+exact mapping, semantic tests and documented pointer/clock edge limits.
 
 ```sh
+python3 scripts/check-native-tv-contracts.py --baseline 63200d6a850a6843b52f90ff7775d940416a534d
 python3 scripts/verify_android_native_alignment.py androidtv/app/build/outputs/apk/debug/*.apk
+./androidtv/gradlew -p androidtv :app:connectedDebugAndroidTest --max-workers=1
 ```
 
-The CI checks and release workflow run this verifier. Alignment is a build
-requirement; playback and storage still need runtime testing on both page sizes.
-Publishing an Android TV update requires a persistent release keystore. Configure
-the GitHub Actions secrets `SEANIME_ANDROID_KEYSTORE_BASE64`,
-`SEANIME_ANDROID_KEYSTORE_PASSWORD`, `SEANIME_ANDROID_KEY_ALIAS`, and
-`SEANIME_ANDROID_KEY_PASSWORD` in the fork, then publish a stable GitHub release.
-The Android TV workflow builds signed APKs and attaches the ARM64 and x86_64
-variants to that release. Keep using the same keystore for every update so
-Android accepts each APK as an in-place upgrade.
+The isolated Go scan/import/playback, raw-media playback, sustained external-player
+handoff and owned-library-management scenarios are opt-in and skipped by the
+ordinary connected suite. Run each method alone with its own opt-in flag in a
+cold process, following the data-restoration protocol in the acceptance report.
+The raw-media case uses generated owned video and signed Go ranges. The library
+case imports only a generated unmatched index through the existing API. Neither
+establishes public scan/matching parity. Never enable these scenarios in a whole
+suite. The external-probe cancellation case has a separate recovery-preserving
+wrapper. Use the [finite runtime manifest](acceptance/2026-09-30-next-native-test-manifest.md)
+for exact filters, ownership guards and evidence requirements. On a constrained
+host, finish Gradle builds before starting emulator test runs.
 
-Run the Android host smoke test on an Android TV emulator or device with:
+Source checks are guardrails, not proof of functional parity. See the dated
+[native acceptance report](acceptance/2026-09-30-native-compose.md) for the exact
+new build/test results and remaining gates. September 26–29 reports describe the
+old WebView APKs and must not be represented as native Compose acceptance.
 
-```sh
-./gradlew :app:connectedDebugAndroidTest
-```
+## Native architecture
 
-The instrumentation suite checks embedded UI loading, top-level bridge
-authorization, sandboxed iframe isolation, D-pad movement through controls,
-menus, sliders, dialogs, external-player intent handoff and return focus, and
-server shutdown/restart. It also exercises
-selected SAF tree grants, directory creation, ranged reads, chunked writes and
-replacement, listing, and deletion through a debug-only in-memory document
-provider. The `Android TV
-checks` workflow runs the suite on an API 36 x86_64 TV emulator.
-The native-player lifecycle test uses local WAV fixtures to check stop/resume
-and activity recreation, including playlist handoffs, pause state, position,
-speed, volume, and track preferences.
-It also checks source-bound native play/pause/seek commands and the initial
-speed, volume, and mute settings passed by the web client.
-Missing-source tests exercise D-pad retry and return controls, including a
-source becoming available after an error while playback is paused.
-The media-tools test launches both packaged executables through the same
-command paths used by the Go server. It encodes raw video with libx264, probes
-the output, decodes it with FFmpeg, and checks Media3 frame rendering and seeking.
+- `MainActivity` owns Android launch, server readiness, first-run setup and
+  provider callbacks. It uses a `ComponentActivity` and `setContent`, with no
+  WebView or JavaScript interface
+- `ui/TvApp.kt` implements native navigation, library, search, show details and
+  list editing. Saveable destination state preserves query, scroll and selected
+  card across details and Activity recreation. Focusable TV components, explicit
+  Back handling and 40 dp horizontal/28 dp vertical safe margins are used
+- `ui/SourceScreen.kt` implements local, online, torrent and debrid selection,
+  provider/audio selection, episode lookup, torrent-file selection and release
+  downloads to server-known library folders
+- `ui/FeatureScreens.kt` and `ui/MangaReader.kt` contain native offline,
+  playlist, extension, download, Nakama, settings, report and reader workflows
+- `data/SeanimeApiClient.kt` handles HTTP envelopes, cancellation, same-origin
+  authentication/identity headers, bounded WebSocket reconnect and identity
+  refresh. REST and event payloads follow the existing server contracts
+- `platform/NativePlaybackCoordinator.kt` consumes playback events directly,
+  drives Media3, sends progress/continuity, handles playlist/source transitions
+  and restores playback checkpoints without a retained browser
+- `NativePlayerActivity` uses newly authored Compose audio/subtitle selectors, seeking,
+  speed, pause, screenshots, decoder lifecycle and persisted track preferences
+- `platform/NativePlatformActions.kt` owns SAF permissions, document export,
+  account OAuth state, ABI-matched APK updates and the Android package installer
+- `SeanimeTvApplication` and `AndroidSafStorageAdapter` retain the existing
+  Android hosting, foreground/background suspension and transactional SAF
+  adapter. Go core, API routes/payloads, database models and schemas are unchanged
 
-## Android host behavior
+## Feature behavior and boundaries
 
-- The app uses a Leanback TV launcher activity and a 320×180 TV banner.
-- The local server binds only to `127.0.0.1:43211`; app data and cache are kept
-  in separate Android-managed directories.
-- Startup polling begins after the Go start request is registered, avoiding
-  an incorrect stopped-server error while the worker thread is starting.
-- Recreated main and OAuth activities restore their WebView page and history.
-  Main-page restoration waits for server readiness. OAuth callbacks can reopen
-  the main activity, use its canonical local origin, and are consumed from the
-  launch intent once so recreation does not replay that intent.
-- The signed FFmpeg 8.1.3 source release is built with the pinned GPL x264
-  revision for ARM64 and x86_64. Android extracts the matching executables into
-  its installed native-library directory. The app creates `ffmpeg`/`ffprobe`
-  symlinks under `files/seanime/bin`, ahead of the inherited process path, so
-  Go's existing transcoder uses the installed binaries without executing code
-  copied into writable app data. Links are refreshed after app updates.
-- Hardware encoder detection supplies a raw YUV420 frame through stdin, so it
-  works with the packaged FFmpeg build that omits libavdevice. The bundled
-  FFmpeg and x264 CPU detectors require base SVE support before selecting SVE2
-  instructions; this handles Android kernels that report inconsistent flags
-  while retaining SVE2 acceleration when both capabilities are available.
-- OAuth and external web destinations stay inside an Android WebView. OAuth
-  redirects to Seanime's local callback are returned to the app's main WebView.
-  Both the main and OAuth activities request window resizing for the Android TV
-  on-screen keyboard.
-- Before React mounts, the Android TV web build supplies missing `Object.hasOwn`,
-  modern Array methods, and `Promise.withResolvers` for older System WebView
-  releases.
-- The JavaScript interface uses a token delivered only to the local main frame.
-  WebViews with document-start scripts receive it before the page runs; older
-  WebViews use an origin-scoped message handshake before React mounts. Embedded
-  remote pages cannot obtain native storage or playback access. The WebView must
-  support document-start scripts or `WEB_MESSAGE_LISTENER`.
-- Browser-generated diagnostic profiles and issue-report archives use the
-  Android document picker, then stream to the selected destination in bounded
-  chunks instead of relying on WebView's unsupported Blob download behavior.
-- The TV build reports its client identity as `androidtv` and keeps the shared
-  Seanime routes and web playback UI.
-- Viewport-relative layouts use `dvh` when the WebView supports it and fall
-  back to `vh` on older Android System WebView releases. The startup
-  instrumentation checks the generated `calc()` utility against that fallback.
-- The shared player can hand a stream to an optional Media3 player. It supports
-  HLS, remote seek/play/pause controls, embedded and external SRT/VTT/ASS/SSA
-  subtitles, audio track selection, playback-position handoff, and web-driven
-  playlist transitions. In the WebView player, D-pad input reveals and focuses
-  the controls, keeps navigation inside the open dialog, and lets menus and
-  sliders handle their arrow keys. Left and right on the playback timeline use
-  the configured fine-seek interval. Inline and mini-player playback leave
-  focus with the page.
-- Native playback releases its decoder while the activity is stopped and
-  recreates it on return with the latest episode and playback settings. The
-  retained WebView resumes receiving progress and playlist events on return.
-- Native direct-stream playback checkpoints the underlying source in private
-  Go app data and saves an opaque checkpoint ID in the activity state. Local,
-  torrent, debrid, URL and Nakama source selections can be reopened through the
-  Go binding for a new WebView client. The cold-process restoration path is
-  implemented. An API 31 ARM64 TV emulator run force-stopped the app during
-  active URL playback and restored the session after relaunch; authenticated
-  torrent/debrid, Nakama reconnection, real USB storage and playlist continuity
-  still need their own end-to-end runs. See the acceptance matrix.
-- Native playback errors show focused remote controls to retry the source or
-  return to the web player. Retrying retains the position, speed, volume and
-  pause state; failures do not advance the playlist.
-- Media3 reports duration, position, buffering, pause state, speed, volume,
-  and completion to the shared player. Its per-element adapter supplies these
-  values to watch continuity, progress updates, playlists, and player events,
-  including files whose metadata WebView cannot decode. Shared play/pause/seek
-  and audio/speed controls are forwarded to the matching native stream. The
-  browser HLS loader pauses during native playback and resumes without
-  autoplay when returning to the web player.
-- Source refresh pauses only the browser decoder, preserving Media3's playing
-  or paused state. Late browser pause/completion events are suppressed during
-  native playback so they cannot alter native progress or advance playlists.
-- The native host exposes a Storage Access Framework picker, persists grants,
-  and implements listing, metadata, ranged reads, chunked writes, directory
-  creation, and deletion through a gomobile adapter. Library settings can use
-  selected SAF roots, and the Go scanner and directory selector traverse them.
-  SAF media uses direct range streaming to the Media3 player by default. When
-  transcoding is enabled, the server stages the selected media in app cache for
-  FFmpeg and removes it when the transcode stream shuts down. Direct-play media
-  metadata and embedded subtitles/fonts are inspected through a temporary,
-  loopback-only range source, without staging the complete video. Scans retain
-  existing library rows when a selected SAF tree is unplugged or its grant is
-  revoked, then rescan them after access returns. The manga local provider can
-  scan SAF roots and stage CBZ/ZIP archives in the app cache when required.
-  The shared direct-stream player also reads SAF documents through seekable
-  ranges, including HEAD/thumbnail requests and matching sidecar subtitles.
-  Subtitle reads are capped at 20 MiB. Storage and direct-stream package tests
-  cover these paths and simulated access loss/recovery; physical USB testing
-  remains necessary.
-  Torrent-stream
-  active torrent pieces remain in app-local storage for random-access
-  streaming; after the selected file completes, Seanime copies it to the
-  configured SAF folder. This completion copy has not yet been verified on a
-  physical Android TV device. Some TV firmware images only provide placeholder
-  document-picker activities; Seanime detects those and explains that a file
-  manager with a working document provider is needed for SAF storage features.
-- Android ffmpeg/ffprobe are bundled with MediaCodec support and libx264 CPU
-  encoding fallback. Hardware transcoding capability and performance still
-  need validation on representative Android TV hardware.
-- The native player can capture and save the current video frame to a selected
-  SAF folder. On Android 8 and later it captures the composed player window so
-  Media3-rendered subtitles are included while player controls are hidden.
-  Web-rendered libass/Anime4K overlays are not part of native playback
-  screenshots.
-- Media3 receives the saved subtitle and caption appearance settings for text
-  size, color, background, outline or shadow, and font family where available.
-  Style-only updates do not reload the current stream. Advanced libass
-  rendering and Anime4K processing still remain browser-player features.
-- Android TV checks the fork's GitHub releases, chooses the APK matching the
-  device ABI, downloads it with Android Download Manager, and opens the Android
-  package installer. The release flow remains unavailable until a signed APK
-  release is published with the same persistent keystore.
+Library/search/detail flows use actual server collections, list mutations and
+source selection. First-run setup can use the app's own media directory or a
+persisted USB/SAF root. A protected local server has a native password form; its
+hash is held only for the current Activity session. Media3 requests send server
+credentials only to the canonical loopback origin and provider headers only to
+the selected source origin.
 
-The Android native player, SAF adapter, background lifecycle, transcode staging,
-and update installer still need end-to-end validation on physical Android TV
-devices, including 1080p and 4K hardware.
+The manga reader uses native image loading and remote page controls. Its optional
+automatic tracking advances after the final page renders; rereading does not
+lower progress. Anime and manga list editors load current values, submit only
+edited status/progress/rating fields, and confirm list removal without deleting
+media files. Offline metadata and downloaded chapters remain server-owned. Playlist storage uses the
+existing CRUD APIs; playback uses the real WebSocket protocol rather than the
+legacy no-op playlist REST handlers. Nakama room/chat/watch-party state uses its
+existing API and event protocol. Server plugin controls, grants, page actions,
+custom episode tabs, trays and command palettes are native. Arbitrary plugin
+HTML, DOM scripts and custom CSS remain an explicit native presentation gap.
+
+Manage accounts in Settings or AniList & MAL to connect or disconnect accounts.
+AniList connection changes require explicitly returning online first, because
+the existing server does not clear its offline flag when replacing that account.
+
+Unavailable server APIs, including independent MAL list/search and legacy
+playlist routes, and separate native plugin presentation gaps are documented in the
+[API contract notes](app/src/main/java/app/seanime/tv/data/README.md). Missing
+capabilities must be shown honestly; do not add a hidden browser or modify the
+server to make a parity checkbox appear complete.
+
+## Storage, lifecycle and upgrades
+
+The server still binds only to `127.0.0.1:43211`. Existing data and cache paths
+are retained under `files/seanime/data` and `cache/seanime`. Background work
+suspends through the existing application lifecycle bridge. Media3 releases its
+decoder when stopped and restores state on return. SAF roots retain their
+persisted grants; primary library, additional library, manga, torrent and
+screenshot destinations are handled separately.
+
+The Android updater checks the fork's GitHub release for a matching ABI APK,
+asks before download and hands installation to the system installer. A stable
+release requires a persistent signing key; every update must use that same key.
+Unsigned artifacts and debug APKs are not production upgrade evidence. Configure
+`SEANIME_ANDROID_KEYSTORE_FILE`, `SEANIME_ANDROID_KEYSTORE_PASSWORD`,
+`SEANIME_ANDROID_KEY_ALIAS` and `SEANIME_ANDROID_KEY_PASSWORD` together when
+building release APKs. Never commit signing secrets.
+
+Physical USB provider recovery, 1080p/4K decoding/transcoding, live provider and
+account flows, remote Nakama sessions, API 23/current TV/16 KiB runtime and a
+same-key release upgrade each require their own acceptance run.

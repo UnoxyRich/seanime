@@ -9,10 +9,11 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import app.seanime.tv.gomobile.mobile.Mobile
+import app.seanime.tv.data.SeanimeApiClient
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.io.FileNotFoundException
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -454,13 +455,14 @@ class AndroidSafStorageAdapterTest {
             scenario = ActivityScenario.launch(MainActivity::class.java)
             assertTrue("Seanime server did not start", Mobile.waitForServer(60_000))
 
-            val rootResponse = postDirectorySelector(rootPath)
-            assertEquals(200, rootResponse.first)
-            assertTrue("Go API did not list the SAF Anime directory: ${rootResponse.second}", rootResponse.second.contains("Anime"))
-
-            val animeResponse = postDirectorySelector("$rootPath/Anime")
-            assertEquals(200, animeResponse.first)
-            assertTrue("Go API did not list the SAF Season 1 directory: ${animeResponse.second}", animeResponse.second.contains("Season 1"))
+            SeanimeApiClient().use { api ->
+                runBlocking { withTimeout(15_000) { api.request("GET", "/api/v1/status") } }
+                assertTrue("The real server must issue a signed native client identity", !api.snapshotSession().identityProof.isNullOrBlank())
+                val rootResponse = postDirectorySelector(api, rootPath)
+                assertDirectory(rootResponse, rootPath, "Anime", "$rootPath/Anime")
+                val animeResponse = postDirectorySelector(api, "$rootPath/Anime")
+                assertDirectory(animeResponse, "$rootPath/Anime", "Season 1", "$rootPath/Anime/Season 1")
+            }
         } finally {
             scenario?.close()
             Mobile.stopServer()
@@ -475,23 +477,21 @@ class AndroidSafStorageAdapterTest {
     private fun encode(value: String): String = Base64.encodeToString(value.toByteArray(), Base64.NO_WRAP)
     private fun decode(value: String): String = String(Base64.decode(value, Base64.NO_WRAP))
 
-    private fun postDirectorySelector(input: String): Pair<Int, String> {
-        val connection = URL("http://127.0.0.1:43211/api/v1/directory-selector")
-            .openConnection() as HttpURLConnection
-        connection.requestMethod = "POST"
-        connection.connectTimeout = 5_000
-        connection.readTimeout = 10_000
-        connection.doOutput = true
-        connection.setRequestProperty("Content-Type", "application/json")
-        connection.outputStream.use { output ->
-            output.write(JSONObject().put("input", input).toString().toByteArray())
+    private fun postDirectorySelector(api: SeanimeApiClient, input: String): JSONObject = runBlocking {
+        withTimeout(15_000) {
+            api.request("POST", "/api/v1/directory-selector", JSONObject().put("input", input)) as? JSONObject
+                ?: throw AssertionError("Go did not return directory data for the owned SAF tree")
         }
-        val status = connection.responseCode
-        val body = (if (status < 400) connection.inputStream else connection.errorStream)
-            .bufferedReader()
-            .use { it.readText() }
-        connection.disconnect()
-        return status to body
+    }
+
+    private fun assertDirectory(response: JSONObject, expectedPath: String, childName: String, childPath: String) {
+        assertTrue("Go did not recognize the owned SAF directory", response.getBoolean("exists"))
+        assertEquals(expectedPath, response.getString("fullPath"))
+        val children = response.getJSONArray("content")
+        assertTrue("Go did not return the exact SAF child: $response", (0 until children.length()).any { index ->
+            val child = children.getJSONObject(index)
+            child.optString("folderName") == childName && child.optString("fullPath") == childPath
+        })
     }
 
     private fun writeDocument(context: Context, parent: DocumentFile, name: String, content: String): DocumentFile {

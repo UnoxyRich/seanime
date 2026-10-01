@@ -22,6 +22,7 @@ data class PlaybackRecoverySnapshot(
     val volume: Float,
     val muted: Boolean,
     val trackSelection: String,
+    val playbackInfoJson: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("checkpointId", checkpointId)
@@ -38,6 +39,7 @@ data class PlaybackRecoverySnapshot(
         .put("volume", volume.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 1f)
         .put("muted", muted)
         .put("trackSelection", trackSelection)
+        .put("playbackInfoJson", playbackInfoJson)
 
     fun toBridgeJson(): String = JSONObject().put("checkpointId", checkpointId).toString()
 
@@ -47,6 +49,8 @@ data class PlaybackRecoverySnapshot(
     companion object {
         private const val FILE_NAME = "androidtv-playback-recovery.json"
         private const val MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024
+        private val invalidatedCheckpoints = mutableSetOf<Triple<String, String, String>>()
+        private fun checkpointKey(filesDir: File, checkpointId: String, mediaUri: String) = Triple(filesDir.absolutePath, checkpointId, mediaUri)
 
         fun fromJson(json: JSONObject): PlaybackRecoverySnapshot? {
             val checkpointId = json.optString("checkpointId")
@@ -67,16 +71,18 @@ data class PlaybackRecoverySnapshot(
                 volume = json.optDouble("volume", 1.0).toFloat().takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 1f,
                 muted = json.optBoolean("muted", false),
                 trackSelection = json.optString("trackSelection", ""),
+                playbackInfoJson = json.optString("playbackInfoJson", ""),
             )
         }
 
-        fun read(filesDir: File): PlaybackRecoverySnapshot? = runCatching {
+        @Synchronized fun read(filesDir: File): PlaybackRecoverySnapshot? = runCatching {
             val file = File(filesDir, FILE_NAME)
             if (!file.isFile || file.length() > MAX_SNAPSHOT_BYTES) return null
             fromJson(JSONObject(file.readText()))
         }.getOrNull()
 
-        fun write(filesDir: File, snapshot: PlaybackRecoverySnapshot) {
+        @Synchronized fun write(filesDir: File, snapshot: PlaybackRecoverySnapshot) {
+            if (checkpointKey(filesDir, snapshot.checkpointId, snapshot.mediaUri) in invalidatedCheckpoints) return
             val target = File(filesDir, FILE_NAME)
             val temporary = File(filesDir, "$FILE_NAME.tmp")
             runCatching {
@@ -93,9 +99,30 @@ data class PlaybackRecoverySnapshot(
             }.onFailure { temporary.delete() }
         }
 
-        fun clear(filesDir: File) {
+        @Synchronized fun clear(filesDir: File) {
             File(filesDir, FILE_NAME).delete()
             File(filesDir, "$FILE_NAME.tmp").delete()
+        }
+
+        /** Invalidation and writes share one boundary, including writes queued by a destroyed Activity. */
+        @Synchronized fun clearCheckpoint(filesDir: File, checkpointId: String, mediaUri: String): Boolean {
+            if (checkpointId.isBlank() || mediaUri.isBlank()) return false
+            invalidatedCheckpoints += checkpointKey(filesDir, checkpointId, mediaUri)
+            val stored = read(filesDir) ?: return false
+            if (stored.checkpointId != checkpointId || stored.mediaUri != mediaUri) return false
+            clear(filesDir)
+            return true
+        }
+
+        @Synchronized fun clearSource(filesDir: File, playbackId: String, mediaUri: String, checkpointId: String = ""): Boolean {
+            if (playbackId.isBlank() || mediaUri.isBlank()) return false
+            val stored = read(filesDir)
+            val storedId = stored?.let { runCatching { JSONObject(it.playbackInfoJson).optString("id") }.getOrNull() }
+            if (stored != null && stored.checkpointId == checkpointId && stored.mediaUri == mediaUri && storedId != playbackId) return false
+            if (checkpointId.isNotBlank()) invalidatedCheckpoints += checkpointKey(filesDir, checkpointId, mediaUri)
+            if (stored == null) return false
+            if (stored.mediaUri != mediaUri || storedId != playbackId || (checkpointId.isNotBlank() && stored.checkpointId != checkpointId)) return false
+            return clearCheckpoint(filesDir, stored.checkpointId, mediaUri)
         }
 
         fun encodeBundle(bundle: Bundle?): String {

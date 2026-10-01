@@ -1,1175 +1,425 @@
 package app.seanime.tv
 
-import android.app.Activity
-import android.app.AlertDialog
-import android.app.DownloadManager
-import android.content.ActivityNotFoundException
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.os.Environment
-import android.os.Handler
-import android.os.Looper
-import android.provider.Settings
-import android.util.Base64
-import android.util.Log
-import android.view.Gravity
-import android.view.KeyEvent
 import android.view.View
-import android.view.ViewGroup
-import android.view.WindowManager
-import android.webkit.ConsoleMessage
-import android.webkit.JavascriptInterface
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.Button
-import android.widget.FrameLayout
-import android.widget.ProgressBar
-import android.widget.TextView
-import android.widget.Toast
-import androidx.documentfile.provider.DocumentFile
-import androidx.core.content.FileProvider
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
-import app.seanime.tv.gomobile.mobile.Mobile
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.lifecycle.lifecycleScope
+import androidx.tv.material3.Text
+import androidx.tv.material3.Button
+import app.seanime.tv.data.*
+import app.seanime.tv.platform.NativePlaybackCoordinator
+import app.seanime.tv.platform.NativePlatformActions
+import app.seanime.tv.platform.NativePrompt
+import app.seanime.tv.platform.NativePromptAction
+import app.seanime.tv.platform.AndroidNativeLibraryFiles
+import app.seanime.tv.ui.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.lang.ref.WeakReference
-import java.io.File
-import java.io.OutputStream
-import java.util.concurrent.Executors
-import java.util.concurrent.ConcurrentHashMap
-import java.util.UUID
 
-private data class AndroidTVDownloadDocument(val uri: Uri, val output: OutputStream)
-
-class MainActivity : Activity() {
-    private lateinit var root: FrameLayout
-    private lateinit var webView: WebView
-    private lateinit var statusText: TextView
-    private lateinit var loadingProgress: ProgressBar
-    private val handler = Handler(Looper.getMainLooper())
-    private val serverExecutor = Executors.newSingleThreadExecutor()
-    private val serverPort = 43211
-    private val androidTvBridgeToken = UUID.randomUUID().toString()
-    private var started = false
-    private var secureBridgeAvailable = false
-    private var serverReadyHandled = false
-    private var savedWebViewState: Bundle? = null
-    private var savedPageUrl: String? = null
-    private var pendingLocalUrl: String? = null
-    private var pendingPlaybackRecovery: PlaybackRecoverySnapshot? = null
-    private var displayedError: String? = null
-    private var activityResumed = false
-    private var webPlaybackActive = false
-    internal var pendingStoragePurpose = "library-main"
-    private var retryButton: Button? = null
-    private var updateReceiverRegistered = false
-    private var pendingDownloadRequestId: String? = null
-    private val downloadDocuments = ConcurrentHashMap<String, AndroidTVDownloadDocument>()
-    private val updatePreferences by lazy { getSharedPreferences(UPDATE_PREFERENCES, MODE_PRIVATE) }
-
-    private val updateDownloadReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
-            val completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
-            if (completedId == updatePreferences.getLong(PENDING_UPDATE_DOWNLOAD_ID, -2L)) {
-                finishUpdateDownload(completedId)
-            }
-        }
-    }
-
-    private val readinessPoll = object : Runnable {
-        override fun run() {
-            when (Mobile.serverStatus()) {
-                "ready" -> {
-                    handler.removeCallbacks(this)
-                    loadSeanime()
-                }
-                "failed" -> {
-                    handler.removeCallbacks(this)
-                    showServerError(Mobile.serverError())
-                }
-                "stopping", "stopped" -> {
-                    handler.removeCallbacks(this)
-                    showServerError("Seanime server stopped. Select Retry to start it again.")
-                }
-                else -> {
-                    statusText.text = getString(R.string.server_starting)
-                    handler.postDelayed(this, 250)
-                }
-            }
-        }
-    }
+/** Native TV presentation. The embedded Go host only supplies existing REST/WebSocket APIs. */
+class MainActivity : ComponentActivity() {
+    private val api = SeanimeApiClient()
+    private val repository = SeanimeRepository(api)
+    private lateinit var playback: NativePlaybackCoordinator
+    private lateinit var platform: NativePlatformActions
+    private var serverStatus by mutableStateOf<ServerStatus?>(null)
+    private var startupError by mutableStateOf<String?>(null)
+    private var notice by mutableStateOf<String?>(null)
+    private var platformPrompt by mutableStateOf<NativePrompt?>(null)
+    private var transientNotice by mutableStateOf<String?>(null)
+    private var starting by mutableStateOf(true)
+    private var setupPath by mutableStateOf("")
+    private var serverJob: Job? = null
+    private var pendingOAuthIntent: Intent? = null
+    private var serverOwner = 0L
+    private var accountRevision by mutableIntStateOf(0)
+    private var localListUploadRunning = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        savedWebViewState = savedInstanceState?.getBundle(STATE_WEB_VIEW)
-        savedPageUrl = localPageUrl(savedInstanceState?.getString(STATE_PAGE_URL))
-        pendingLocalUrl = consumeLocalPageIntent(intent) ?: localPageUrl(savedInstanceState?.getString(STATE_PENDING_LOCAL_PAGE))
-        val savedProcessSession = savedInstanceState?.getString(STATE_PROCESS_SESSION_ID).orEmpty()
-        pendingPlaybackRecovery = when {
-            savedInstanceState != null && savedProcessSession == (application as SeanimeTvApplication).processSessionId ->
-                savedInstanceState.getString(STATE_PLAYBACK_RECOVERY_ID)?.let(::readPlaybackRecovery)
-            savedInstanceState != null -> PlaybackRecoverySnapshot.read(filesDir)
-            else -> consumePlaybackRecoveryIntent(intent) ?: PlaybackRecoverySnapshot.read(filesDir)
-        }
-        pendingPlaybackRecovery?.let { (application as SeanimeTvApplication).claimPlaybackRecovery(it.checkpointId) }
-        pendingStoragePurpose = savedInstanceState?.getString(STATE_STORAGE_PURPOSE) ?: pendingStoragePurpose
-        window.decorView.systemUiVisibility = (
-            View.SYSTEM_UI_FLAG_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
-                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            )
-
-        root = FrameLayout(this).apply { setBackgroundColor(0xFF08070D.toInt()) }
-        setActiveActivity(this)
-        webView = WebView(this).apply {
-            isFocusable = true
-            isFocusableInTouchMode = true
-            setBackgroundColor(0xFF08070D.toInt())
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.databaseEnabled = true
-            settings.mediaPlaybackRequiresUserGesture = false
-            settings.allowFileAccess = false
-            settings.allowContentAccess = false
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                settings.safeBrowsingEnabled = true
+        serverOwner = (application as SeanimeTvApplication).claimServerOwner()
+        (application as SeanimeTvApplication).restoreNativeSession(api)
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        setupPath = savedInstanceState?.getString("setup-path") ?: filesDir.resolve("seanime/library").apply { mkdirs() }.absolutePath
+        platform = NativePlatformActions(this, onStorageChanged = { purpose, root ->
+            if (root != null) {
+                val path = root.optString("path")
+                if (purpose == "screenshot") notice = "Screenshot folder connected: ${root.optString("name", path)}"
+                else if (serverStatus?.settings?.length() == 0) setupPath = path
+                else lifecycleScope.launch {
+                    try {
+                        val setting = when (purpose) { "manga-local" -> "manga.mangaLocalSourceDirectory"; "torrent-stream" -> "torrentstream.downloadDir"; else -> "library.libraryPath" }
+                        if (purpose == "library-additional") {
+                            val current = repository.settings().optJSONObject("library")?.optJSONArray("libraryPaths") ?: JSONArray()
+                            if ((0 until current.length()).none { current.optString(it) == path }) current.put(path)
+                            api.request("PATCH", "/api/v1/settings/path", jsonObject("path" to "library.libraryPaths", "value" to current))
+                        } else if (purpose == "torrent-stream") {
+                            val settings = api.request("GET", "/api/v1/torrentstream/settings") as? JSONObject ?: JSONObject()
+                            settings.put("downloadDir", path)
+                            api.request("PATCH", "/api/v1/torrentstream/settings", jsonObject("settings" to settings))
+                        } else api.request("PATCH", "/api/v1/settings/path", jsonObject("path" to setting, "value" to path))
+                        notice = "Folder connected: ${root.optString("name", path)}"
+                        serverStatus = repository.status()
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { notice = e.message }
+                }
             }
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                val bridgeToken = JSONObject.quote(androidTvBridgeToken)
-                WebViewCompat.addDocumentStartJavaScript(
-                    this,
-                    "if (window === window.top) Object.defineProperty(window, '__seanimeAndroidTVBridgeToken', {value: $bridgeToken, writable: false, configurable: false});",
-                    setOf("http://127.0.0.1:$serverPort"),
-                )
-                secureBridgeAvailable = true
-            }
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-                // Older TV WebViews support origin-scoped messages before
-                // document-start scripts. Only the local top frame may obtain
-                // the token; iframe messages cannot bootstrap privileged calls.
-                WebViewCompat.addWebMessageListener(this, "AndroidTVBootstrap", setOf("http://127.0.0.1:$serverPort")) {
-                    _, message, origin, isMainFrame, reply ->
-                    if (canBootstrapBridge(origin, isMainFrame, message.data)) {
-                        reply.postMessage(JSONObject().put("type", "seanime-tv-bootstrap-v1").put("token", androidTvBridgeToken).toString())
+        }, onError = { notice = it }, onPrompt = { platformPrompt = it }, onMessage = { transientNotice = it })
+        playback = NativePlaybackCoordinator(this, api, onError = { notice = it }, onState = { notice = it.takeIf(String::isNotBlank) })
+        pendingOAuthIntent = intent
+        setContent {
+            SeanimeTheme {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).testTag("native-tv-root")) {
+                    val status = serverStatus
+                    when {
+                        starting -> LoadingMessage("Starting your Seanime server…")
+                        startupError != null -> ErrorMessage(startupError!!, ::startServer)
+                        status == null -> ErrorMessage("The server didn't return a status", ::startServer)
+                        status.serverHasPassword && status.version.isBlank() -> UnlockScreen { password ->
+                            lifecycleScope.launch {
+                                try {
+                                    api.setServerPassword(password)
+                                    val unlocked = repository.status()
+                                    check(unlocked.version.isNotBlank()) { "Password wasn't accepted" }
+                                    serverStatus = unlocked
+                                    startReadySession()
+                                } catch (e: CancellationException) { throw e }
+                                catch (e: Exception) { api.setServerToken(null); notice = e.message }
+                            }
+                        }
+                        status.settings.length() == 0 -> SetupScreen(setupPath,
+                            { platform.openStoragePicker("library-main") },
+                            { online, torrent -> completeSetup(online, torrent) })
+                        else -> key(accountRevision) {
+                            CompositionLocalProvider(LocalNativeLibraryFiles provides remember(platform) { AndroidNativeLibraryFiles(this@MainActivity, platform) }) {
+                                SeanimeTvApp(repository, status, ::play, ::platformAction, ::finish)
+                            }
+                        }
                     }
-                }
-                secureBridgeAvailable = true
-            }
-            if (secureBridgeAvailable) {
-                addJavascriptInterface(AndroidTVBridge(this@MainActivity, this, androidTvBridgeToken), "AndroidTVNativeBridge")
-            } else {
-                Log.e("SeanimeWeb", "Secure WebView bridge bootstrap is unavailable; native bridge disabled")
-            }
-            webChromeClient = object : WebChromeClient() {
-                override fun onConsoleMessage(message: ConsoleMessage): Boolean {
-                    Log.d("SeanimeWeb", "${message.message()} (${message.sourceId()}:${message.lineNumber()})")
-                    return true
-                }
-            }
-            webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    val uri = request.url
-                    if (uri.host == "127.0.0.1" && uri.port == serverPort) return false
-                    if (!request.isForMainFrame) return false
-                    openExternalUrl(uri.toString())
-                    return true
-                }
-
-                override fun onPageFinished(view: WebView, url: String) {
-                    super.onPageFinished(view, url)
-                    view.requestFocus(View.FOCUS_DOWN)
-                    statusText.visibility = View.GONE
-                    this@MainActivity.loadingProgress.visibility = View.GONE
-                    if (!secureBridgeAvailable) {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Update Android System WebView to enable Seanime TV storage, downloads, and native playback",
-                            Toast.LENGTH_LONG,
-                        ).show()
+                    transientNotice?.let { message ->
+                        LaunchedEffect(message) { kotlinx.coroutines.delay(4_500); if (transientNotice == message) transientNotice = null }
+                        Box(Modifier.align(Alignment.BottomCenter).padding(32.dp).background(MaterialTheme.colorScheme.surface).padding(20.dp)) {
+                            Text(message, style = MaterialTheme.typography.bodyLarge)
+                        }
                     }
-                }
-
-                override fun onReceivedError(
-                    view: WebView,
-                    request: WebResourceRequest,
-                    error: android.webkit.WebResourceError,
-                ) {
-                    super.onReceivedError(view, request, error)
-                    if (request.isForMainFrame) {
-                        serverReadyHandled = false
-                        showServerError("Seanime's local interface could not load. Select Retry to reconnect.")
+                    platformPrompt?.let { prompt -> PlatformPromptDialog(prompt) { platformPrompt = null } }
+                    notice?.let { message ->
+                        PlatformPromptDialog(NativePrompt("Seanime TV", message)) { notice = null }
                     }
                 }
             }
         }
-        setActiveWebView(webView)
-        root.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-
-        statusText = TextView(this).apply {
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 22f
-            gravity = Gravity.CENTER
-            text = getString(R.string.server_starting)
-        }
-        loadingProgress = ProgressBar(this).apply { isIndeterminate = true }
-        root.addView(loadingProgress, FrameLayout.LayoutParams(72, 72, Gravity.CENTER))
-        root.addView(statusText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-        setContentView(root)
-
-        registerUpdateDownloadReceiver()
-        serverForegroundStart()
+        startServer()
     }
 
-    private fun serverForegroundStart() {
-        if (started) return
-        started = true
-        serverReadyHandled = false
-        val dataDir = filesDir.resolve("seanime/data").absolutePath
-        val cacheDir = cacheDir.resolve("seanime").absolutePath
-        handler.removeCallbacks(readinessPoll)
-        serverExecutor.execute {
-            runCatching {
-                Mobile.startServer(dataDir, cacheDir, serverPort.toLong())
-            }.onSuccess {
-                // The JNI call starts Go asynchronously. Poll only after it
-                // registers that start, so the initial "stopped" state cannot
-                // be mistaken for a failed launch on a slower device.
-                runOnUiThread {
-                    if (!isFinishing && !isDestroyed) readinessPoll.run()
+    private fun startServer() {
+        if (serverJob?.isActive == true) return
+        starting = true; startupError = null
+        serverJob = lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    (application as SeanimeTvApplication).awaitAndroidRuntime()
+                    ensureActive()
+                    if (!(application as SeanimeTvApplication).startEmbeddedServer(serverOwner,
+                        filesDir.resolve("seanime/data").absolutePath, cacheDir.resolve("seanime").absolutePath)) {
+                        throw CancellationException("This Activity no longer owns server startup")
+                    }
                 }
-            }.onFailure { error ->
-                runOnUiThread { showServerError(error.message ?: "Unable to start Seanime.") }
-            }
+                serverStatus = repository.status()
+                startReadySession()
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { startupError = e.message ?: "Unable to start the server" }
+            finally { starting = false }
         }
     }
 
-    private fun loadSeanime() {
-        if (isFinishing || isDestroyed) return
-        if (serverReadyHandled) return
-        serverReadyHandled = true
-        displayedError = null
-        retryButton?.let(root::removeView)
-        retryButton = null
-        statusText.text = getString(R.string.server_starting)
-        statusText.visibility = View.VISIBLE
-        loadingProgress.visibility = View.VISIBLE
-        val navigationUrl = pendingLocalUrl
-        pendingLocalUrl = null
-        val webState = savedWebViewState
-        savedWebViewState = null
-        val previousUrl = savedPageUrl
-        savedPageUrl = null
-        if (navigationUrl == null && webState != null && webView.restoreState(webState) != null && localPageUrl(webView.url) != null) {
-            webView.reload()
+    private fun completeSetup(online: Boolean, torrent: Boolean) {
+        if (starting) return
+        starting = true
+        lifecycleScope.launch {
+            try {
+                serverStatus = repository.completeSetup(setupPath, online, torrent)
+                startReadySession()
+            }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { notice = e.message ?: "Setup couldn't be saved" }
+            finally { starting = false }
+        }
+    }
+
+    private fun startReadySession() {
+        if (!nativeSessionReady(serverStatus)) return
+        playback.start()
+        pendingOAuthIntent?.let { handleOAuth(it) }
+        pendingOAuthIntent = null
+        intent.removeExtra("playback-recovery-id")
+        playback.recoverIfAvailable()
+    }
+
+    private fun play(request: PlaybackRequest) {
+        request.playlistId?.let { playback.startPlaylist(it); return }
+        request.playlistEpisode?.let { playback.playSinglePlaylistItem(it); return }
+        val stream = request.stream
+        if (request.episode?.isNakama == true && stream == null) {
+            lifecycleScope.launch {
+                try {
+                    api.awaitEventsReady()
+                    repository.request("POST", "/api/v1/nakama/play", jsonObject("mediaId" to request.mediaId,
+                        "path" to request.episode.localPath.orEmpty(), "anidbEpisode" to request.episode.aniDbEpisode, "clientId" to api.clientId, "forcePlaybackMethod" to "nativeplayer"))
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { notice = e.message ?: "Couldn't open the shared episode" }
+            }
+        } else if (stream != null) {
+            val subtitles = JSONArray().apply { stream.subtitles.forEach { track ->
+                put(JSONObject().put("src", track.url).put("url", track.url).put("label", track.language)
+                    .put("language", track.language).put("default", track.isDefault))
+            } }
+            playback.playStream(stream.url, request.title, request.mediaId, request.episode?.raw, subtitles, stream.headers, sourceType = stream.type, rawMedia = request.media)
+        } else request.episode?.localPath?.let(playback::playLocalFile)
+            ?: run { notice = "This episode needs a source. Open the show and choose Online, Torrent or Debrid." }
+    }
+
+    private fun platformAction(action: String) {
+        when {
+            action == "storage:manage" -> showStorageManager()
+            action.startsWith("storage:") -> platform.openStoragePicker(action.substringAfter(':'))
+            action == "accounts" -> lifecycleScope.launch {
+                try {
+                    val status = repository.status()
+                    serverStatus = status
+                    platformPrompt = nativeAccountPrompt(!status.isSimulated, status.userName, status.offline, ::platformAction)
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { notice = e.message ?: "Accounts could not be loaded" }
+            }
+            action == "upload-local-anilist" -> {
+                if (localListUploadRunning) { notice = "The local collection upload is still running"; return }
+                lifecycleScope.launch {
+                    try {
+                        val target = requireLocalListMigrationAccount(repository.status())
+                        platformPrompt = nativeLocalListMigrationPrompt(target) {
+                            if (!localListUploadRunning) {
+                                localListUploadRunning = true
+                                notice = "Uploading the saved local collection to $target…"
+                                lifecycleScope.launch {
+                                    try {
+                                        uploadNativeLocalList(repository, target)
+                                        accountRevision++
+                                        notice = "Upload request finished. Review your AniList lists for any titles that need another attempt."
+                                    } catch (e: CancellationException) { throw e }
+                                    catch (e: Exception) { notice = "Could not confirm the upload. Check AniList before retrying. ${e.message.orEmpty()}" }
+                                    finally { localListUploadRunning = false }
+                                }
+                            }
+                        }
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { notice = e.message ?: "The local collection upload is unavailable" }
+                }
+            }
+            action == "logout:anilist" || action == "logout:mal" -> {
+                val provider = action.substringAfter(':')
+                platformPrompt = nativeAccountDisconnectPrompt(provider) {
+                    lifecycleScope.launch {
+                        try {
+                            if (provider == "anilist") {
+                                // The unchanged Go logout leaves its offline flag untouched.
+                                // Never switch that offline account into an inconsistent local platform.
+                                requireOnlineAniListConnection(repository.status().offline)
+                                serverStatus = repository.logoutAniList()
+                            }
+                            else {
+                                check(repository.logoutMal() == true) { "MyAnimeList could not be disconnected" }
+                                serverStatus = repository.status()
+                            }
+                            // Drop collection/detail snapshots from the previous account.
+                            accountRevision++
+                            notice = "${if (provider == "anilist") "AniList" else "MyAnimeList"} disconnected"
+                        } catch (e: CancellationException) { throw e }
+                        catch (e: Exception) { notice = e.message ?: "Account could not be disconnected" }
+                    }
+                }
+            }
+            action == "oauth:anilist" -> {
+                lifecycleScope.launch {
+                    try {
+                        val status = repository.status()
+                        requireOnlineAniListConnection(status.offline)
+                        val clientId = status.anilistClientId.ifBlank { "15168" }
+                        platform.openOAuth("https://anilist.co/api/v2/oauth/authorize?client_id=${Uri.encode(clientId)}&response_type=token")
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { notice = e.message ?: "AniList sign-in could not be started" }
+                }
+            }
+            action == "oauth:mal" -> platform.beginMALLogin()
+            action == "update" -> platform.checkForUpdate()
+            action == "report" -> lifecycleScope.launch {
+                try {
+                    val bytes = repository.downloadIssueReport()
+                    platform.saveReport("seanime-tv-report.zip", "application/zip", bytes)
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { notice = e.message ?: "Couldn't create the report" }
+            }
+            action == "refresh" -> lifecycleScope.launch { runCatching { repository.status() }.onSuccess { serverStatus = it }.onFailure { notice = it.message } }
+            else -> notice = "This Android action isn't available: $action"
+        }
+    }
+
+    private fun showStorageManager() {
+        val rootsJson = platform.storageRoots()
+        val roots = (0 until rootsJson.length()).mapNotNull(rootsJson::optJSONObject)
+        if (roots.isEmpty()) {
+            notice = "No external folders are connected. Choose an anime, manga, torrent or screenshot folder in Settings."
             return
         }
-        val url = navigationUrl ?: previousUrl ?: "http://127.0.0.1:$serverPort/"
-        if (webView.url == url) webView.reload() else webView.loadUrl(url)
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putString(STATE_STORAGE_PURPOSE, pendingStoragePurpose)
-        outState.putString(STATE_PROCESS_SESSION_ID, (application as SeanimeTvApplication).processSessionId)
-        pendingPlaybackRecovery?.let { outState.putString(STATE_PLAYBACK_RECOVERY_ID, it.checkpointId) }
-        outState.putString(STATE_PENDING_LOCAL_PAGE, pendingLocalUrl)
-        outState.putString(STATE_PAGE_URL, pendingLocalUrl ?: localPageUrl(webView.url) ?: savedPageUrl)
-        val webState = Bundle()
-        if (localPageUrl(webView.url) != null && webView.saveState(webState) != null) {
-            outState.putBundle(STATE_WEB_VIEW, webState)
-        } else {
-            savedWebViewState?.let { outState.putBundle(STATE_WEB_VIEW, it) }
-        }
+        platformPrompt = NativePrompt("Connected folders", "Choose a folder to reconnect or manage this TV's access.",
+            actions = roots.map { root -> NativePromptAction(root.optString("name", root.optString("path")) + if (root.optBoolean("available")) "" else " · unavailable") {
+                platformPrompt = NativePrompt(root.optString("name", "Folder"), root.optString("path") + "\nYour files stay on the storage device.",
+                    actions = listOf(
+                        NativePromptAction("Reconnect folder") { platform.openStoragePicker(root.optString("purpose", "library-additional")) },
+                        NativePromptAction("Disconnect folder") {
+                            platformPrompt = NativePrompt("Disconnect this folder?", "Seanime will lose its saved access to ${root.optString("name", "this folder")}. This does not delete files.",
+                                actions = listOf(NativePromptAction("Disconnect") { platform.removeStorageTree(root.optString("uri")); showStorageManager() }), dismissLabel = "Cancel")
+                        }), dismissLabel = "Back")
+            } }, focusDismiss = false)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        consumePlaybackRecoveryIntent(intent)?.let {
-            pendingPlaybackRecovery = it
-            (application as SeanimeTvApplication).claimPlaybackRecovery(it.checkpointId)
-            if (::webView.isInitialized) {
-                webView.post {
-                    webView.evaluateJavascript("window.dispatchEvent(new Event('seanime-androidtv-playback-recovery-ready'))", null)
-                }
-            }
-        }
-        // Consume callback navigation without replacing this activity's launch
-        // identity. Pending URLs and page/history are saved independently.
-        consumeLocalPageIntent(intent)?.let(::navigateToLocalPage)
-    }
-
-    private fun consumeLocalPageIntent(intent: Intent): String? {
-        val url = localPageUrl(intent.getStringExtra(EXTRA_LOCAL_PAGE))
-        // OAuth callbacks are one-shot; activity recreation must not replay one.
-        intent.removeExtra(EXTRA_LOCAL_PAGE)
-        return url
-    }
-
-    private fun consumePlaybackRecoveryIntent(intent: Intent): PlaybackRecoverySnapshot? {
-        val checkpointId = intent.getStringExtra(EXTRA_PLAYBACK_RECOVERY_ID)
-        intent.removeExtra(EXTRA_PLAYBACK_RECOVERY_ID)
-        return readPlaybackRecovery(checkpointId)
-    }
-
-    private fun readPlaybackRecovery(checkpointId: String?): PlaybackRecoverySnapshot? {
-        if (checkpointId.isNullOrBlank()) return null
-        return PlaybackRecoverySnapshot.read(filesDir)?.takeIf { it.checkpointId == checkpointId }
-    }
-
-    internal fun pendingPlaybackRecoveryJson(): String =
-        synchronized(this) { pendingPlaybackRecovery?.toBridgeJson().orEmpty() }
-
-    internal fun startPlaybackRecovery(checkpointId: String, clientId: String): String {
-        val snapshot = synchronized(this) { pendingPlaybackRecovery } ?: return ""
-        if (snapshot.checkpointId != checkpointId) return ""
-        if (clientId.isBlank()) return "error: the WebView player session is not ready"
-        return runCatching {
-            serverExecutor.execute {
-                runCatching { Mobile.restorePlaybackResume(checkpointId, clientId) }
-                    .onFailure { error -> dispatchPlaybackRecoveryError(checkpointId, error.message ?: "could not restore playback") }
-            }
-            "accepted"
-        }.getOrElse { "error: could not schedule playback recovery" }
-    }
-
-    private fun dispatchPlaybackRecoveryError(checkpointId: String, message: String) {
-        val detail = JSONObject().put("checkpointId", checkpointId).put("message", message)
-        runOnUiThread {
-            if (!isDestroyed && ::webView.isInitialized) {
-                webView.evaluateJavascript(
-                    "window.dispatchEvent(new CustomEvent('seanime-androidtv-playback-recovery-error',{detail:$detail}))",
-                    null,
-                )
+        setIntent(intent)
+        if (!nativeSessionReady(serverStatus)) pendingOAuthIntent = intent else {
+            handleOAuth(intent)
+            if (intent.hasExtra("playback-recovery-id")) {
+                intent.removeExtra("playback-recovery-id")
+                playback.recoverIfAvailable()
             }
         }
     }
 
-    internal fun finishPlaybackRecovery(checkpointId: String, streamUrl: String): String {
-        val original = synchronized(this) { pendingPlaybackRecovery } ?: return ""
-        if (original.checkpointId != checkpointId || localPageUrl(streamUrl) == null ||
-            runCatching { Uri.parse(streamUrl).path }.getOrNull() != "/api/v1/directstream/stream") return ""
-        val refreshedCheckpoint = runCatching { Mobile.refreshPlaybackResume(checkpointId, streamUrl) }
-            .getOrElse { return "error: ${it.message ?: "restored playback source did not match"}" }
-        val recovered = original.withStream(streamUrl, refreshedCheckpoint, (application as SeanimeTvApplication).processSessionId)
-        synchronized(this) {
-            if (pendingPlaybackRecovery?.checkpointId != checkpointId) return ""
-            pendingPlaybackRecovery = null
-        }
-        (application as SeanimeTvApplication).releasePlaybackRecovery(checkpointId)
-        PlaybackRecoverySnapshot.write(filesDir, recovered)
-        runOnUiThread { launchRecoveredPlayer(recovered) }
-        return "started"
-    }
-
-    internal fun discardPlaybackRecovery(checkpointId: String) {
-        synchronized(this) {
-            if (pendingPlaybackRecovery?.checkpointId != checkpointId) return
-            pendingPlaybackRecovery = null
-        }
-        (application as SeanimeTvApplication).releasePlaybackRecovery(checkpointId)
-        PlaybackRecoverySnapshot.clear(filesDir)
-    }
-
-    private fun launchRecoveredPlayer(snapshot: PlaybackRecoverySnapshot) {
-        val uri = runCatching { Uri.parse(snapshot.mediaUri) }.getOrNull() ?: return
-        if (uri.scheme != "http" || localPageUrl(snapshot.mediaUri) == null) return
-        NativePlayerActivity.markLaunchPending()
-        startActivity(NativePlayerActivity.recoveryIntent(this, snapshot))
-    }
-
-    private fun navigateToLocalPage(url: String) {
-        pendingLocalUrl = url
-        val status = Mobile.serverStatus()
-        if (status == "ready") {
-            serverReadyHandled = false
-            loadSeanime()
-        } else {
-            if (status != "starting" && status != "stopping") started = false
-            serverForegroundStart()
-        }
-    }
-
-    private fun showServerError(message: String) {
-        if (isFinishing || isDestroyed) return
-        if (displayedError == message && retryButton != null) return
-        displayedError = message
-        loadingProgress.visibility = View.GONE
-        statusText.visibility = View.VISIBLE
-        statusText.text = "Seanime TV could not start\n\n$message"
-        retryButton?.let(root::removeView)
-        val retry = Button(this).apply {
-            text = getString(R.string.server_retry)
-            isFocusable = true
-            setOnClickListener {
-                started = false
-                serverReadyHandled = false
-                displayedError = null
-                retryButton?.let(root::removeView)
-                retryButton = null
-                serverExecutor.execute { Mobile.stopServer() }
-                handler.postDelayed({ serverForegroundStart() }, 350)
-            }
-        }
-        val params = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER)
-        params.topMargin = 150
-        root.addView(retry, params)
-        retryButton = retry
-        retry.requestFocus()
-    }
-
-    internal fun openStoragePicker(purpose: String) {
-        pendingStoragePurpose = purpose
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-        }
-        if (!hasUsableDocumentPicker(intent)) {
-            showStoragePickerUnavailable(purpose)
-            return
-        }
-        runCatching { startActivityForResult(intent, STORAGE_PICK_REQUEST) }
-            .onFailure { showStoragePickerUnavailable(purpose) }
-    }
-
-    private fun hasUsableDocumentPicker(intent: Intent): Boolean {
-        val activityInfo = packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo ?: return false
-        return !activityInfo.name.endsWith("DocumentsStub", ignoreCase = true)
-    }
-
-    private fun showStoragePickerUnavailable(purpose: String) {
-        pendingStoragePurpose = "library-main"
-        dispatchStorageEvent(null, purpose)
-        AlertDialog.Builder(this)
-            .setTitle(R.string.storage_picker_unavailable_title)
-            .setMessage(R.string.storage_picker_unavailable_message)
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
-    }
-
-    internal fun openExternalUrl(url: String) {
-        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
-        when (uri.scheme?.lowercase()) {
-            "http", "https" -> {
-                startActivity(AuthWebViewActivity.intent(this, uri))
-                return
-            }
-            "intent" -> {
-                openIntentUrl(url)
-                return
-            }
-            "mailto" -> {
-                startExternalView(Intent(Intent.ACTION_VIEW, uri))
-                return
-            }
-            null, "file", "content", "javascript", "data", "about", "android-app" -> {
-                Toast.makeText(this, "This link cannot be opened by another app", Toast.LENGTH_LONG).show()
-                return
-            }
-        }
-
-        startExternalView(Intent(Intent.ACTION_VIEW, uri))
-    }
-
-    private fun openIntentUrl(url: String) {
-        val intent = runCatching { Intent.parseUri(url, Intent.URI_INTENT_SCHEME) }.getOrNull()
-        val scheme = intent?.data?.scheme?.lowercase()
-        if (intent == null || intent.action != Intent.ACTION_VIEW || intent.component != null || intent.selector != null ||
-            scheme.isNullOrBlank() || scheme in setOf("intent", "file", "content", "javascript", "data", "about", "android-app") ||
-            intent.`package` == packageName
-        ) {
-            Toast.makeText(this, "This external player link is invalid", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        val fallbackUrl = intent.getStringExtra("browser_fallback_url")
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        try {
-            startActivity(intent)
-        } catch (_: ActivityNotFoundException) {
-            val fallbackUri = fallbackUrl?.let { runCatching { Uri.parse(it) }.getOrNull() }
-            if (fallbackUri != null && fallbackUri.scheme in setOf("http", "https")) {
-                startActivity(AuthWebViewActivity.intent(this, fallbackUri))
-            } else {
-                Toast.makeText(this, "Install the app configured for this external player link", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
-    private fun startExternalView(intent: Intent) {
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        try {
-            startActivity(intent)
-        } catch (_: ActivityNotFoundException) {
-            Toast.makeText(this, "No app can open this link", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    internal fun installUpdate(filePath: String) {
-        val apk = runCatching { File(filePath).canonicalFile }.getOrNull() ?: return
-        val allowedRoots = listOfNotNull(
-            filesDir.resolve("seanime/updates"),
-            cacheDir.resolve("seanime"),
-            getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-        )
-            .mapNotNull { runCatching { it.canonicalPath }.getOrNull() }
-        if (!apk.isFile || apk.extension.lowercase() != "apk" || allowedRoots.none { apk.path.startsWith("$it/") }) {
-            Toast.makeText(this, "Choose an APK from Seanime's update cache", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
-            updatePreferences.edit().putString(PENDING_UPDATE_INSTALL_PATH, apk.path).apply()
-            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
-            return
-        }
-
-        val apkUri = runCatching {
-            FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
-        }.getOrNull() ?: return
-        updatePreferences.edit().remove(PENDING_UPDATE_INSTALL_PATH).apply()
-        val intent = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(apkUri, "application/vnd.android.package-archive")
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { startActivity(intent) }.onFailure {
-            Toast.makeText(this, "Unable to start the Android package installer", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    internal fun requestDownloadTarget(requestId: String, filename: String, mimeType: String): Boolean {
-        if (!requestId.matches(Regex("^[A-Za-z0-9_-]{1,80}$"))) return false
-        val safeFilename = filename
-            .substringAfterLast('/')
-            .substringAfterLast('\\')
-            .replace(Regex("[\\r\\n]"), "_")
-            .take(160)
-            .ifBlank { "seanime-download" }
-        val safeMimeType = mimeType.takeIf { it.matches(Regex("^[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+$")) }
-            ?: "application/octet-stream"
-
-        runOnUiThread {
-            if (pendingDownloadRequestId != null) {
-                dispatchDownloadTargetEvent(requestId, false, "Another file save is already open")
-                return@runOnUiThread
-            }
-            pendingDownloadRequestId = requestId
-            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = safeMimeType
-                putExtra(Intent.EXTRA_TITLE, safeFilename)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            }
-            if (!hasUsableDocumentPicker(intent)) {
-                pendingDownloadRequestId = null
-                dispatchDownloadTargetEvent(requestId, false, getString(R.string.storage_save_unavailable_message))
-                return@runOnUiThread
-            }
-            runCatching { startActivityForResult(intent, DOWNLOAD_TARGET_REQUEST) }
-                .onFailure { error ->
-                    pendingDownloadRequestId = null
-                    dispatchDownloadTargetEvent(requestId, false, error.message ?: getString(R.string.storage_save_unavailable_message))
-                }
-        }
-        return true
-    }
-
-    internal fun writeDownloadChunk(requestId: String, base64Data: String): Boolean {
-        val document = downloadDocuments[requestId] ?: return false
-        if (base64Data.length > MAX_DOWNLOAD_CHUNK_BASE64_LENGTH) return false
-        return runCatching {
-            val bytes = Base64.decode(base64Data, Base64.NO_WRAP)
-            document.output.write(bytes)
-            true
-        }.getOrDefault(false)
-    }
-
-    internal fun finishDownload(requestId: String): Boolean {
-        val document = downloadDocuments.remove(requestId) ?: return false
-        val flushed = runCatching { document.output.flush() }.isSuccess
-        val closed = runCatching { document.output.close() }.isSuccess
-        val result = flushed && closed
-        if (!result) DocumentFile.fromSingleUri(this, document.uri)?.delete()
-        return result
-    }
-
-    internal fun cancelDownload(requestId: String) {
-        val document = downloadDocuments.remove(requestId) ?: return
-        runCatching { document.output.close() }
-        DocumentFile.fromSingleUri(this, document.uri)?.delete()
-    }
-
-    private fun dispatchDownloadTargetEvent(requestId: String, ready: Boolean, error: String? = null) {
-        val detail = JSONObject()
-            .put("requestId", requestId)
-            .put("ready", ready)
-            .put("error", error ?: JSONObject.NULL)
-            .toString()
-        webView.evaluateJavascript(
-            "window.dispatchEvent(new CustomEvent('seanime-androidtv-download-target',{detail:$detail}))",
-            null,
-        )
-    }
-
-    internal fun downloadAndInstallUpdate(url: String, filename: String) {
-        val uri = runCatching { Uri.parse(url) }.getOrNull()
-        val supportedAbi = supportedAbi()
-        val safeFilename = filename.matches(Regex("^[A-Za-z0-9._-]+\\.apk$", RegexOption.IGNORE_CASE))
-        val expectedReleasePath = uri?.encodedPath.orEmpty().lowercase()
-            .startsWith("/unoxyrich/seanime/releases/download/")
-        if (
-            uri == null || uri.scheme != "https" || uri.host?.equals("github.com", ignoreCase = true) != true ||
-            !expectedReleasePath || !safeFilename || Uri.decode(uri.lastPathSegment.orEmpty()) != filename ||
-            supportedAbi.isBlank() || !filename.contains(supportedAbi, ignoreCase = true)
-        ) {
-            Toast.makeText(this, "This release does not contain a compatible Seanime TV APK", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        val destination = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-        if (destination == null) {
-            Toast.makeText(this, "Android storage is not available for the update", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        val downloadManager = getSystemService(DownloadManager::class.java)
-        val previousId = updatePreferences.getLong(PENDING_UPDATE_DOWNLOAD_ID, -1L)
-        if (previousId >= 0) downloadManager.remove(previousId)
-
-        val outputFile = File(destination, "seanime-tv-update-$filename")
-        val request = DownloadManager.Request(uri)
-            .setTitle("Seanime TV update")
-            .setDescription("Downloading $filename")
-            .setMimeType(APK_MIME_TYPE)
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, outputFile.name)
-            .addRequestHeader("User-Agent", "Seanime TV/0.1.0")
-
-        runCatching { downloadManager.enqueue(request) }
-            .onSuccess { downloadId ->
-                updatePreferences.edit()
-                    .putLong(PENDING_UPDATE_DOWNLOAD_ID, downloadId)
-                    .putString(PENDING_UPDATE_DOWNLOAD_PATH, outputFile.absolutePath)
-                    .apply()
-                handler.postDelayed({ finishUpdateDownload(downloadId) }, 1_000)
-                Toast.makeText(this, "Downloading Seanime TV update", Toast.LENGTH_LONG).show()
-            }
-            .onFailure { error ->
-                Toast.makeText(this, error.message ?: "Could not start the update download", Toast.LENGTH_LONG).show()
-            }
-    }
-
-    private fun registerUpdateDownloadReceiver() {
-        if (updateReceiverRegistered) return
-        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(updateDownloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            registerReceiver(updateDownloadReceiver, filter)
-        }
-        updateReceiverRegistered = true
-    }
-
-    private fun finishUpdateDownload(downloadId: Long) {
-        if (updatePreferences.getLong(PENDING_UPDATE_DOWNLOAD_ID, -1L) != downloadId) return
-        val downloadManager = getSystemService(DownloadManager::class.java)
-        val cursor = downloadManager.query(DownloadManager.Query().setFilterById(downloadId)) ?: return
-        cursor.use {
-            if (!it.moveToFirst()) {
-                clearPendingUpdateDownload()
-                Toast.makeText(this, "The update download was not found", Toast.LENGTH_LONG).show()
-                return
-            }
-
-            when (it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
-                DownloadManager.STATUS_SUCCESSFUL -> {
-                    val path = updatePreferences.getString(PENDING_UPDATE_DOWNLOAD_PATH, null)
-                    clearPendingUpdateDownload()
-                    if (path == null || !File(path).isFile) {
-                        Toast.makeText(this, "The downloaded update could not be opened", Toast.LENGTH_LONG).show()
-                        return
+    private fun handleOAuth(intent: Intent) {
+        val returned = platform.consumeOAuthReturn(intent) ?: return
+        val uri = Uri.parse(returned)
+        lifecycleScope.launch {
+            try {
+                val fragment = Uri.parse("https://local/?" + uri.encodedFragment.orEmpty())
+                val token = fragment.getQueryParameter("access_token")
+                val code = uri.getQueryParameter("code")
+                when {
+                    !token.isNullOrBlank() -> {
+                        requireOnlineAniListConnection(repository.status().offline)
+                        repository.loginAniList(token)
                     }
-                    installUpdate(path)
+                    !code.isNullOrBlank() -> repository.loginMal(code, uri.getQueryParameter("state").orEmpty(), platform.consumeMalVerifier(uri))
+                    else -> error(uri.getQueryParameter("error_description") ?: "The account provider did not return an authorization code")
                 }
-                DownloadManager.STATUS_FAILED -> {
-                    val reason = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
-                    clearPendingUpdateDownload()
-                    Toast.makeText(this, "Update download failed ($reason)", Toast.LENGTH_LONG).show()
-                }
-            }
+                serverStatus = repository.status()
+                accountRevision++
+                notice = "Your account is connected"
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { notice = e.message ?: "Account connection failed" }
         }
     }
 
-    private fun clearPendingUpdateDownload() {
-        updatePreferences.edit()
-            .remove(PENDING_UPDATE_DOWNLOAD_ID)
-            .remove(PENDING_UPDATE_DOWNLOAD_PATH)
-            .apply()
-    }
-
-    private fun resumePendingUpdateInstall() {
-        val pendingPath = updatePreferences.getString(PENDING_UPDATE_INSTALL_PATH, null) ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) return
-        installUpdate(pendingPath)
-    }
-
-    internal fun launchNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String, playbackSettingsJson: String) {
-        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
-        if (uri.scheme !in setOf("http", "https", "content", "file")) return
-        NativePlayerActivity.markLaunchPending()
-        startActivity(NativePlayerActivity.intent(this, uri, title, subtitleTracksJson, startPositionMs, subtitleStyleJson, playbackSettingsJson))
-    }
-
-    internal fun updateNativePlayer(url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
-        NativePlayerActivity.updateMedia(url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson)
-    }
-
-    internal fun updateNativeSubtitleStyle(subtitleStyleJson: String) {
-        NativePlayerActivity.updateSubtitleStyle(subtitleStyleJson)
-    }
-
-    internal fun setWebPlaybackActive(active: Boolean) {
-        runOnUiThread {
-            webPlaybackActive = active
-            if (active && activityResumed) {
-                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            } else {
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            }
-        }
-    }
-
-    internal fun onStorageTreeSelected(uri: Uri?, grantedFlags: Int, purpose: String) {
-        if (uri == null) {
-            dispatchStorageEvent(null, purpose)
-            return
-        }
-        val persistableFlags = grantedFlags and
-            (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        if (persistableFlags != 0) {
-            runCatching { contentResolver.takePersistableUriPermission(uri, persistableFlags) }
-        }
-        val directory = DocumentFile.fromTreeUri(this, uri)
-        val hasReadGrant = contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
-        val rootItem = JSONObject()
-            .put("uri", uri.toString())
-            .put("id", AndroidSafStorageAdapter.storageId(uri))
-            .put("path", AndroidSafStorageAdapter.virtualRoot(uri))
-            .put("name", directory?.name ?: "Removable storage")
-            .put("granted", hasReadGrant)
-            .put("available", hasReadGrant && directory?.canRead() == true)
-        val prefs = getSharedPreferences("android-tv-storage", MODE_PRIVATE)
-        val roots = try {
-            JSONArray(prefs.getString("roots", "[]") ?: "[]")
-        } catch (_: Exception) {
-            JSONArray()
-        }
-        val updated = JSONArray()
-        for (index in 0 until roots.length()) {
-            val old = roots.optJSONObject(index) ?: continue
-            if (old.optString("uri") != uri.toString()) updated.put(old)
-        }
-        updated.put(rootItem)
-        prefs.edit().putString("roots", updated.toString()).apply()
-        if (purpose == "screenshot") {
-            prefs.edit().putString(SCREENSHOT_TREE_URI, uri.toString()).apply()
-        }
-        dispatchStorageEvent(rootItem, purpose)
-    }
-
-    internal fun removeStorageTree(uriString: String) {
-        val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return
-        runCatching {
-            contentResolver.releasePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-            )
-        }
-        val prefs = getSharedPreferences("android-tv-storage", MODE_PRIVATE)
-        val saved = try {
-            JSONArray(prefs.getString("roots", "[]") ?: "[]")
-        } catch (_: Exception) {
-            JSONArray()
-        }
-        val updated = JSONArray()
-        for (index in 0 until saved.length()) {
-            val item = saved.optJSONObject(index) ?: continue
-            if (item.optString("uri") != uriString) updated.put(item)
-        }
-        prefs.edit().putString("roots", updated.toString()).apply()
-        if (prefs.getString(SCREENSHOT_TREE_URI, null) == uriString) {
-            prefs.edit().remove(SCREENSHOT_TREE_URI).apply()
-        }
-        dispatchStorageEvent(null, "library-main")
-    }
-
-    private fun dispatchStorageEvent(root: JSONObject?, purpose: String) {
-        val detail = JSONObject()
-            .put("purpose", purpose)
-            .put("root", root?.let { JSONObject(it.toString()) } ?: JSONObject.NULL)
-            .toString()
-        webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('seanime-androidtv-storage', {detail: $detail}))", null)
-    }
-
-    @Deprecated("Activity Result APIs are not required for this single legacy picker callback")
+    @Deprecated("Android activity result bridge for document providers")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == STORAGE_PICK_REQUEST) {
-            val purpose = pendingStoragePurpose
-            pendingStoragePurpose = "library-main"
-            onStorageTreeSelected(if (resultCode == RESULT_OK) data?.data else null, data?.flags ?: 0, purpose)
-        } else if (requestCode == DOWNLOAD_TARGET_REQUEST) {
-            val requestId = pendingDownloadRequestId
-            pendingDownloadRequestId = null
-            if (requestId != null && resultCode == RESULT_OK && data?.data != null) {
-                val uri = data.data!!
-                val output = runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
-                if (output == null) {
-                    dispatchDownloadTargetEvent(requestId, false, "Android could not open the selected file")
-                } else {
-                    downloadDocuments[requestId] = AndroidTVDownloadDocument(uri, output)
-                    dispatchDownloadTargetEvent(requestId, true)
-                }
-            } else if (requestId != null) {
-                dispatchDownloadTargetEvent(requestId, false, "Download canceled")
-            }
-        }
-    }
-
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK) {
-            webView.evaluateJavascript(
-                """(() => {
-                    const visibleOverlay = Array.from(document.querySelectorAll(
-                        '[role=dialog],[role=alertdialog],[data-radix-dialog-content],[role=menu],[role=listbox]'
-                    )).some(element => element.getClientRects().length > 0 &&
-                        !element.closest('[hidden],[inert],[aria-hidden=true],[data-state=closed]') &&
-                        getComputedStyle(element).visibility !== 'hidden');
-                    const escape = new KeyboardEvent('keydown', {
-                        key:'Escape', code:'Escape', bubbles:true, cancelable:true
-                    });
-                    (document.activeElement || document).dispatchEvent(escape);
-                    return visibleOverlay || escape.defaultPrevented ? 'consumed' : 'navigate';
-                })()""".trimIndent(),
-            ) { result ->
-                if (isFinishing || isDestroyed || result == "\"consumed\"") return@evaluateJavascript
-                // History.length also counts forward entries after returning to
-                // the first page. WebView tracks the current position, including
-                // TanStack's same-document pushState navigation.
-                if (webView.canGoBack()) {
-                    webView.goBack()
-                } else {
-                    finish()
-                }
-            }
-            return true
-        }
-        return super.onKeyDown(keyCode, event)
+        if (!platform.onActivityResult(requestCode, resultCode, data)) super.onActivityResult(requestCode, resultCode, data)
     }
 
     override fun onResume() {
         super.onResume()
-        resumePendingUpdateInstall()
-        val pendingDownloadId = updatePreferences.getLong(PENDING_UPDATE_DOWNLOAD_ID, -1L)
-        if (pendingDownloadId >= 0) finishUpdateDownload(pendingDownloadId)
-        activityResumed = true
-        if (webPlaybackActive) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        scheduleServerForeground(true)
-        webView.onResume()
-        serverForegroundStart()
+        if (::platform.isInitialized) platform.onResume()
     }
 
-    override fun onPause() {
-        activityResumed = false
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        if (!NativePlayerActivity.isVisible()) {
-            webView.onPause()
-        }
-        super.onPause()
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("setup-path", setupPath)
+        super.onSaveInstanceState(outState)
     }
 
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus || !::webView.isInitialized || isFinishing || isDestroyed) return
-        webView.post {
-            if (!isFinishing && !isDestroyed && webView.isAttachedToWindow) {
-                webView.evaluateJavascript(
-                    "window.dispatchEvent(new Event('seanime-tv-native-focus-restored'))",
-                    null,
-                )
-            }
-        }
-    }
+    internal fun openExternalUrl(url: String) = platform.openExternalUrl(url)
+
+    /** Opaque recovery metadata only, retained for host instrumentation. */
+    internal fun pendingPlaybackRecoveryJson(): String = PlaybackRecoverySnapshot.read(filesDir)?.let {
+        JSONObject().put("checkpointId", it.checkpointId).toString()
+    }.orEmpty()
 
     override fun onDestroy() {
-        handler.removeCallbacksAndMessages(null)
-        downloadDocuments.keys.toList().forEach(::cancelDownload)
-        if (updateReceiverRegistered) {
-            unregisterReceiver(updateDownloadReceiver)
-            updateReceiverRegistered = false
+        (application as SeanimeTvApplication).saveNativeSession(api)
+        val detached = playback.detachToPlayer()
+        if (!detached) {
+            playback.close()
+            api.close()
         }
-        webView.removeJavascriptInterface("AndroidTVNativeBridge")
-        setActiveWebView(null)
-        setActiveActivity(null)
-        webView.destroy()
-        if (isFinishing) {
-            serverExecutor.execute {
-                Mobile.setAppInForeground(false)
-                Mobile.stopServer()
-            }
-        }
-        serverExecutor.shutdown()
+        platform.close()
+        if (isFinishing && !NativePlayerActivity.isVisible()) (application as SeanimeTvApplication).stopEmbeddedServer(serverOwner)
         super.onDestroy()
     }
 
-    companion object {
-        private const val EXTRA_LOCAL_PAGE = "local-page"
-        private const val EXTRA_PLAYBACK_RECOVERY_ID = "playback-recovery-id"
-        private const val STATE_WEB_VIEW = "main-web-view"
-        private const val STATE_PAGE_URL = "main-page-url"
-        private const val STATE_PENDING_LOCAL_PAGE = "pending-local-page"
-        private const val STATE_STORAGE_PURPOSE = "storage-purpose"
-        private const val STATE_PLAYBACK_RECOVERY_ID = "playback-recovery-id"
-        private const val STATE_PROCESS_SESSION_ID = "process-session-id"
-        const val STORAGE_PICK_REQUEST = 521
-        private const val UPDATE_PREFERENCES = "android-tv-updates"
-        private const val PENDING_UPDATE_DOWNLOAD_ID = "pending-download-id"
-        private const val PENDING_UPDATE_DOWNLOAD_PATH = "pending-download-path"
-        private const val PENDING_UPDATE_INSTALL_PATH = "pending-install-path"
-        internal const val SCREENSHOT_TREE_URI = "screenshot-tree-uri"
-        private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
-        private const val DOWNLOAD_TARGET_REQUEST = 522
-        private const val MAX_DOWNLOAD_CHUNK_BASE64_LENGTH = 400_000
-        private val serverLifecycleExecutor = Executors.newSingleThreadExecutor()
-        @Volatile private var activeWebView: WeakReference<WebView>? = null
-        @Volatile private var activeActivity: WeakReference<MainActivity>? = null
+}
 
-        fun setActiveWebView(view: WebView?) {
-            activeWebView = view?.let(::WeakReference)
-        }
+/** Restricted status intentionally omits version; a new server has no saved settings yet. */
+internal fun nativeSessionReady(status: ServerStatus?): Boolean =
+    status != null && status.ready && status.version.isNotBlank() && status.settings.length() > 0
 
-        private fun setActiveActivity(activity: MainActivity?) {
-            activeActivity = activity?.let(::WeakReference)
-        }
-
-        private fun scheduleServerForeground(foreground: Boolean) {
-            serverLifecycleExecutor.execute { Mobile.setAppInForeground(foreground) }
-        }
-
-        fun supportedAbi(): String = Build.SUPPORTED_ABIS.firstOrNull { it == "arm64-v8a" || it == "x86_64" }.orEmpty()
-
-        fun notifyNativePlayerStopped() {
-            val activity = activeActivity?.get() ?: return
-            activity.runOnUiThread {
-                if (!activity.activityResumed && !activity.isDestroyed) {
-                    activity.webView.onPause()
-                    activity.handler.postDelayed({
-                        if (!activity.activityResumed && !NativePlayerActivity.isVisible()) {
-                            scheduleServerForeground(false)
-                        }
-                    }, 500)
-                }
+@Composable
+internal fun SetupScreen(path: String, chooseFolder: () -> Unit, onContinue: (Boolean, Boolean) -> Unit) {
+    var online by rememberSaveable { mutableStateOf(true) }
+    var torrent by rememberSaveable { mutableStateOf(false) }
+    val continueFocus = remember { FocusRequester() }
+    val continueFocusGranted = remember { mutableStateOf(false) }
+    val folderLabel = if (path == LocalContext.current.filesDir.resolve("seanime/library").absolutePath) "Internal library on this TV" else path
+    Box(Modifier.fillMaxSize().padding(48.dp), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 740.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+            Text("Welcome to Seanime TV", style = MaterialTheme.typography.headlineLarge)
+            Text("Your media library, made for your TV. Keep your collection here or connect a USB folder.")
+            Text("Media folder: $folderLabel", style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Button(onClick = chooseFolder) { Text("Choose USB / media folder") }
+                Button(onClick = { online = !online }) { Text("Online streaming: ${if (online) "On" else "Off"}") }
             }
-        }
-
-        fun notifyNativePlayerStarted() {
-            val activity = activeActivity?.get() ?: return
-            activity.runOnUiThread {
-                if (!activity.isDestroyed) {
-                    activity.webView.onResume()
-                    scheduleServerForeground(true)
-                }
-            }
-        }
-
-        fun deliverOAuthReturn(url: String): Boolean {
-            val target = localPageUrl(url) ?: return false
-            val activity = activeActivity?.get()?.takeUnless { it.isFinishing || it.isDestroyed } ?: return false
-            activity.runOnUiThread { activity.navigateToLocalPage(target) }
-            return true
-        }
-
-        internal fun localPageUrl(url: String?): String? {
-            val uri = url?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return null
-            if (uri.scheme != "http" || uri.host !in setOf("127.0.0.1", "localhost") ||
-                uri.port != 43211 || uri.userInfo != null) return null
-            return uri.buildUpon().encodedAuthority("127.0.0.1:43211").build().toString()
-        }
-
-        internal fun canBootstrapBridge(origin: Uri, isMainFrame: Boolean, message: String?): Boolean =
-            isMainFrame && origin.scheme == "http" && origin.host == "127.0.0.1" && origin.port == 43211 &&
-                origin.userInfo == null && message == "seanime-tv-bootstrap-v1"
-
-        internal fun localPageIntent(context: Context, url: String): Intent =
-            Intent(context, MainActivity::class.java)
-                .putExtra(EXTRA_LOCAL_PAGE, requireNotNull(localPageUrl(url)))
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-
-        fun playbackRecoveryIntent(context: Context, checkpointId: String): Intent =
-            Intent(context, MainActivity::class.java)
-                .putExtra(EXTRA_PLAYBACK_RECOVERY_ID, checkpointId)
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-
-        fun notifyNativePlaybackProgress(payload: JSONObject) {
-            activeWebView?.get()?.post {
-                activeWebView?.get()?.evaluateJavascript(
-                    "window.dispatchEvent(new CustomEvent('seanime-androidtv-player-progress',{detail:$payload}))",
-                    null,
-                )
-            }
+            Button(onClick = { torrent = !torrent }) { Text("Built-in torrent streaming: ${if (torrent) "On" else "Off"}") }
+            Text("Provider extensions and account connections can be added in Settings. No account is needed to start with local files.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = { onContinue(online, torrent) }, modifier = Modifier.testTag("setup-continue").initialTvFocus(continueFocus, continueFocusGranted)) { Text("Start using Seanime") }
         }
     }
 }
 
-private class AndroidTVBridge(
-    private val activity: MainActivity,
-    private val webView: WebView,
-    private val expectedToken: String,
-) {
-    private fun isAuthorized(token: String): Boolean = token == expectedToken
-
-    @JavascriptInterface
-    fun serverStatus(token: String): String = if (isAuthorized(token)) Mobile.serverStatus() else ""
-
-    @JavascriptInterface
-    fun serverError(token: String): String = if (isAuthorized(token)) Mobile.serverError() else ""
-
-    @JavascriptInterface
-    fun requestMediaFolder(token: String, purpose: String) {
-        if (!isAuthorized(token)) return
-        val normalizedPurpose = purpose.takeIf { it in setOf("library-main", "library-additional", "manga-local", "torrent-stream", "screenshot") } ?: "library-main"
-        activity.runOnUiThread { activity.openStoragePicker(normalizedPurpose) }
-    }
-
-    @JavascriptInterface
-    fun getStorageRoots(token: String): String {
-        if (!isAuthorized(token)) return "[]"
-        val saved = try {
-            JSONArray(activity.getSharedPreferences("android-tv-storage", Activity.MODE_PRIVATE).getString("roots", "[]") ?: "[]")
-        } catch (_: Exception) {
-            JSONArray()
+@Composable
+internal fun UnlockScreen(onUnlock: (String) -> Unit) {
+    var password by remember { mutableStateOf("") }
+    val initialFocus = remember { FocusRequester() }
+    val focusGranted = remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize().padding(48.dp), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 560.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+            Text("Unlock your Seanime server", style = MaterialTheme.typography.headlineMedium)
+            Text("The local server requires its existing password. It will stay in memory for this session.")
+            OutlinedTextField(password, { password = it }, label = { Text("Server password") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth()
+                    .testTag("server-password").initialTvFocus(initialFocus, focusGranted))
+            Button(onClick = { onUnlock(password); password = "" }, enabled = password.isNotEmpty(),
+                modifier = Modifier.testTag("server-unlock")) { Text("Unlock") }
         }
-        val grantedUris = activity.contentResolver.persistedUriPermissions.map { it.uri.toString() }.toSet()
-        val current = JSONArray()
-        for (index in 0 until saved.length()) {
-            val item = saved.optJSONObject(index) ?: continue
-            val uriString = item.optString("uri")
-            val uri = runCatching { Uri.parse(uriString) }.getOrNull()
-            val available = uriString in grantedUris && uri?.let { DocumentFile.fromTreeUri(activity, it)?.canRead() } == true
-            val root = JSONObject(item.toString())
-            if (uri != null) {
-                root.put("id", AndroidSafStorageAdapter.storageId(uri))
-                    .put("path", AndroidSafStorageAdapter.virtualRoot(uri))
-            }
-            current.put(root.put("available", available).put("granted", uriString in grantedUris))
-        }
-        return current.toString()
-    }
-
-    @JavascriptInterface
-    fun removeStorageFolder(token: String, uri: String) {
-        if (!isAuthorized(token)) return
-        activity.runOnUiThread { activity.removeStorageTree(uri) }
-    }
-
-    @JavascriptInterface
-    fun openExternalUrl(token: String, url: String) {
-        if (!isAuthorized(token)) return
-        activity.runOnUiThread { activity.openExternalUrl(url) }
-    }
-
-    @JavascriptInterface
-    fun requestDownloadTarget(token: String, requestId: String, filename: String, mimeType: String): Boolean =
-        isAuthorized(token) && activity.requestDownloadTarget(requestId, filename, mimeType)
-
-    @JavascriptInterface
-    fun writeDownloadChunk(token: String, requestId: String, base64Data: String): Boolean =
-        isAuthorized(token) && activity.writeDownloadChunk(requestId, base64Data)
-
-    @JavascriptInterface
-    fun finishDownload(token: String, requestId: String): Boolean =
-        isAuthorized(token) && activity.finishDownload(requestId)
-
-    @JavascriptInterface
-    fun cancelDownload(token: String, requestId: String) {
-        if (!isAuthorized(token)) return
-        activity.cancelDownload(requestId)
-    }
-
-    @JavascriptInterface
-    fun installUpdate(token: String, filePath: String) {
-        if (!isAuthorized(token)) return
-        activity.runOnUiThread { activity.installUpdate(filePath) }
-    }
-
-    @JavascriptInterface
-    fun supportedAbi(token: String): String = if (isAuthorized(token)) MainActivity.supportedAbi() else ""
-
-    @JavascriptInterface
-    fun downloadAndInstallUpdate(token: String, url: String, filename: String) {
-        if (!isAuthorized(token)) return
-        activity.runOnUiThread { activity.downloadAndInstallUpdate(url, filename) }
-    }
-
-    @JavascriptInterface
-    fun playNative(token: String, url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String, playbackSettingsJson: String) {
-        if (!isAuthorized(token)) return
-        activity.runOnUiThread { activity.launchNativePlayer(url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson, playbackSettingsJson) }
-    }
-
-    @JavascriptInterface
-    fun pendingPlaybackRecovery(token: String): String =
-        if (isAuthorized(token)) activity.pendingPlaybackRecoveryJson() else ""
-
-    @JavascriptInterface
-    fun startPlaybackRecovery(token: String, checkpointId: String, clientId: String): String =
-        if (isAuthorized(token)) activity.startPlaybackRecovery(checkpointId, clientId) else ""
-
-    @JavascriptInterface
-    fun finishPlaybackRecovery(token: String, checkpointId: String, streamUrl: String): String =
-        if (isAuthorized(token)) activity.finishPlaybackRecovery(checkpointId, streamUrl) else ""
-
-    @JavascriptInterface
-    fun discardPlaybackRecovery(token: String, checkpointId: String) {
-        if (!isAuthorized(token)) return
-        activity.discardPlaybackRecovery(checkpointId)
-    }
-
-    @JavascriptInterface
-    fun updateNativePlayer(token: String, url: String, title: String, subtitleTracksJson: String, startPositionMs: Long, subtitleStyleJson: String) {
-        if (!isAuthorized(token)) return
-        activity.updateNativePlayer(url, title, subtitleTracksJson, startPositionMs, subtitleStyleJson)
-    }
-
-    @JavascriptInterface
-    fun updateNativeSubtitleStyle(token: String, subtitleStyleJson: String) {
-        if (!isAuthorized(token)) return
-        activity.updateNativeSubtitleStyle(subtitleStyleJson)
-    }
-
-    @JavascriptInterface
-    fun nativePlayerActive(token: String): Boolean = isAuthorized(token) && NativePlayerActivity.isVisible()
-
-    @JavascriptInterface
-    fun controlNativePlayer(token: String, url: String, command: String, value: Double) {
-        if (!isAuthorized(token)) return
-        NativePlayerActivity.control(url, command, value)
-    }
-
-    @JavascriptInterface
-    fun setPlaybackActive(token: String, active: Boolean) {
-        if (!isAuthorized(token)) return
-        activity.setWebPlaybackActive(active)
     }
 }

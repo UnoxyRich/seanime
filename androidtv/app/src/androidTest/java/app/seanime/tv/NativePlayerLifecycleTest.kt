@@ -2,9 +2,13 @@ package app.seanime.tv
 
 import android.net.Uri
 import android.os.SystemClock
+import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.view.KeyEvent
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import org.junit.Rule
 import androidx.lifecycle.Lifecycle
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -12,9 +16,25 @@ import androidx.media3.ui.PlayerView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleCallback
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
+import app.seanime.tv.data.SeanimeApiClient
+import app.seanime.tv.platform.NativePlaybackBus
+import app.seanime.tv.platform.NativePlaybackCoordinator
+import app.seanime.tv.platform.NativeSkipState
+import app.seanime.tv.ui.performTvClick
+import okhttp3.Request
+import okhttp3.WebSocket
+import okio.ByteString
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
@@ -23,9 +43,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 @RunWith(AndroidJUnit4::class)
 class NativePlayerLifecycleTest {
+    @get:Rule val compose = createEmptyComposeRule()
     @Test
     fun dismissingPlaybackDoesNotRecreateItsRecoverySnapshotOnStop() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -53,6 +74,8 @@ class NativePlayerLifecycleTest {
         )
         try {
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            SystemClock.sleep(250)
+            if (scenario.state != Lifecycle.State.DESTROYED) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             val deadline = SystemClock.elapsedRealtime() + 10_000
             while (scenario.state != Lifecycle.State.DESTROYED && SystemClock.elapsedRealtime() < deadline) {
                 SystemClock.sleep(50)
@@ -79,17 +102,20 @@ class NativePlayerLifecycleTest {
         )
         try {
             awaitError(scenario)
+            compose.onNodeWithTag("native-player-retry").assertIsFocused()
+            compose.onNodeWithTag("native-player-error-reason").assertTextEquals("The source file couldn’t be found.")
+            compose.onNodeWithTag("native-player-error-help").assertTextEquals("Check the source or storage connection, then try again.")
+            NativeScreenshotEvidence.capture("player-error-retry-focus")
             scenario.onActivity { activity ->
-                assertTrue(activity.findViewById<View>(R.id.native_player_retry).hasFocus())
                 assertFalse(requireNotNull(findPlayerView(activity.window.decorView)).isShown)
             }
             writeSilentWav(fixture)
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             awaitReady(scenario)
+            compose.onNodeWithTag("native-player-error").assertDoesNotExist()
             scenario.onActivity { activity ->
                 val playerView = requireNotNull(findPlayerView(activity.window.decorView))
                 val player = requireNotNull(playerView.player)
-                assertEquals(View.GONE, activity.findViewById<View>(R.id.native_player_error_panel).visibility)
                 assertTrue(playerView.isShown)
                 assertEquals(2_000L, player.currentPosition)
                 assertFalse("retry resumed a paused stream", player.playWhenReady)
@@ -103,7 +129,7 @@ class NativePlayerLifecycleTest {
     }
 
     @Test
-    fun failedSourceOffersRemoteReturnToWebPlayer() {
+    fun failedSourceOffersRemoteConvertAndReturnToNativeLibrary() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val fixture = File(context.cacheDir, "native-missing-${System.nanoTime()}.wav")
@@ -113,9 +139,12 @@ class NativePlayerLifecycleTest {
         try {
             awaitError(scenario)
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-            scenario.onActivity { activity ->
-                assertTrue(activity.findViewById<View>(R.id.native_player_return).hasFocus())
-            }
+            compose.onNodeWithTag("native-player-convert").assertIsFocused()
+            NativeScreenshotEvidence.capture("player-error-convert-focus")
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            compose.onNodeWithTag("native-player-external").assertIsFocused().assertIsDisplayed()
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+            compose.onNodeWithTag("native-player-exit").assertIsFocused()
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             instrumentation.waitForIdleSync()
             // Finishing crosses the system activity manager; an idle app looper
@@ -151,6 +180,13 @@ class NativePlayerLifecycleTest {
                 assertEquals(0f, player.volume, 0.001f)
                 NativePlayerActivity.control("file:///previous-episode.wav", "seekTo", 9_000.0)
                 assertEquals(2_000L, player.currentPosition)
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, false).build()
+                NativePlayerActivity.selectMediaCaptionTrack("file:///previous-episode.wav", -1)
+                assertFalse("An obsolete source changed caption selection",
+                    player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_TEXT))
+                NativePlayerActivity.selectMediaCaptionTrack(url, -1)
+                assertTrue(player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_TEXT))
                 NativePlayerActivity.control(url, "seekTo", 5_000.0)
                 assertEquals(5_000L, player.currentPosition)
                 NativePlayerActivity.control(url, "speed", 1.5)
@@ -182,23 +218,233 @@ class NativePlayerLifecycleTest {
     }
 
     @Test
-    fun stoppedAndRecreatedPlayerRestoresLatestMediaAndPlaybackSettings() {
+    fun serverStatusAndRelativeSeekReadLivePositionInsteadOfCachedProgress() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val fixture = File(context.cacheDir, "native-live-commands-${System.nanoTime()}.wav")
+        writeSilentWav(fixture)
+        val url = Uri.fromFile(fixture).toString()
+        val previousListener = NativePlaybackBus.listener
+        val api = SeanimeApiClient()
+        val socket = RecordingSocket()
+        privateField(api, "socket").set(api, socket)
+        var coordinator: NativePlaybackCoordinator? = null
+        val snapshotCount = AtomicInteger()
+        val snapshotOnMain = AtomicBoolean()
+        val scenario = ActivityScenario.launch<NativePlayerActivity>(NativePlayerActivity.intent(context,
+            Uri.parse(url), "Live commands", "[]", 1000, "{}", """{"paused":true}"""))
+        try {
+            awaitReady(scenario)
+            scenario.onActivity { activity ->
+                val current = requireNotNull(findPlayerView(activity.window.decorView)?.player)
+                val owner = NativePlaybackCoordinator(activity, api).also { coordinator = it }
+                val latest = NativePlaybackCoordinator::class.java.getDeclaredField("latest").apply { isAccessible = true }
+                val command = NativePlaybackCoordinator::class.java.getDeclaredMethod("handleCommand", String::class.java, Any::class.java)
+                    .apply { isAccessible = true }
+                NativePlaybackCoordinator::class.java.getDeclaredField("info").apply { isAccessible = true }
+                    .set(owner, JSONObject().put("id", "live-command-fixture").put("streamUrl", url))
+                privateField(owner, "expectedPlaybackUrl").set(owner, url)
+                privateField(owner, "globalPlaylist").set(owner, true)
+                assertTrue("An incomplete global snapshot must not disable valid Next", owner.episodeNavigation(url).next)
+                assertFalse("Another source inherited global Next", owner.episodeNavigation("file:///previous-episode.wav").next)
+                privateField(owner, "globalPlaylist").set(owner, false)
+                assertFalse("Raw media without an episode list exposed Next", owner.episodeNavigation(url).next)
+                NativePlaybackBus.listener = object : NativePlaybackBus.Listener {
+                    override fun onSnapshot(snapshot: JSONObject) {
+                        snapshotCount.incrementAndGet()
+                        snapshotOnMain.set(Looper.myLooper() == Looper.getMainLooper())
+                        owner.onSnapshot(snapshot)
+                    }
+                    override fun onPlayerEvent(type: String, payload: JSONObject) = Unit
+                    override fun onAction(action: String) = Unit
+                }
+                fun cached(position: Long, source: String = url) {
+                    latest.set(owner, JSONObject().put("url", source).put("positionMs", position).put("paused", true))
+                }
+                current.seekTo(5000)
+                // Deliberately stale progress models the interval between the
+                // periodic status ticks; all assertions run in one main turn.
+                cached(1000)
+                command.invoke(owner, "get-status", null)
+                assertEquals(5000L, (latest.get(owner) as JSONObject).getLong("positionMs"))
+                cached(1000)
+                command.invoke(owner, "seek", 2.0)
+                assertEquals(7000L, current.currentPosition)
+                cached(1000)
+                command.invoke(owner, "seek", -1.5)
+                assertEquals(5500L, current.currentPosition)
+
+                cached(700, "file:///obsolete-episode.wav")
+                val before = snapshotCount.get()
+                command.invoke(owner, "get-status", null)
+                command.invoke(owner, "seek", 2.0)
+                assertEquals("An obsolete source published the current player's status", before, snapshotCount.get())
+                assertEquals(700L, (latest.get(owner) as JSONObject).getLong("positionMs"))
+                assertEquals("An obsolete source changed playback", 5500L, current.currentPosition)
+                cached(1000)
+            }
+            // Calls from socket/background threads must still read Media3 on
+            // its application looper rather than querying it off-thread.
+            snapshotOnMain.set(false)
+            val inactive = AtomicBoolean()
+            NativePlayerActivity.requestStatus(url) { inactive.set(true) }
+            instrumentation.waitForIdleSync()
+            assertFalse("A live player incorrectly used inactive fallback", inactive.get())
+            assertTrue("Live snapshot was not delivered on the player looper", snapshotOnMain.get())
+            scenario.moveToState(Lifecycle.State.CREATED)
+            instrumentation.runOnMainSync {
+                val owner = requireNotNull(coordinator)
+                socket.events.clear()
+                playerCommand(owner, "get-status")
+                val stopped = socket.lastVideoEvent()
+                assertEquals("video-status", stopped.getString("type"))
+                assertEquals(5.5, stopped.getJSONObject("payload").getDouble("currentTime"), 0.0)
+                assertTrue("Stopped source did not report paused", stopped.getJSONObject("payload").getBoolean("paused"))
+                val app = context.applicationContext as SeanimeTvApplication
+                val snapshot = requireNotNull(PlaybackRecoverySnapshot.fromJson(JSONObject()
+                    .put("checkpointId", "failed-native-recovery").put("mediaUri", url)))
+                app.claimPlaybackRecovery(snapshot.checkpointId)
+                privateField(owner, "recovering").set(owner, snapshot)
+                NativePlayerActivity.markLaunchPending()
+                NativePlaybackCoordinator::class.java.getDeclaredMethod("reportError", String::class.java).apply { isAccessible = true }
+                    .invoke(owner, "Invalid stream URL")
+                assertFalse("Failed recovery retained its claim", app.ownsPlaybackRecovery(snapshot.checkpointId))
+                assertNull(privateField(owner, "recovering").get(owner))
+                assertFalse("Failed launch blocked the next player", NativePlayerActivity.isVisible())
+            }
+        } finally {
+            scenario.close()
+            NativePlaybackBus.listener = previousListener
+            coordinator?.close()
+            api.close()
+            fixture.delete()
+        }
+    }
+
+    @Test
+    fun pluginSkipDataDrivesNativeHudAndCaptionQueriesUseExactWireSchema() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val fixture = File(context.cacheDir, "native-plugin-controls-${System.nanoTime()}.wav")
+        writeSilentWav(fixture)
+        val url = Uri.fromFile(fixture).toString()
+        val previousListener = NativePlaybackBus.listener
+        val api = SeanimeApiClient()
+        val socket = RecordingSocket()
+        privateField(api, "socket").set(api, socket)
+        var owner: NativePlaybackCoordinator? = null
+        val scenario = ActivityScenario.launch<NativePlayerActivity>(NativePlayerActivity.intent(context,
+            Uri.parse(url), "Plugin controls", "[]", 1000, "{}", """{"paused":true}"""))
+        try {
+            awaitReady(scenario)
+            scenario.onActivity { activity ->
+                val coordinator = NativePlaybackCoordinator(activity, api).also { owner = it }
+                NativePlaybackBus.listener = coordinator
+                privateField(coordinator, "info").set(coordinator, JSONObject().put("id", "skip-fixture").put("streamUrl", url))
+                privateField(coordinator, "expectedPlaybackUrl").set(coordinator, url)
+                (privateField(coordinator, "skipState").get(coordinator) as NativeSkipState).reset("skip-fixture")
+                playerCommand(coordinator, "set-skip-data", JSONObject("""{"op":{"interval":{"startTime":0.5,"endTime":3}},"ed":{"interval":{"startTime":6,"endTime":9}}}"""))
+                socket.events.clear()
+                playerCommand(coordinator, "get-skip-data")
+                val skip = socket.lastVideoEvent()
+                assertEquals("video-skip-data", skip.getString("type"))
+                assertEquals(3.0, skip.getJSONObject("payload").getJSONObject("skipData").getJSONObject("op").getJSONObject("interval").getDouble("endTime"), 0.0)
+                assertNull("Skip data leaked to another source", coordinator.skipTarget("file:///another-episode.wav", 1000, 12000))
+
+                privateField(coordinator, "trackState").set(coordinator, JSONObject().put("subtitleTrack", 1031).put("subtitleIndex", 2))
+                socket.events.clear()
+                playerCommand(coordinator, "get-media-caption-track")
+                val caption = socket.lastVideoEvent()
+                assertEquals("video-media-caption-track", caption.getString("type"))
+                assertEquals(2, caption.getJSONObject("payload").getInt("trackIndex"))
+                assertFalse(caption.getJSONObject("payload").has("trackNumber"))
+                socket.events.clear()
+                playerCommand(coordinator, "get-subtitle-track")
+                assertEquals("video-subtitle-track", socket.lastVideoEvent().getString("type"))
+                assertEquals(1031, socket.lastVideoEvent().getJSONObject("payload").getInt("trackNumber"))
+            }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("native-player-skip").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("native-player-skip").assertTextEquals("Skip intro").performTvClick()
+            scenario.onActivity {
+                val current = requireNotNull(findPlayerView(it.window.decorView)?.player)
+                assertEquals(3000L, current.currentPosition)
+                assertFalse("Skipping resumed a paused source", current.playWhenReady)
+                NativePlayerActivity.control(url, "seekTo", 7000.0)
+            }
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("Skip ending").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("native-player-skip").assertTextEquals("Skip ending")
+            compose.onNodeWithTag("native-player-play").assertIsFocused()
+            scenario.onActivity {
+                playerCommand(requireNotNull(owner), "set-skip-data", null)
+                socket.events.clear()
+                playerCommand(requireNotNull(owner), "get-skip-data")
+                assertTrue(socket.lastVideoEvent().getJSONObject("payload").isNull("skipData"))
+            }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("native-player-skip").fetchSemanticsNodes().isEmpty() }
+            compose.onNodeWithTag("native-player-play").assertIsFocused()
+        } finally {
+            scenario.close()
+            NativePlaybackBus.listener = previousListener
+            owner?.close()
+            api.close()
+            fixture.delete()
+        }
+    }
+
+    @Test
+    fun stoppedAndRecreatedPlayerRestoresLatestMediaAndPlaybackSettings() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
         val first = File(context.cacheDir, "native-lifecycle-first.wav")
         val next = File(context.cacheDir, "native-lifecycle-next.wav")
         writeSilentWav(first)
         writeSilentWav(next)
-        val scenario = ActivityScenario.launch<NativePlayerActivity>(
-            NativePlayerActivity.intent(context, Uri.fromFile(first), "First episode", "[]", 3_000, "{}"),
-        )
+        val firstUri = Uri.fromFile(first)
+        val firstReady = CountDownLatch(1)
+        val initialAutoplay = AtomicBoolean(false)
+        var initialPlayer: Player? = null
+        // ActivityScenario.onActivity waits for UI idle. Continuous autoplay
+        // updates can prevent idle on a slow emulator even after the clip ends.
+        // Observe READY directly, then establish the paused lifecycle checkpoint
+        // before asking ActivityScenario to inspect the player.
+        val readyListener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                val current = initialPlayer ?: return
+                if (playbackState != Player.STATE_READY || firstReady.count == 0L ||
+                    current.currentMediaItem?.localConfiguration?.uri != firstUri) return
+                initialAutoplay.set(current.playWhenReady)
+                current.removeListener(this)
+                current.pause()
+                current.seekTo(4_000)
+                firstReady.countDown()
+            }
+        }
+        val lifecycleMonitor = ActivityLifecycleMonitorRegistry.getInstance()
+        val lifecycleCallback = ActivityLifecycleCallback { activity, stage ->
+            if (activity is NativePlayerActivity && initialPlayer == null &&
+                (stage == Stage.STARTED || stage == Stage.RESUMED)) {
+                val current = findPlayerView(activity.window.decorView)?.player
+                if (current != null && current.currentMediaItem?.localConfiguration?.uri == firstUri) {
+                    initialPlayer = current
+                    current.addListener(readyListener)
+                    readyListener.onPlaybackStateChanged(current.playbackState)
+                }
+            }
+        }
+        instrumentation.runOnMainSync { lifecycleMonitor.addLifecycleCallback(lifecycleCallback) }
+        var scenario: ActivityScenario<NativePlayerActivity>? = null
         try {
+            scenario = ActivityScenario.launch<NativePlayerActivity>(
+                NativePlayerActivity.intent(context, firstUri, "First episode", "[]", 3_000, "{}"),
+            )
+            assertTrue("No READY callback for the exact autoplay fixture", firstReady.await(10, TimeUnit.SECONDS))
+            assertTrue("initial autoplay was lost", initialAutoplay.get())
             awaitReady(scenario)
             var previousPlayer: Player? = null
             scenario.onActivity { activity ->
                 val player = requireNotNull(findPlayerView(activity.window.decorView)?.player)
                 previousPlayer = player
-                player.pause()
-                player.seekTo(4_000)
+                assertFalse(player.playWhenReady)
+                assertEquals(4_000L, player.currentPosition)
                 player.setPlaybackSpeed(1.25f)
                 player.volume = 0.35f
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
@@ -223,14 +469,22 @@ class NativePlayerLifecycleTest {
 
             // A playlist handoff changes the current media without replacing
             // the launch intent. Recreation must restore that newer source.
-            NativePlayerActivity.updateMedia(Uri.fromFile(next).toString(), "Next episode", "[]", 6_000, "{}")
+            NativePlayerActivity.updateMedia(Uri.fromFile(next).toString(), "Next episode", "[]", 0, "{}", paused = true)
             awaitReady(scenario)
             scenario.onActivity { activity ->
+                val current = requireNotNull(findPlayerView(activity.window.decorView)?.player)
+                assertEquals("Explicit zero was replaced by old progress", 0L, current.currentPosition)
+                assertFalse("Explicit paused handoff started playback", current.playWhenReady)
+            }
+            scenario.onActivity { activity ->
+                NativePlayerActivity.updateMedia(Uri.fromFile(next).toString(), "Next episode", "[]", 6_000, "{}", paused = false)
                 requireNotNull(findPlayerView(activity.window.decorView)?.player).apply {
+                    assertTrue("Explicit playing handoff stayed paused", playWhenReady)
                     pause()
                     seekTo(6_000)
                 }
             }
+            awaitReady(scenario)
             scenario.recreate()
             awaitReady(scenario)
             scenario.onActivity { activity ->
@@ -242,25 +496,81 @@ class NativePlayerLifecycleTest {
                 assertTrue(NativePlayerActivity.isVisible())
             }
         } finally {
-            scenario.close()
+            instrumentation.runOnMainSync {
+                lifecycleMonitor.removeLifecycleCallback(lifecycleCallback)
+                initialPlayer?.removeListener(readyListener)
+            }
+            scenario?.close()
             first.delete()
             next.delete()
         }
     }
 
+    @Test
+    fun freshComposeControlsKeepMediaKeysAndBackNavigationIndependent() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val fixture = File(context.cacheDir, "native-tv-focus-${System.nanoTime()}.wav")
+        writeSilentWav(fixture)
+        ActivityScenario.launch<NativePlayerActivity>(NativePlayerActivity.intent(context, Uri.fromFile(fixture),
+            "Remote focus", "[]", 1000, "{}", """{"paused":true}""")).use { scenario ->
+            try {
+                awaitReady(scenario)
+                compose.onNodeWithTag("native-player-play").assertIsFocused()
+                NativeScreenshotEvidence.capture("player-fresh-hud-play-focus")
+                scenario.onActivity { assertFalse(requireNotNull(findPlayerView(it.window.decorView)).useController) }
+                // Left edge of transport, then down, deterministically reaches the first options tile.
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
+                compose.onNodeWithTag("native-player-audio").assertIsFocused()
+                NativeScreenshotEvidence.capture("player-fresh-hud-audio-focus")
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                compose.onNodeWithTag("native-player-dialog").assertIsDisplayed()
+                compose.onNodeWithTag("native-player-choice-0-0").assertIsFocused()
+                NativeScreenshotEvidence.capture("player-fresh-audio-dialog")
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_MEDIA_PLAY)
+                scenario.onActivity { assertTrue(requireNotNull(findPlayerView(it.window.decorView)?.player).playWhenReady) }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_MEDIA_PAUSE)
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                compose.onNodeWithTag("native-player-dialog").assertDoesNotExist()
+                compose.onNodeWithTag("native-player-audio").assertIsFocused()
+                // Reopening creates another dialog window and must transfer
+                // focus again without disturbing the remembered HUD control.
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                compose.onNodeWithTag("native-player-choice-0-0").assertIsFocused()
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                compose.onNodeWithTag("native-player-audio").assertIsFocused()
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                compose.onNodeWithTag("native-player-play").assertDoesNotExist()
+                scenario.onActivity { assertFalse(requireNotNull(findPlayerView(it.window.decorView)?.player).playWhenReady) }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                compose.onNodeWithTag("native-player-audio").assertIsFocused()
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                val deadline = SystemClock.elapsedRealtime() + 10_000
+                while (scenario.state != Lifecycle.State.DESTROYED && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50)
+                assertEquals(Lifecycle.State.DESTROYED, scenario.state)
+            } finally { fixture.delete() }
+        }
+    }
+
     private fun awaitReady(scenario: ActivityScenario<NativePlayerActivity>) {
         val deadline = SystemClock.elapsedRealtime() + 10_000
+        var lastState = "player absent"
         while (SystemClock.elapsedRealtime() < deadline) {
             var ready = false
             scenario.onActivity { activity ->
                 val player = findPlayerView(activity.window.decorView)?.player
                 assertEquals("native player failed to open the fixture", null, player?.playerError)
                 ready = player?.playbackState == Player.STATE_READY
+                lastState = player?.let { "state=${it.playbackState}, position=${it.currentPosition}, duration=${it.duration}, playWhenReady=${it.playWhenReady}" }
+                    ?: "player absent"
             }
             if (ready) return
             SystemClock.sleep(50)
         }
-        throw AssertionError("native player did not prepare the local WAV fixture")
+        throw AssertionError("native player did not prepare the local WAV fixture: $lastState")
     }
 
     private fun awaitError(scenario: ActivityScenario<NativePlayerActivity>) {
@@ -268,10 +578,9 @@ class NativePlayerLifecycleTest {
         while (SystemClock.elapsedRealtime() < deadline) {
             var displayed = false
             scenario.onActivity { activity ->
-                displayed = findPlayerView(activity.window.decorView)?.player?.playerError != null &&
-                    activity.findViewById<View>(R.id.native_player_error_panel).isShown
+                displayed = findPlayerView(activity.window.decorView)?.player?.playerError != null
             }
-            if (displayed) return
+            if (displayed) { compose.onNodeWithTag("native-player-error").assertIsDisplayed(); return }
             SystemClock.sleep(50)
         }
         throw AssertionError("native player did not show recovery controls for a missing source")
@@ -287,9 +596,26 @@ class NativePlayerLifecycleTest {
         return null
     }
 
-    private fun writeSilentWav(file: File) {
+    private fun privateField(value: Any, name: String) = value.javaClass.getDeclaredField(name).apply { isAccessible = true }
+    private fun playerCommand(owner: NativePlaybackCoordinator, action: String, value: Any? = null) {
+        NativePlaybackCoordinator::class.java.getDeclaredMethod("handleCommand", String::class.java, Any::class.java)
+            .apply { isAccessible = true }.invoke(owner, action, value)
+    }
+
+    private class RecordingSocket : WebSocket {
+        val events = mutableListOf<JSONObject>()
+        override fun request(): Request = Request.Builder().url("http://127.0.0.1/").build()
+        override fun queueSize(): Long = 0
+        override fun send(text: String): Boolean { events.add(JSONObject(text)); return true }
+        override fun send(bytes: ByteString): Boolean = false
+        override fun close(code: Int, reason: String?): Boolean = true
+        override fun cancel() = Unit
+        fun lastVideoEvent(): JSONObject = events.last().getJSONObject("payload")
+    }
+
+    private fun writeSilentWav(file: File, seconds: Int = 12) {
         val sampleRate = 8_000
-        val audioBytes = sampleRate * 2 * 12
+        val audioBytes = sampleRate * 2 * seconds
         val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
             .put("RIFF".toByteArray()).putInt(36 + audioBytes).put("WAVEfmt ".toByteArray())
             .putInt(16).putShort(1).putShort(1).putInt(sampleRate).putInt(sampleRate * 2)

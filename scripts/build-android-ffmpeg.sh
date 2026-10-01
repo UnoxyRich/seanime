@@ -20,7 +20,7 @@ if [[ ! -d "$NDK_ROOT/toolchains/llvm/prebuilt" ]]; then
     exit 1
 fi
 
-for required in curl gpg git make nasm patch pkg-config tar; do
+for required in curl gpg gpgv git make nasm patch pkg-config tar; do
     command -v "$required" >/dev/null || {
         echo "Missing build tool: $required" >&2
         exit 1
@@ -51,12 +51,17 @@ FFMPEG_SIGNATURE="$FFMPEG_ARCHIVE.asc"
 curl -fsSL --retry 3 "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" -o "$FFMPEG_ARCHIVE"
 curl -fsSL --retry 3 "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz.asc" -o "$FFMPEG_SIGNATURE"
 curl -fsSL --retry 3 https://ffmpeg.org/ffmpeg-devel.asc -o "$WORK_DIR/ffmpeg-devel.asc"
-if ! gpg --no-autostart --batch --import "$WORK_DIR/ffmpeg-devel.asc" >"$WORK_DIR/key-import.txt" 2>&1; then
+# Verification is public-key-only. Avoid importing into a key database: that
+# consults gpg-agent even though no signing key is needed and fails on sandboxed
+# build hosts without agent sockets. gpgv validates against this isolated keyring;
+# the exact pinned primary-key fingerprint remains mandatory below.
+FFMPEG_KEYRING="$WORK_DIR/ffmpeg-devel.gpg"
+if ! gpg --batch --yes --dearmor --output "$FFMPEG_KEYRING" "$WORK_DIR/ffmpeg-devel.asc" >"$WORK_DIR/key-import.txt" 2>&1; then
     cat "$WORK_DIR/key-import.txt" >&2
-    echo "Could not import the FFmpeg release signing key." >&2
+    echo "Could not decode the FFmpeg release signing key." >&2
     exit 1
 fi
-if ! gpg --no-autostart --batch --status-fd 1 --verify "$FFMPEG_SIGNATURE" "$FFMPEG_ARCHIVE" >"$WORK_DIR/signature-status.txt" 2>&1; then
+if ! gpgv --keyring "$FFMPEG_KEYRING" --status-fd 1 "$FFMPEG_SIGNATURE" "$FFMPEG_ARCHIVE" >"$WORK_DIR/signature-status.txt" 2>&1; then
     cat "$WORK_DIR/signature-status.txt" >&2
     echo "FFmpeg source signature verification failed." >&2
     exit 1

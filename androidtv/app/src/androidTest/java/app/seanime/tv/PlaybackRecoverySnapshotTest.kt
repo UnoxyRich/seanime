@@ -13,6 +13,56 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaybackRecoverySnapshotTest {
+    @Test fun terminatedSourceCannotBeRewrittenAndNeverClearsANewerCheckpoint() {
+        val directory = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "external-recovery-${System.nanoTime()}").apply { mkdirs() }
+        val first = PlaybackRecoverySnapshot("native:first", "https://media.example/a", "owned-process", "Owned A", "[]", "{}",
+            1000, false, false, 1f, 1f, 1f, false, "", JSONObject().put("id", "source-a").toString())
+        val next = first.copy(checkpointId = "native:next", playbackInfoJson = JSONObject().put("id", "source-b").toString())
+        try {
+            PlaybackRecoverySnapshot.write(directory, first)
+            assertFalse(PlaybackRecoverySnapshot.clearSource(directory, "wrong-id", first.mediaUri, first.checkpointId))
+            PlaybackRecoverySnapshot.write(directory, first.copy(positionMs = 2000))
+            assertEquals(2000L, PlaybackRecoverySnapshot.read(directory)?.positionMs)
+            assertTrue(PlaybackRecoverySnapshot.clearSource(directory, "source-a", first.mediaUri, first.checkpointId))
+            PlaybackRecoverySnapshot.write(directory, first) // Previously queued Activity write.
+            assertNull(PlaybackRecoverySnapshot.read(directory))
+            PlaybackRecoverySnapshot.write(directory, next)
+            assertFalse(PlaybackRecoverySnapshot.clearSource(directory, "source-a", first.mediaUri, first.checkpointId))
+            assertFalse(PlaybackRecoverySnapshot.clearCheckpoint(directory, first.checkpointId, first.mediaUri))
+            PlaybackRecoverySnapshot.write(directory, first)
+            assertEquals(next, PlaybackRecoverySnapshot.read(directory))
+            // Even a refreshed URL using the same opaque ticket is a different write target.
+            val refreshed = first.copy(mediaUri = first.mediaUri + "?refresh=1")
+            PlaybackRecoverySnapshot.write(directory, refreshed)
+            assertEquals(refreshed, PlaybackRecoverySnapshot.read(directory))
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun customMediaIdsSurviveOwnedRecoveryDiskAndSourceRefresh() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(context.cacheDir, "playback-long-identity-${System.nanoTime()}").apply { mkdirs() }
+        try {
+            for (id in listOf(2_147_483_648L, 4_294_967_297L, 9_007_199_254_740_991L)) {
+                val source = "https://media.example/$id.mp4"
+                val info = JSONObject().put("id", "playback-$id").put("streamUrl", source).put("media", JSONObject().put("id", id))
+                    .put("episode", JSONObject().put("baseAnime", JSONObject().put("id", id)).put("episodeNumber", 3).put("progressNumber", 3))
+                    .put("onlinestreamParams", JSONObject().put("mediaId", id).put("episodeNumber", 13))
+                val original = PlaybackRecoverySnapshot("native:$id", source, "fixture", "Owned identity", "[]", "{}",
+                    12_000, false, false, 1f, 1f, 1f, false, "", info.toString())
+                PlaybackRecoverySnapshot.write(directory, original)
+                val restored = requireNotNull(PlaybackRecoverySnapshot.read(directory)).withStream(source + "?refresh=1", "native:next-$id", "next-process")
+                val retained = JSONObject(restored.playbackInfoJson)
+                assertEquals(id, retained.getJSONObject("media").getLong("id"))
+                assertEquals(id, retained.getJSONObject("episode").getJSONObject("baseAnime").getLong("id"))
+                assertEquals(id, retained.getJSONObject("onlinestreamParams").getLong("mediaId"))
+                assertEquals("playback-$id", retained.getString("id"))
+                assertEquals(3, retained.getJSONObject("episode").getInt("episodeNumber"))
+                assertEquals(13, retained.getJSONObject("onlinestreamParams").getInt("episodeNumber"))
+                assertFalse(restored.playWhenReady)
+            }
+        } finally { directory.deleteRecursively() }
+    }
+
     @Test
     fun persistedSnapshotRetainsDecoderStateAndTrackPreferences() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
