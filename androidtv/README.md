@@ -12,9 +12,9 @@ The package ID remains `app.seanime.tv`, so signed in-place upgrades retain the
 existing Android data/cache directories, databases and persisted SAF grants.
 The repository's GPL-3.0 license and upstream attribution remain unchanged.
 
-The current corrective revision passes 381 host JVM tests, 34 layout comparisons,
+The current corrective revision passes 383 host JVM tests, 34 layout comparisons,
 lint and both ABI builds. The latest completed GitHub TV suite reports
-169/183 passes, 9 failures and 5 isolated skips without a crash; current fixes
+170/183 passes, 8 failures and 5 isolated skips without a crash; current fixes
 and the strengthened owned-video journey require a new device run.
 Live AniList remains blocked by HTTP 403. See the
 [current remote UI review and exact APK hashes](acceptance/2026-10-01-remote-ui-review.md)

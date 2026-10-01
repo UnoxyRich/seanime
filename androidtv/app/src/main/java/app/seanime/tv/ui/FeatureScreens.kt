@@ -1280,12 +1280,15 @@ private fun SettingsScreen(repo: SeanimeRepository, onPlatformAction: (String) -
             onRowFocused = { id ->
                 // Reattaching a page may briefly focus another visible row. That
                 // fallback must not replace the saved row we are still restoring.
-                if (restorePage != pageKey || requestedRow == id) {
+                // A departing page can still receive Android fallback focus before
+                // its nodes are disposed. It no longer owns its saved focus state.
+                val activePage = if (devicePage) "device" else selected?.let { "section:$it" } ?: "root"
+                if (!indexTools && activePage == pageKey && (restorePage != pageKey || requestedRow == id)) {
                     lastFocusedRow = id
                     if (restorePage == pageKey) { restorePage = null; restoreRow = null }
                 }
             },
-            modifier = Modifier.onPreviewKeyEvent { event ->
+            modifier = Modifier.testTag("settings-page-$pageKey").onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && event.key in listOf(
                         Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight,
                         Key.DirectionCenter, Key.Enter, Key.NumPadEnter,

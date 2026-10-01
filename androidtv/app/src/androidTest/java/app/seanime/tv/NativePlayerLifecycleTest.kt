@@ -24,6 +24,7 @@ import app.seanime.tv.platform.NativePlaybackBus
 import app.seanime.tv.platform.NativePlaybackCoordinator
 import app.seanime.tv.platform.NativeSkipState
 import app.seanime.tv.ui.performTvClick
+import app.seanime.tv.ui.awaitTvWindowFocus
 import okhttp3.Request
 import okhttp3.WebSocket
 import okio.ByteString
@@ -526,15 +527,20 @@ class NativePlayerLifecycleTest {
                 awaitHudFocus(scenario, "native-player-play")
                 NativeScreenshotEvidence.capture("player-fresh-hud-play-focus")
                 scenario.onActivity { assertFalse(requireNotNull(findPlayerView(it.window.decorView)).useController) }
-                // Left edge of transport, then down, deterministically reaches the first options tile.
+                // Disabled Previous keeps repeated Left on Rewind. The options
+                // row remains reachable with Down, then Left from Subtitles.
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                awaitHudFocus(scenario, "native-player-rewind")
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                awaitHudFocus(scenario, "native-player-rewind")
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-                compose.onNodeWithTag("native-player-audio").assertIsFocused()
+                awaitHudFocus(scenario, "native-player-subtitles")
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                awaitHudFocus(scenario, "native-player-audio")
                 NativeScreenshotEvidence.capture("player-fresh-hud-audio-focus")
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
                 compose.onNodeWithTag("native-player-dialog").assertIsDisplayed()
-                compose.onNodeWithTag("native-player-choice-0-0").assertIsFocused()
+                compose.onNodeWithTag("native-player-choice-0-0").awaitTvWindowFocus().assertIsFocused()
                 NativeScreenshotEvidence.capture("player-fresh-audio-dialog")
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_MEDIA_PLAY)
                 scenario.onActivity { assertTrue(requireNotNull(findPlayerView(it.window.decorView)?.player).playWhenReady) }
@@ -544,7 +550,7 @@ class NativePlayerLifecycleTest {
                 // Reopening creates another dialog window and must transfer
                 // focus again without disturbing the remembered HUD control.
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
-                compose.onNodeWithTag("native-player-choice-0-0").assertIsFocused()
+                compose.onNodeWithTag("native-player-choice-0-0").awaitTvWindowFocus().assertIsFocused()
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
                 awaitTrackDialogClosed(scenario, "native-player-audio")
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)

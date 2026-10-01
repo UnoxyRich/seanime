@@ -58,10 +58,11 @@ class NativeSettingsNavigationTest {
         }
         assertEquals(actions.map { it.second }, fixture.platformActions.takeLast(actions.size))
         val lastPosition = compose.onNodeWithTag("settings-row-device:update").fetchSemanticsNode().positionInRoot.y
+        NativeScreenshotEvidence.capture("settings-device-before-return")
         pressRemote(KeyEvent.KEYCODE_BACK)
         awaitFocused("settings-row-device")
         pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
-        awaitFocused("settings-row-device:update")
+        awaitFocused("settings-row-device:update", failureEvidence = "settings-device-reopen-focus-failure")
         assertWholeRowVisible("settings-row-device:update")
         assertEquals("Returning to Device & accounts must retain scroll", lastPosition,
             compose.onNodeWithTag("settings-row-device:update").fetchSemanticsNode().positionInRoot.y, 1f)
@@ -109,10 +110,11 @@ class NativeSettingsNavigationTest {
         awaitFocused("settings-row-field:libraryPaths")
         assertEquals(patchesBeforeCancel, fixture.patches.size)
         assertWholeRowVisible("settings-row-field:libraryPaths")
+        NativeScreenshotEvidence.capture("settings-library-before-return")
         pressRemote(KeyEvent.KEYCODE_BACK)
         awaitFocused("settings-row-section:library")
         pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
-        awaitFocused("settings-row-field:libraryPaths")
+        awaitFocused("settings-row-field:libraryPaths", failureEvidence = "settings-library-reopen-focus-failure")
         assertWholeRowVisible("settings-row-field:libraryPaths")
     }
 
@@ -138,21 +140,46 @@ class NativeSettingsNavigationTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
     }
 
-    private fun awaitFocused(tag: String) {
+    private fun awaitFocused(tag: String, failureEvidence: String? = null) {
         var observed = emptyList<String>()
+        var pagePresent = false
+        var rootState = "missing"
+        val expectedPage = if (tag == "settings-row-device:update") "device" else "section:library"
+        val knownTags = setOf("settings-back", "settings-refresh", "settings-row-device", "settings-library-index",
+            "settings-row-section:library", "settings-row-device:update", "settings-row-device:anime-folder",
+            "settings-row-device:accounts", "settings-row-field:apiToken", "settings-row-field:autoPlayNextEpisode",
+            "settings-row-field:defaultPlaybackSource", "settings-row-field:libraryPaths", "settings-row-field:torrentProvider",
+            "settings-row-advanced") + listOf("manga-folder", "additional-anime-folder", "screenshot-folder",
+            "torrent-folder", "folder-access", "anilist", "mal").map { "settings-row-device:$it" }
         try {
             compose.waitUntil(10_000) {
                 val ready = compose.onAllNodes(hasTestTag(tag) and isFocused() and isEnabled()).fetchSemanticsNodes()
                     .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
-                if (!ready) observed = compose.onAllNodes(isFocused()).fetchSemanticsNodes().map { node ->
+                if (!ready) observed = compose.onAllNodes(isFocused()).fetchSemanticsNodes().take(4).map { node ->
                     val name = node.config.getOrElseNullable(androidx.compose.ui.semantics.SemanticsProperties.TestTag) { null }
-                    "${name ?: "untagged"}:window=${(node.root as ViewRootForTest).view.hasWindowFocus()}"
+                    val view = (node.root as ViewRootForTest).view
+                    "${name?.takeIf { it in knownTags } ?: "other"}:rootHasFocus=${view.hasFocus()}:rootFocused=${view.isFocused}:window=${view.hasWindowFocus()}"
+                }
+                if (failureEvidence != null) {
+                    val pages = compose.onAllNodesWithTag("settings-page-$expectedPage").fetchSemanticsNodes()
+                    pagePresent = pages.isNotEmpty()
+                    val root = pages.firstOrNull() ?: compose.onAllNodes(isRoot()).fetchSemanticsNodes().firstOrNull()
+                    rootState = root?.let {
+                        val view = (it.root as ViewRootForTest).view
+                        "hasFocus=${view.hasFocus()},focused=${view.isFocused},window=${view.hasWindowFocus()}"
+                    } ?: "missing"
                 }
                 ready
             }
             compose.waitForIdle()
         } catch (failure: Throwable) {
+            // These two call sites contain only known, masked Settings fixture values.
+            failureEvidence?.let { name ->
+                runCatching { NativeScreenshotEvidence.capture(name) }.exceptionOrNull()?.let(failure::addSuppressed)
+            }
             Log.e("NativeSettingsFocus", "Expected $tag; observed=$observed", failure)
+            if (failureEvidence != null) throw AssertionError(
+                "Settings restore expected=$tag pagePresent=$pagePresent root=[$rootState] focused=$observed", failure)
             throw failure
         }
     }

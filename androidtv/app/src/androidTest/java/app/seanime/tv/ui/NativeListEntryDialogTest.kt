@@ -4,6 +4,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.test.platform.app.InstrumentationRegistry
 import app.seanime.tv.NativeScreenshotEvidence
 import app.seanime.tv.data.*
 import okhttp3.mockwebserver.Dispatcher
@@ -39,7 +40,15 @@ class NativeListEntryDialogTest {
     @Test fun statusEditOmitsTheExistingScoreProgressAndDates() = fixture { fixture ->
         awaitEditor()
         compose.onNodeWithTag("list-entry-status").performTvClick()
-        compose.onNodeWithText("Paused").performTvClick()
+        // The choice dialog's selected row must own Android's window before a remote move.
+        awaitFocused(hasText("✓ Watching"))
+        compose.onNodeWithText("✓ Watching").awaitTvWindowFocus().assertIsFocused()
+        listOf("Plan to watch", "Completed", "Paused").forEach { label ->
+            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_DOWN)
+            compose.onNodeWithText(label).assertIsFocused()
+        }
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+        awaitFocused("list-entry-status")
         compose.onNodeWithTag("list-entry-status").assertIsFocused()
         compose.onNodeWithTag("list-entry-save").performTvClick()
         awaitClosed()
@@ -230,8 +239,9 @@ class NativeListEntryDialogTest {
 
     private fun awaitEditor() = compose.waitUntil(10_000) { compose.onAllNodesWithTag("list-entry-status").fetchSemanticsNodes().isNotEmpty() }
     private fun awaitClosed() = compose.waitUntil(10_000) { compose.onAllNodesWithTag("list-entry-dialog").fetchSemanticsNodes().isEmpty() }
-    private fun awaitFocused(tag: String) = compose.waitUntil(10_000) {
-        compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes()
+    private fun awaitFocused(tag: String) = awaitFocused(hasTestTag(tag))
+    private fun awaitFocused(matcher: SemanticsMatcher) = compose.waitUntil(10_000) {
+        compose.onAllNodes(matcher and isFocused()).fetchSemanticsNodes()
             .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
     }
     private fun editNumber(field: String, value: String, save: Boolean = true, evidenceName: String? = null) {
@@ -261,6 +271,7 @@ class NativeListEntryDialogTest {
         compose.onNode(input).performImeAction()
         compose.onNode(hasText("Save") and hasAnyAncestor(isDialog() and hasAnyDescendant(input))).performTvClick()
         compose.onNode(input).assertDoesNotExist()
+        awaitFocused("list-entry-date-$field-year")
         compose.onNodeWithTag("list-entry-date-$field-year").assertIsFocused()
     }
     private fun chooseDatePart(field: String, component: String, value: Int?) {

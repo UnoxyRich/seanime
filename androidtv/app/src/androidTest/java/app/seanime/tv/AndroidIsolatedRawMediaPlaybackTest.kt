@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Build
 import android.net.Uri
 import android.os.Process
@@ -34,7 +35,7 @@ import app.seanime.tv.platform.NativePlaybackBus
 import app.seanime.tv.platform.NativePlaybackCoordinator
 import app.seanime.tv.platform.NativeHostQueue
 import app.seanime.tv.platform.NativeExternalPlaybackService
-import app.seanime.tv.ui.performTvClick
+import app.seanime.tv.ui.awaitTvWindowFocus
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
@@ -293,8 +294,29 @@ class AndroidIsolatedRawMediaPlaybackTest {
             .setPackage(instrumentation.context.packageName).putExtra("source", uri.toString()).putExtra("finish", finish))
         ContextCompat.registerReceiver(context, receiver, IntentFilter(TestStreamingExternalPlayerActivity.RESULT), ContextCompat.RECEIVER_EXPORTED)
         try {
-            compose.onNodeWithTag("native-player-options").performTvClick()
-            compose.onNodeWithTag("native-player-choice-external").performScrollTo().performTvClick()
+            val candidates = context.packageManager.queryIntentActivities(
+                Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/*"), PackageManager.MATCH_DEFAULT_ONLY)
+            assertTrue("The installed test APK must resolve the actual HTTP video handoff", candidates.any {
+                it.activityInfo.packageName == instrumentation.context.packageName &&
+                    it.activityInfo.name == TestStreamingExternalPlayerActivity::class.java.name
+            })
+            // The raw-route exercise leaves the real timeline focused. Reach
+            // More and its last choice through the remote, waiting for the
+            // exact focused Android window before sending Select.
+            awaitNativeFocus("native-player-seek")
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            awaitNativeFocus("native-player-play")
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            moveNativeFocus("native-player-options", KeyEvent.KEYCODE_DPAD_RIGHT, 3)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitNativeFocus("native-player-choice-speed")
+            for (id in listOf("volume", "auto-next", "translate", "screenshot", "external")) {
+                key(KeyEvent.KEYCODE_DPAD_DOWN)
+                awaitNativeFocus("native-player-choice-$id")
+            }
+            NativeScreenshotEvidence.capture("isolated-go-external-open-focus")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("native-player-dialog").fetchSemanticsNodes().isEmpty() }
             waitExternal("Android did not show the owned player in its chooser") {
                 if (results.any { it.getStringExtra("type") == "ready" }) return@waitExternal true
                 val matches = instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText("Owned test player").orEmpty()
@@ -347,7 +369,7 @@ class AndroidIsolatedRawMediaPlaybackTest {
             command(finish = true)
             val returned = awaitPlayer(uri) { it.ready && it.paused }
             assertEquals("Returning must preserve the native pause checkpoint", pausedPosition, returned.position)
-            compose.onNodeWithTag("native-player-options").assertIsFocused()
+            awaitNativeFocus("native-player-options")
             assertNull("External session lease survived native return", app.externalPlaybackLease.current)
             waitExternal("Foreground host service survived native return") {
                 @Suppress("DEPRECATION")
@@ -357,6 +379,22 @@ class AndroidIsolatedRawMediaPlaybackTest {
             NativeScreenshotEvidence.capture("isolated-go-external-return-paused")
             manifest.put("externalReturnPaused", true).put("externalHostReleased", true)
         } finally { command(finish = true); context.unregisterReceiver(receiver) }
+    }
+
+    private fun hasNativeFocus(tag: String): Boolean =
+        compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes().isNotEmpty()
+
+    private fun awaitNativeFocus(tag: String) {
+        compose.waitUntil(15_000) { hasNativeFocus(tag) }
+        compose.onNodeWithTag(tag).awaitTvWindowFocus(15_000).assertIsDisplayed().assertIsFocused()
+    }
+
+    private fun moveNativeFocus(tag: String, direction: Int, maximumPresses: Int) {
+        repeat(maximumPresses) {
+            if (hasNativeFocus(tag)) { awaitNativeFocus(tag); return }
+            key(direction)
+        }
+        awaitNativeFocus(tag)
     }
 
     private fun waitExternal(message: String, condition: () -> Boolean) {

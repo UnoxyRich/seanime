@@ -71,16 +71,23 @@ class NativeLibraryManagementTest {
         scrollMain("library-file-rename-/owned/one.mkv").performTvClick()
         editRename("Renamed episode.mkv")
         compose.onNodeWithTag("library-rename-preview").assertTextContains("Preview: /owned/Renamed episode.mkv")
-        compose.onNodeWithTag("library-rename-cancel").performTvClick()
+        remote(KeyEvent.KEYCODE_DPAD_DOWN)
+        compose.onNodeWithTag("library-rename-cancel").assertIsFocused()
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
         assertTrue(fixture.renames.isEmpty())
         awaitFocused("library-file-rename-/owned/one.mkv")
-        compose.onNodeWithTag("library-file-rename-/owned/one.mkv").performTvClick()
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
         editRename("Renamed episode.mkv")
-        compose.onNodeWithTag("library-rename-confirm").performTvClick()
+        remote(KeyEvent.KEYCODE_DPAD_DOWN)
+        compose.onNodeWithTag("library-rename-cancel").assertIsFocused()
+        remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        compose.onNodeWithTag("library-rename-confirm").assertIsFocused()
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
         awaitTag("library-rename-error")
         compose.onNodeWithTag("library-rename-preview").assertTextContains("Preview: /owned/Renamed episode.mkv")
+        awaitFocused("library-rename-confirm")
         NativeScreenshotEvidence.capture("library-rename-retained-filename")
-        compose.onNodeWithTag("library-rename-confirm").performTvClick()
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
         awaitFocused("library-tools-refresh")
         assertEquals(2, fixture.renames.size)
         fixture.renames.forEach { body ->
@@ -123,11 +130,17 @@ class NativeLibraryManagementTest {
         compose.onNodeWithTag("library-bulk-$action").performTvClick()
     }
     private fun editRename(name: String) {
-        compose.onNodeWithTag("library-rename-edit").assertIsFocused().performTvClick()
-        compose.onNodeWithTag("library-rename-input").assertIsFocused().performTextReplacement(name)
+        awaitFocused("library-rename-edit")
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
+        awaitFocused("library-rename-input")
+        compose.onNodeWithTag("library-rename-input").performTextReplacement(name)
         compose.onNodeWithTag("library-rename-input").performImeAction()
         compose.onNodeWithTag("text-entry-save").performTvClick()
-        compose.onNodeWithTag("library-rename-edit").assertIsFocused()
+        awaitFocused("library-rename-edit")
+    }
+    private fun remote(code: Int) {
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(code)
+        compose.waitForIdle()
     }
     private fun scrollMain(tag: String): SemanticsNodeInteraction {
         compose.onNode(hasScrollToNodeAction() and SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))

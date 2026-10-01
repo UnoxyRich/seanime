@@ -1,5 +1,7 @@
 package app.seanime.tv
 
+import java.io.File
+
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -64,7 +66,7 @@ class MainActivity : ComponentActivity() {
         (application as SeanimeTvApplication).restoreNativeSession(api)
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or
             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-        setupPath = savedInstanceState?.getString("setup-path") ?: filesDir.resolve("seanime/library").apply { mkdirs() }.absolutePath
+        setupPath = savedInstanceState?.getString("setup-path") ?: nativeDefaultLibraryPath(filesDir)
         platform = NativePlatformActions(this, onStorageChanged = { purpose, root ->
             if (root != null) {
                 val path = root.optString("path")
@@ -379,6 +381,10 @@ class MainActivity : ComponentActivity() {
 
 }
 
+/** New app-owned libraries must use the same physical path as filesystem enumeration. */
+internal fun nativeDefaultLibraryPath(filesDir: File): String =
+    filesDir.resolve("seanime/library").apply { mkdirs() }.canonicalPath
+
 /** Restricted status intentionally omits version; a new server has no saved settings yet. */
 internal fun nativeSessionReady(status: ServerStatus?): Boolean =
     status != null && status.ready && status.version.isNotBlank() && status.settings.length() > 0
@@ -389,7 +395,8 @@ internal fun SetupScreen(path: String, chooseFolder: () -> Unit, onContinue: (Bo
     var torrent by rememberSaveable { mutableStateOf(false) }
     val continueFocus = remember { FocusRequester() }
     val continueFocusGranted = remember { mutableStateOf(false) }
-    val folderLabel = if (path == LocalContext.current.filesDir.resolve("seanime/library").absolutePath) "Internal library on this TV" else path
+    val internalLibrary = LocalContext.current.filesDir.resolve("seanime/library")
+    val folderLabel = if (path == internalLibrary.absolutePath || path == internalLibrary.canonicalPath) "Internal library on this TV" else path
     Box(Modifier.fillMaxSize().padding(48.dp), contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 740.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             Text("Welcome to Seanime TV", style = MaterialTheme.typography.headlineLarge)

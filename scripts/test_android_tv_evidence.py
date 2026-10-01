@@ -164,6 +164,25 @@ os.execvp(sys.argv[2], sys.argv[2:])
         self.assertEqual(evidence.clear_prior_screenshots(), "cleared")
         self.assertFalse(list(self.screenshots.iterdir()))
 
+    def test_absent_or_empty_screenshot_directory_is_not_a_corrupt_archive(self):
+        for exists in (True, False):
+            with self.subTest(directory_exists=exists):
+                if not exists:
+                    self.screenshots.rmdir()
+                files, state = evidence.collect_screenshots()
+                self.assertEqual(files, {})
+                self.assertEqual(state["status"], "not-created")
+                self.assertEqual(state["captured"], [])
+                self.assertEqual(state["notCaptured"], sorted(evidence.SCENARIOS))
+
+    def test_screenshot_directory_symlink_never_reads_its_target(self):
+        self.write_pair()
+        alternate = self.screenshots.with_name("private-target")
+        self.screenshots.rename(alternate)
+        self.screenshots.symlink_to(alternate, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "Empty screenshot archive"):
+            evidence.collect_screenshots()
+
     def test_zero_exit_remote_errors_are_rejected_without_retaining_shell_output(self):
         command = evidence.exec_out_run_as("sh", "-c", 'printf "PRIVATE_SENTINEL\\n" >&2; exit 17')
         with patch.object(evidence, "screenshot_command", return_value=command):
@@ -371,6 +390,39 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
                              ("keyTrace", [{"key": "PRIVATE_SENTINEL", "focused": "native-player-play"}])):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 evidence.sanitize_journey_manifest({**self.journey_manifest(directory), field: value}, directory)
+
+    def test_canonical_journey_observations_keep_only_exact_owned_paths(self):
+        original = self.journey_manifest()
+        for prefix in ("/data/user/0/", "/data/data/"):
+            data = json.loads(json.dumps(original).replace("/data/user/0/", prefix))
+            directory = data["root"].split("/")[-1]
+            data.update(rootCanonical=True, appFilesAliasObserved=prefix == "/data/data/",
+                        explorerFilePath=data["mediaPath"], explorerIndexedPath=data["mediaPath"])
+            clean = evidence.sanitize_journey_manifest(data, directory)
+            self.assertTrue(clean["rootCanonical"])
+            self.assertEqual(clean["explorerFilePath"], clean["mediaPath"])
+            self.assertEqual(clean["explorerIndexedPath"], clean["mediaPath"])
+            self.assertNotIn("/data/", json.dumps(clean))
+            for key, bad in (("rootCanonical", 1), ("appFilesAliasObserved", "true"),
+                             ("explorerFilePath", "/private/PRIVATE_SENTINEL"), ("explorerIndexedPath", [])):
+                with self.subTest(prefix=prefix, key=key), self.assertRaises(ValueError):
+                    evidence.sanitize_journey_manifest({**data, key: bad}, directory)
+
+    def test_canonical_management_observations_bound_explorer_membership_targets(self):
+        invocation = "owned-library-management"
+        data = self.owned_manifest(invocation)
+        directory = data["root"].split("/")[-1]
+        targets = [data["root"] + "/library/Renamed owned copy.mp4", data["mediaPath"]]
+        data.update(rootCanonical=True, appFilesAliasObserved=False, explorerOwnedPaths=targets)
+        clean = evidence.sanitize_owned_manifest(data, directory, invocation)
+        self.assertEqual(clean["explorerOwnedPaths"], ["library/Renamed owned copy.mp4", "library/Original generated video.mp4"])
+        self.assertTrue(clean["rootCanonical"])
+        self.assertFalse(clean["appFilesAliasObserved"])
+        for key, bad in (("rootCanonical", "true"), ("appFilesAliasObserved", 0),
+                         ("explorerOwnedPaths", targets + ["/private/PRIVATE_SENTINEL"]),
+                         ("explorerOwnedPaths", [targets[0], targets[0]]), ("explorerOwnedPaths", [True, targets[1]])):
+            with self.subTest(key=key, bad=bad), self.assertRaises(ValueError):
+                evidence.sanitize_owned_manifest({**data, key: bad}, directory, invocation)
 
     def picture_manifest(self):
         manifest = self.journey_manifest()

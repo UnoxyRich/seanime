@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * Bounded-response regressions on production routes.
  * Each gate is explicitly released in finally and times out after eight seconds.
  * Remote journeys use no focus assignment, semantic click, forced scrolling, or enlarged wait.
- * One explicitly labeled regression injects Android's automatic rail fallback to model a removed view.
+ * Explicitly labeled regressions inject platform fallback focus to model outgoing views.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [34],
@@ -220,6 +220,45 @@ class NativeTvLoadingFocusTest {
         backend.gate.release()
         compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("settings-row-section:library") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         origin.assertIsFocused()
+    }
+
+    @Test fun departingSettingsFallbackCannotOverwriteTheSavedDeviceRow() = fixture(Delay.SETTINGS_CATEGORY) { _ ->
+        var previous = TvFeature.LIBRARY
+        for (feature in TvFeature.entries.drop(1).takeWhile { it.ordinal <= TvFeature.SETTINGS.ordinal }) {
+            key(compose.onNodeWithTag("nav-${previous.name}").assertIsFocused(), Key.DirectionDown)
+            compose.onNodeWithTag("nav-${feature.name}").assertIsFocused()
+            previous = feature
+        }
+        val settings = compose.onNodeWithTag("nav-SETTINGS").assertIsFocused()
+        key(settings, Key.DirectionCenter)
+        compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("settings-row-section:library") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        key(settings, Key.DirectionRight)
+        key(compose.onNodeWithTag("settings-row-device").assertIsFocused(), Key.DirectionCenter)
+        val deviceRows = listOf("anime-folder", "manga-folder", "additional-anime-folder", "screenshot-folder",
+            "torrent-folder", "folder-access", "anilist", "mal", "accounts", "update")
+        deviceRows.forEachIndexed { index, id ->
+            val row = compose.onNodeWithTag("settings-row-device:$id").assertIsFocused()
+            if (index < deviceRows.lastIndex) key(row, Key.DirectionDown)
+        }
+        val lastRow = compose.onNodeWithTag("settings-row-device:update").assertIsFocused()
+        val lastY = lastRow.fetchSemanticsNode().positionInRoot.y
+        val fallback = requireNotNull(compose.onNodeWithTag("settings-row-device:accounts")
+            .fetchSemanticsNode().config[SemanticsActions.RequestFocus].action)
+        var accepted = false
+        compose.runOnUiThread {
+            val time = SystemClock.uptimeMillis()
+            compose.activity.dispatchKeyEvent(KeyEvent(time, time, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
+            compose.activity.dispatchKeyEvent(KeyEvent(time, time + 1, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
+            // Explicit platform-fallback simulation, not remote input: Android can
+            // focus an attached outgoing node after navigation but before disposal.
+            accepted = fallback()
+        }
+        assertTrue("The real outgoing row must accept the simulated fallback before disposal", accepted)
+        compose.waitForIdle()
+        key(compose.onNodeWithTag("settings-row-device").assertIsFocused(), Key.DirectionCenter)
+        lastRow.assertIsFocused().assertIsDisplayed()
+        assertEquals("The saved Device row must retain its scroll position", lastY,
+            lastRow.fetchSemanticsNode().positionInRoot.y, 1f)
     }
 
     private fun openDetail() {

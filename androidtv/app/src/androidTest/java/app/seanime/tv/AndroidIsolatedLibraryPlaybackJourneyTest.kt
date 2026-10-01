@@ -84,7 +84,9 @@ class AndroidIsolatedLibraryPlaybackJourneyTest {
         val picturePreferences = context.getSharedPreferences("native-player-settings", 0)
         val previousPicturePreset = picturePreferences.getString("anime4k", null)
         assertEquals("Retained Anime4K settings must already be off", "off", previousPicturePreset ?: "off")
-        val root = File(context.filesDir, "native-go-fixture-${UUID.randomUUID()}")
+        // Explorer resolves filesystem aliases during enumeration; use the same
+        // canonical path for fixture settings, imported records, and expected UI tags.
+        val root = File(context.filesDir.canonicalFile, "native-go-fixture-${UUID.randomUUID()}")
         check(root.parentFile!!.canonicalFile == context.filesDir.canonicalFile && root.mkdir())
         val data = File(root, "data")
         val cache = File(root, "cache")
@@ -96,6 +98,8 @@ class AndroidIsolatedLibraryPlaybackJourneyTest {
             .put("libraryDir", library.absolutePath).put("mediaPath", video.absolutePath).put("indexPath", indexFile.absolutePath)
             .put("retainedDataDir", File(context.filesDir, "seanime/data").absolutePath).put("processId", Process.myPid())
             .put("requiresColdRestart", true).put("recoveryPath", recovery.absolutePath).put("outcome", "running")
+            .put("rootCanonical", root.absolutePath == root.canonicalPath)
+            .put("appFilesAliasObserved", context.filesDir.absolutePath != context.filesDir.canonicalPath)
             .put("scope", "owned generated video; actual MainActivity remote journey; no scan, matching, live anime or speaker-quality claim")
             .put("keyTrace", keyTrace)
         fun checkpoint(stage: String) {
@@ -160,6 +164,18 @@ class AndroidIsolatedLibraryPlaybackJourneyTest {
             verifyIsolation()
             assertEquals(true, apiCall { repo.request("POST", "/api/v1/library/local-files/import", JSONObject().put("dataFilePath", indexFile.absolutePath)) })
             verifyIndex()
+            val explorer = apiCall { repo.request("GET", "/api/v1/library/explorer/file-tree") } as JSONObject
+            fun findExplorerFile(node: JSONObject): JSONObject? {
+                if (node.optString("path") == video.absolutePath) return node
+                val children = node.optJSONArray("children") ?: return null
+                return (0 until children.length()).firstNotNullOfOrNull { findExplorerFile(children.getJSONObject(it)) }
+            }
+            val explorerFile = requireNotNull(findExplorerFile(explorer.getJSONObject("root"))) {
+                "The signed Explorer tree must enumerate the generated fixture before remote navigation"
+            }
+            assertEquals(video.absolutePath, explorerFile.getJSONObject("localFile").getString("path"))
+            manifest.put("explorerFilePath", explorerFile.getString("path"))
+                .put("explorerIndexedPath", explorerFile.getJSONObject("localFile").getString("path"))
             val source = client.absoluteUrl("/api/v1/mediastream/file").toHttpUrl().newBuilder().addQueryParameter("path", video.absolutePath).build()
             val uri = Uri.parse(source.toString())
             expectedUri = uri

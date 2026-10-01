@@ -5,6 +5,8 @@ import android.os.Process
 import android.os.SystemClock
 import android.system.Os
 import android.util.Log
+import android.view.KeyEvent
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -59,7 +61,9 @@ class AndroidIsolatedLibraryManagementTest {
         val pendingRecovery = File(context.filesDir, "androidtv-playback-recovery.json.tmp")
         assertFalse("Preserve retained recovery outside this test before running", recovery.exists())
         assertFalse("Preserve retained pending recovery outside this test before running", pendingRecovery.exists())
-        val root = File(context.filesDir, "native-go-fixture-${UUID.randomUUID()}")
+        // Explorer resolves filesystem aliases during enumeration; use the same
+        // canonical path for fixture settings, imported records, and expected UI tags.
+        val root = File(context.filesDir.canonicalFile, "native-go-fixture-${UUID.randomUUID()}")
         check(root.parentFile!!.canonicalFile == context.filesDir.canonicalFile && root.mkdir())
         val data = File(root, "data")
         val cache = File(root, "cache")
@@ -76,6 +80,8 @@ class AndroidIsolatedLibraryManagementTest {
             .put("mediaPath", original.absolutePath).put("indexPath", indexFile.absolutePath).put("ownedCopyPaths", JSONArray(ownedPaths.toList()))
             .put("retainedDataDir", File(context.filesDir, "seanime/data").absolutePath).put("processId", Process.myPid())
             .put("requiresColdRestart", true).put("recoveryPath", recovery.absolutePath).put("outcome", "running")
+            .put("rootCanonical", root.absolutePath == root.canonicalPath)
+            .put("appFilesAliasObserved", context.filesDir.absolutePath != context.filesDir.canonicalPath)
             .put("scope", "existing import endpoint; unmatched owned native library actions; no scan or external metadata")
             .put("indexReadbacks", readbacks)
         fun checkpoint(stage: String) {
@@ -162,15 +168,19 @@ class AndroidIsolatedLibraryManagementTest {
             main.onActivity { activity -> hostClient = activity.javaClass.getDeclaredField("api").apply { isAccessible = true }.get(activity) as SeanimeApiClient }
             assertFalse("MainActivity must use a Go-issued client proof", requireNotNull(hostClient).snapshotSession().identityProof.isNullOrBlank())
             compose.onNodeWithText("Manage").performTvClick()
+            awaitLibraryReady()
             awaitTag("library-file-select-${first.absolutePath}")
             scrollMain("library-file-select-${first.absolutePath}").performTvClick()
             scrollMain("library-file-select-${second.absolutePath}").performTvClick()
             scrollMain("library-selected-actions").performTvClick()
+            awaitFocused("library-bulk-match")
             compose.onNodeWithTag("library-bulk-actions").performScrollToNode(hasTestTag("library-bulk-ignore"))
             compose.onNodeWithTag("library-bulk-ignore").performTvClick()
-            awaitTag("library-bulk-confirmation")
+            awaitFocused("library-bulk-confirm-cancel")
             verifyIsolation()
-            compose.onNodeWithTag("library-bulk-apply").performTvClick()
+            remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+            compose.onNodeWithTag("library-bulk-apply").assertIsFocused()
+            remote(KeyEvent.KEYCODE_DPAD_CENTER)
             awaitClosed("library-bulk-dialog")
             awaitLibraryReady()
             val ignored = readIndex("native-bulk-ignore")
@@ -179,13 +189,19 @@ class AndroidIsolatedLibraryManagementTest {
             checkpoint("native-bulk-ignore-and-signed-readback-verified")
 
             scrollMain("library-file-rename-${first.absolutePath}").performTvClick()
-            awaitTag("library-rename-edit")
-            compose.onNodeWithTag("library-rename-edit").performScrollTo().performTvClick()
+            awaitFocused("library-rename-edit")
+            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitFocused("library-rename-input")
             compose.onNodeWithTag("library-rename-input").performTextReplacement(renamed.name)
             compose.onNodeWithTag("library-rename-input").performImeAction()
             compose.onNodeWithTag("text-entry-save").performTvClick()
+            awaitFocused("library-rename-edit")
+            remote(KeyEvent.KEYCODE_DPAD_DOWN)
+            compose.onNodeWithTag("library-rename-cancel").assertIsFocused()
+            remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+            compose.onNodeWithTag("library-rename-confirm").assertIsFocused()
             verifyIsolation()
-            compose.onNodeWithTag("library-rename-confirm").performTvClick()
+            remote(KeyEvent.KEYCODE_DPAD_CENTER)
             awaitClosed("library-rename-dialog")
             awaitLibraryReady()
             val renamedRows = readIndex("native-rename")
@@ -203,14 +219,17 @@ class AndroidIsolatedLibraryManagementTest {
                 node.optJSONArray("children")?.let { children -> (0 until children.length()).any { contains(children.getJSONObject(it), target) } } == true
             assertTrue(contains(tree.getJSONObject("root"), renamed.absolutePath))
             assertTrue(contains(tree.getJSONObject("root"), original.absolutePath))
+            manifest.put("explorerOwnedPaths", JSONArray(listOf(renamed.absolutePath, original.absolutePath)))
             NativeScreenshotEvidence.capture("isolated-go-library-explorer")
             scrollMain("library-tab-Files").performTvClick()
             awaitLibraryReady()
             scrollMain("library-file-delete-${renamed.absolutePath}").performTvClick()
-            awaitTag("file-delete-dialog")
+            awaitFocused("file-delete-cancel")
             verifyIsolation()
             assertEquals(originalHash, digest(renamed))
-            compose.onNodeWithTag("file-delete-confirm").performTvClick()
+            remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+            compose.onNodeWithTag("file-delete-confirm").assertIsFocused()
+            remote(KeyEvent.KEYCODE_DPAD_CENTER)
             awaitClosed("file-delete-dialog")
             awaitLibraryReady()
             assertEquals(listOf(second.absolutePath), readIndex("native-delete").map { it.getString("path") })
@@ -235,9 +254,17 @@ class AndroidIsolatedLibraryManagementTest {
         }
     }
 
+    private fun remote(code: Int) {
+        instrumentation.sendKeyDownUpSync(code)
+        compose.waitForIdle()
+    }
+    private fun awaitFocused(tag: String) = compose.waitUntil(15_000) {
+        compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes()
+            .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+    }
     private fun scrollMain(tag: String): SemanticsNodeInteraction {
-        compose.onAllNodes(hasScrollToNodeAction() and SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
-            .onLast().performScrollToNode(hasTestTag(tag))
+        compose.onNode(hasScrollToNodeAction() and SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange) and
+            hasAnyAncestor(hasTestTag("native-content"))).performScrollToNode(hasTestTag(tag))
         return compose.onNodeWithTag(tag).performScrollTo()
     }
     private fun awaitTag(tag: String) = compose.waitUntil(15_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }

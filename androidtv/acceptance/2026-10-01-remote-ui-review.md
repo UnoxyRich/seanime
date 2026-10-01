@@ -1,180 +1,147 @@
 # Remote UI review — October 1, 2026
 
-The current R25 corrective revision passes **381 JVM tests**, **34 unchanged-reference
-layout comparisons**, lint (zero errors, 87 warnings), ARM64/x86_64 and matching
-instrumentation APK builds. Its device run is pending. The latest completed R24 run is summarized below. No host result is
-presented as a device pass or complete feature parity.
+R26 passes **383 JVM tests**, **34 unchanged-reference layout comparisons**,
+lint with zero errors (87 warnings), both ABI builds and instrumentation packaging.
+No R26 device pass is claimed. The latest
+completed Android TV run has **170 ordinary passes, 8 failures and 5 intentional
+isolated skips**, plus one passing and three incomplete isolated workflows.
+The playback portion of the real remote Library journey now has verified video,
+seek, audio-track, subtitle and picture-mode evidence. Full parity remains open.
 
-The frozen aggregate took 205 seconds. All 259 Android source hashes and all 34
-reference images remained unchanged. Its source digest is
-`090a0474433ce24d06468639e651ecf069fde5b4f85e92d4efc92f14435c9698`.
-The one additional lint warning concerns the optional Modifier parameter order.
-All APKs pass signature and ZIP alignment checks, both main APKs contain seven
-16 KiB-aligned native libraries, and 145 literal API contracts pass. Go core,
-module files, routes, payloads and schema remain unchanged from `63200d6a`.
-The expanded compressed shader retains its pinned original SHA-256 in both APKs.
+## Actual R25 emulator evidence
 
-## Actual emulator result
+[Run 36868848440](https://github.com/UnoxyRich/seanime/actions/runs/36868848440)
+tested `30d9249e9c240230e5b3e2bbdec49cab00815f00` on Android TV API 36 x86_64.
+The ordinary sanitized JUnit contains **183 unique class/method identities**:
+170 passed, 8 failed, 0 errors, 5 skipped. There was no process crash. Seven R24
+failures passed, six previously passing cases failed, and two Settings reentry
+failures persisted. The console's extra five progress counts are not extra tests.
+All five invocations installed app/test APKs matching the exact runner outputs.
 
-[Run 36859935391](https://github.com/UnoxyRich/seanime/actions/runs/36859935391)
-tested source `00e8303e5cdf79af13cf662e26e26c3e5f30123a` on Android TV API 36
-x86_64 with KVM. The full ordinary suite completed without a process crash:
-**183 unique cases: 169 passed, 9 failed, 5 skipped**. Sanitized JUnit is the
-counting source; console progress transiently counted skipped cases twice.
-Both installed app/test APK hashes matched the exact runner builds.
-
-All ten startup tests passed, including real Go startup/restart, search and
-recreation, and D-pad/content/Back recovery across all eleven destinations.
-Offline poster loading through the existing asset route, cover fallback states,
-and manga page-image loading/retry passed with fixture data. These results do
-not establish live AniList metadata or covers.
-
-The nine failures cover transport focus at unavailable episode boundaries;
-rail-to-Logs entry before Back restoration; manga reader jump with the IME;
-picker reopen; manga catalog/chapter return; two plugin handoffs; and two
-Settings return-focus cases. Passing individual coverage does not supersede
-these failures or establish the full workflows.
-
-The independent cold owned-media journey ran once and failed. Real remote keys
-reached Library → Manage → Files → Play. Exact native 320×240 video dimensions,
-one-minute duration, decoded video/audio buffers, pause, and a roughly ten-second
-seek were observed. The test then failed its post-seek compositor pixel check.
-The recording shows the Buffering badge covering the sampled region. This
-establishes an insufficiently synchronized observation; it does not establish
-that buffering reliably settles. Audio switching, subtitles, Picture mode,
-Explorer playback, and full return acceptance were **not reached** in this run.
-This was owned generated test media, not anime or Bloom Into You.
-
-Two genuine recordings were retained (59.64s ordinary startup excerpt and
-106.61s owned-journey recording). A 15s stream-copied excerpt and actual frames
-were extracted for progress review. The post-seek image deliberately preserves
-the visible Buffering badge. A bright Downloads rail item shows acquired focus;
-the Settings image shows selection only. All images retain actual emulator
-pixels; none use a simulated focus ring.
-
-Screenshot/fixture-manifest collection still failed. Pinned AGP 8.10.1 bytecode
-shows `android.injected.androidTest.leaveApksInstalledAfterRun` defaults false,
-and its connected-test factory requests UTP package removal before Gradle
-returns. That removes app-private evidence while `/data/local/tmp` recordings
-survive. The default R24 console did not expose the uninstall event itself.
-The collection ZIP SHA-256 is
-`d47c7779d5625b253f49cb9d8de799d69ece4b1bd4a1d5d053da9fc3af1322a0`.
-The tested x86_64 APK SHA-256 is
-`46a7eeffcfdf2695de19cfa1570080e573c782c2f2d1df32a45227ccdea63a24`;
-test APK: `85ea70ebcf3bace1af40fce2207d66badee3e4db1a47779fc2d689c53fee951b`.
-
-The earlier [R23 run](https://github.com/UnoxyRich/seanime/actions/runs/36850609039)
-recorded 150 passes, 28 failures and 5 isolated skips. Its owned journey stopped
-at zero native video dimensions before seeking. Those historical failures and
-artifacts are retained; they are not current passes.
-
-## Corrections in the current source
-
-| Observed cause | Current correction | Verification limit |
+| Real device workflow | Verified result | Remaining limit |
 | --- | --- | --- |
-| Empty Media3 effects list creates a video graph, with zero native video-size reporting | Ordinary Off playback stays on the direct surface path; real presets initialize before prepare; Off↔On rebuilds preserve playback checkpoints; HDR is checked from actual decoder-format callbacks | Player host tests and compilation pass; new runtime verification required |
-| Details removal can automatically focus the rail and cancel saved-card restoration | Preserve explicit return intent until the saved card wins or a later real remote input replaces it | New loading/focus regressions and offscreen/large-ID return host mirrors pass |
-| Title picker has no IME Search/hide contract | Shared IME/button submission hides the dialog keyboard and restores Search | Compiles; physical IME acceptance remains pending |
-| Nested hidden-title picker loses its Add title opener | Rearm that exact opener on child dismissal | Compiles; device rerun required |
-| Successful marketplace install arms restoration on the newly disabled row | Restore an actionable row only; successful install returns to the stable header | Host mirror passes; device rerun required |
-| Tests act while an old dialog still owns the Android window or controls remain disabled | Require exact target-window ownership and enabled/readback state; use D-pad from safe focus | Real assertions retained; host cannot establish physical window timing |
-| Fixtures/expectations differ from current routes and labels | Correct loopback hostname, missing offline queue response, duplicate status selectors, complete labels and lazy-page restoration expectations | Original payload, cancellation and request-count requirements remain |
-| Screenshot collector double-quotes exec-out scripts and trusts its remote exit status | Supply raw arguments, validate a cleanup receipt, retain bounded allowlisted evidence and safe diagnostic reasons | 32 Python regressions pass; live collection rerun required |
+| Ordinary navigation, forms, media and API automation | 170/183 pass; 71 actual screenshots retained | Eight failures listed below; five isolated methods skipped here |
+| Remote Library → Manage → Files → Play | Real 320×240 decoded video, one-minute duration, pause, 10-second seek and changed compositor pixels | Later Explorer playback did not complete |
+| Audio and subtitles | Second PCM track selected and decoded (`fr`); SRT cue pixels 7,835 on / 0 off | No audible speaker-quality claim; screen recordings have no audio |
+| Picture Off → Mode C → Off | Real shader pixels, square marker geometry, 240-pixel black pillarboxes at 1920×1080, exact native Off dimensions, source/checkpoint/track/pause continuity | One emulator/GPU and owned SDR media; physical GPU/HDR acceptance remains |
+| Player Back → Files | Original Play button regained actual focus | Explorer then opened an empty folder and could not reach Play |
+| Independent signed Go raw-media playback | Passed: signed HTTP 206/256-byte range, outside-root rejection, decoded native frame, play/pause/seek, recovery validation and dismissal | Generated silent H.264; not live streaming or metadata-assisted scanning |
+| Isolated library management | Real existing import API and exact two signed index rows verified | Test scrolled the rail instead of content before file selection; bulk rename/delete not reached |
+| External-player handoff | Raw-media subflow passed | Native Playback options remained open; Android chooser/receiver/background lease not reached |
 
-### R25 focused corrections (device verification pending)
+The owned journey retained ten screenshots and a typed manifest. Its strict
+post-seek check required READY, a new rendered buffer, the real buffering badge
+gone, and unchanged ±25 color tolerance. It passed at 11,562 ms; mean RGB changed
+from `[166,69,41]` before seek to `[198,93,123]` after seek. Mode C and direct
+rendering preserved the square's aspect and black side bars. This establishes
+these subflows, not successful completion of the failed journey.
 
-- Rapid destination Center→Right previously focused the departing content, then
-  left the new Logs screen without any focused control for the full ten-second
-  host bound. Entry now follows the latest route identity and waits for placement
-  and window readiness. Later keys or Back cancel it; immediate Back returns to
-  the rail without opening Exit. All 20 permanent Host/Loading cases pass,
-  including normal saved focus and the three new real-key regressions. A separate
-  Compose batch had already entered content before Up; its Refresh focus is
-  preserved as diagnostic evidence, not described as lost focus.
-- Explicit left/right transport neighbors keep focus in the transport row at
-  unavailable Previous/Next edges. A real Compose-key regression reproduced
-  focus escaping to Audio and passes after the correction; vertical controls
-  remain reachable. Eleven focused player tests and instrumentation compilation
-  pass.
-- The owned journey now requires READY, a newly rendered decoder buffer, and
-  disappearance of the actual buffering badge before the unchanged ±25 color
-  and 4:3 aspect checks. No color tolerance or successful-playback criterion was
-  relaxed. A persistent buffering problem will still fail.
-- Settings preserves the saved row while automatic fallback focus arrives during
-  page reattachment; a newer real navigation/Select key cancels that pending
-  restoration. Device reentry passes its host mirror, with native confirmation
-  still required.
-- Picker/reader/manga and plugin tests observe disposal, the exact return target
-  and native window readiness before the next key. Real-device IME/window
-  acceptance remains required; inconclusive host dialog results are retained.
-- The collector requests AGP's supported keep-installed option on an explicit
-  disposable emulator, then checks package/run-as access before collecting.
-  A teardown simulation reproduces both R24 error classes without the option
-  and retains both evidence kinds with it. All 44 collector regressions pass.
-  Actual post-run screenshot/manifest collection remains unverified.
-- Three separate cold AVDs now run the existing owned-library-management,
-  signed raw-media playback, and separate external-player handoff methods.
-  Exact opt-in/fresh-process arguments, APK identity, one test/no skip, typed
-  owned manifest, and normal test exit status are required. The metadata-assisted
-  scan test remains gated by the recorded AniList denial.
+The eight ordinary failures are player lifecycle navigation; Discovery advanced
+filters; rename preview/cancel; two list-entry dialog transitions; two Settings
+page reentries; and torrent limits dialog transitions. The exact case identities
+and sanitized source frames remain in the run artifact. The full ordinary score
+is not inferred from host tests or screenshot presence.
 
-Robolectric mirrors reproduced several fixture/readiness defects. Some dialog
-cases remain inconclusive because its physical window activation differs from
-Android. A cleanup diagnostic reached the exact DELETE sequence `[1, 2, 1]` and
-2/2 confirmed results after evaluating the same UI-and-counter conjunction in
-UI-first order; its final dialog-focus check remains device-only. Failed host
-mirrors have not been silently relabeled as passes.
+The evidence ZIP SHA-256 is
+`05ba14aebae673eadc8203bfbd531bc06953472076154020e4ba20c8b186906e`.
+The tested runner x86_64 APK SHA-256 is
+`39732155ce2235ac33bc850c30ff28e0484abfdecc36d6543286650a398e00f3`;
+test APK: `bcbb023b83892969ebddea54af4dcf73e4e8e420e4fd3d52b32debeb18121bad`.
 
-The strengthened owned journey now generates a 320×240 4:3 video with a square
-marker, two PCM tracks and SRT. It verifies real seek/audio/subtitles/return,
-then Picture Off→Mode C→Off with retained source/checkpoint/pause/track state,
-timestamp-derived pixels, square geometry and black pillarboxes. Native Off
-video dimensions remain exact. Effects-on videoSize reporting is still not
-substituted with coded input dimensions; the new graph geometry checks are
-**unrun**. No Anime4K runtime pass is claimed from compilation or colored pixels.
+Four actual screenshots and a 47.02-second video excerpt were delivered for
+visual review. The clip retains source frames from 5.9346–52.9655 seconds with
+unchanged 1280×720 geometry; the original 113.10-second recording is retained.
+It is a faithful H.264 excerpt, not a simulated UI. All media is generated owned
+test content, not anime or Bloom Into You.
 
-CI continues to use separate disposable AVDs. Original test exit codes remain
-authoritative. Its collector now retains exact approved screenshots, sanitized
-JUnit, installed/build identities and typed fixture observations. The ordinary
-recording remains bounded to 60s at 2Mbps; the exact owned journey receives up
-to 120s at 1Mbps. Both are 1280×720 without audio, capped at 32MiB and labeled
-bounded excerpts, not automatically complete-flow evidence.
+## R26 corrections and verification boundaries
 
-### Local build environment
+| Finding | Correction | Evidence / limit |
+| --- | --- | --- |
+| Old lifecycle test assumes Left can escape the transport edge diagonally into Audio | Follow Rewind → Subtitles → Audio using real keys and exact focus checks | Intentional R25 transport behavior remains unchanged; 12 focused player tests and instrumentation compilation pass |
+| Tests request semantic focus and send Select while the target dialog does not own Android input | Wait for that exact root's attachment, layout and window focus before one RequestFocus; observe restored openers and use D-pad/IME actions where needed | No action retries or relaxed payload/date/cancel assertions; four dialog mirrors pass; device rerun required |
+| External test never activated its native menu option | Real D-pad option traversal, target-window observation, installed receiver resolution and actual menu dismissal checks | No player/receiver behavior change; actual chooser/receiver execution remains pending |
+| Outgoing Settings focus callback can overwrite the saved row after Back changes the logical page | Ignore callbacks from a page that is no longer current | Same-turn controlled fallback reproduced Accounts replacing Update; the identical regression passes with the narrow guard and exact saved Y-position. Native cause confirmation remains pending |
+| Management helper chooses the final scroll container in the whole shell | Restrict it to `native-content` | Host test demonstrates the old selector chooses the rail; unchanged management payload/index assertions remain |
+| New internal library root may use an Android filesystem alias inconsistent with Explorer enumeration | Canonicalize only newly created app-owned defaults and owned fixture roots; keep both spellings recognized in the setup label | Filesystem regression passes; next device fixtures assert canonical state and signed Explorer membership. Existing saved choices/indexes are not rewritten |
+| Failed management stops before its first screenshot checkpoint | Distinguish a verified no-screenshot receipt from a corrupt archive | Collector keeps failures authoritative; no screenshot is invented or counted as a pass |
 
-The first R25 aggregate stopped after 14 seconds, before app compilation, when
-`gomobile init` queried `gobind@latest` and the ordinary registry request returned
-403. The retry uses Go's documented [local module-cache proxy](https://go.dev/ref/mod#module-cache)
-with no network fallback and no checksum-policy change. The existing gomobile
-module is `v0.0.0-20260602190626-68735029466e`; the existing gobind module is
-`v0.0.0-20260908204917-8b95e45f8d3e`. Gobind remains byte-identical after init:
+The Settings fallback regression explicitly injects the real old row's focus
+action during the Back UI turn to model platform fallback. It uses real rail,
+row and Back navigation otherwise. It is evidence of the state defect, not a
+claim that the emulator's unrecorded callback sequence has been observed.
+Native before-return/failure screenshots and bounded safe focus/page/window
+failure details remain to distinguish page entry from wrong restoration.
+
+The Explorer alias analysis is grounded in unchanged server code:
+[enumeration resolves symlinks](../../internal/library/filesystem/mediapath.go#L136),
+while [tree membership uses a string-prefix comparison](../../internal/library_explorer/filetree.go#L150).
+[AOSP creates the app-data alias](https://android.googlesource.com/platform/frameworks/base/+/3468cd94064c/core/jni/com_android_internal_os_Zygote.cpp).
+The R25 recording proves an empty tree despite imported owned media; it does not
+itself record the canonical-path comparison. R26 records bounded booleans and
+exact owned file membership to test that explanation. Existing noncanonical
+configurations are preserved and are not represented as automatically repaired.
+No missing API is invented: the directory-children handler's current loading
+method is a no-op because the full tree is built up front.
+
+## Evidence collection and environment
+
+The AGP keep-installed option worked in R25: app-private screenshots and all four
+owned manifests were read after Gradle, with exact app/test identity checks.
+The collector exports only named fixture screenshots, sanitized JUnit and typed
+bounded owned observations. Raw logs, credentials, app databases and unrelated
+cache files are excluded. A missing screenshot checkpoint never makes a failing
+test green. Each owned method runs in a distinct fresh disposable AVD.
+
+The ordinary recording is bounded to 60 seconds at 2 Mbps; the full owned journey
+gets up to 120 seconds at 1 Mbps. Both are 1280×720, silent, capped at 32 MiB and
+labeled excerpts. They are not automatically complete-flow recordings.
+
+Local validation reuses Go's documented [module-cache proxy](https://go.dev/ref/mod#module-cache)
+without network fallback or checksum-policy changes. An earlier 14-second R25
+attempt stopped before app compilation when `gomobile init` queried the ordinary
+registry and received 403. The verified cache retry succeeded. The existing
+gomobile module is `v0.0.0-20260602190626-68735029466e`; gobind is
+`v0.0.0-20260908204917-8b95e45f8d3e`, with preserved SHA-256
 `288d97e96388a568180fe81591717299028528a4c2db0263ee7b6bd0d3e2fe4b`.
-The failed attempt and its exact source snapshot remain separate evidence.
-This build-cache configuration does not change app or server networking.
+This process-local build configuration changes no app or server networking.
 
-## Remaining acceptance limits
+## Remaining acceptance gates
 
 | Scope | Status |
 | --- | --- |
-| Current native routes, focus, forms and playback | R25 local aggregate passes; current corrections require fresh device verification |
-| R24 ordinary automation | 169 passed / 9 failed / 5 intentionally isolated skips |
-| Isolated library management, raw media and external-player handoff | Added as separate disposable-AVD cases for R25; not yet run |
-| Metadata-assisted local scan, live AniList titles/covers and Bloom streaming | Blocked by the recorded HTTP 403; no proxy, retry workaround or synthetic catalog |
-| Library, lists, manga, offline, downloads, providers, Nakama, settings and reports | Feature-level gates remain in the [layout/data matrix](2026-10-01-tv-layout-and-live-data.md) |
-| Arbitrary browser-DOM plugin presentation and independent MAL APIs | Previously documented partial/missing capabilities remain |
-| Physical TV/USB, codecs/GPU/HDR, accounts/providers, two Nakama peers and release signing | Unverified; unchanged external/device gates |
+| Current R26 local aggregate | Passed:383 JVM,34 visual,48 collector regressions; APK signatures/alignment/API boundaries verified |
+| R26 actual TV automation | Unrun; R25 results above do not establish the new revision |
+| Library Explorer, management and external handoff | Specific repairs ready; complete isolated flows require rerun |
+| Settings reentry and other failed ordinary cases | Corrections/diagnostics retain exact assertions; require native confirmation |
+| Live AniList metadata/covers, metadata-assisted scan and Bloom streaming | Recorded HTTP 403 still blocks these; no proxy, alternate route or synthetic catalog |
+| Browser-DOM-only plugin presentation and independent MAL capabilities | Previously documented partial/missing API capabilities remain |
+| Physical TV/USB, device codecs/GPU/HDR, API 23, ARM64/16 KiB runtime, accounts/providers, two Nakama peers and release signing | Unverified; source/host/emulator evidence cannot replace them |
 
+Feature-level gates remain in the [layout and live-data matrix](2026-10-01-tv-layout-and-live-data.md).
 The [device inventory](2026-10-01-remote-ui-device-plan.json) contains 183 methods.
-The earlier [run 36844301124](https://github.com/UnoxyRich/seanime/actions/runs/36844301124)
-reached 71/181 methods before nine failures and a process crash; it is historical
-and has not been promoted to acceptance of either current revision.
+Historical [R24](https://github.com/UnoxyRich/seanime/actions/runs/36859935391)
+recorded 169 passes / 9 failures / 5 isolated skips; its owned journey stopped
+at post-seek pixel readiness. Historical
+[R23](https://github.com/UnoxyRich/seanime/actions/runs/36850609039) recorded
+150 passes / 28 failures / 5 skips. Older incomplete/crashed runs and delivered
+R21 artifacts remain historical evidence, not current passes.
 
-| Local R25 artifact | SHA-256 |
+## Frozen local R26 artifacts
+
+The aggregate completed in 199 seconds. All 260 Android source hashes and all 34
+reference images remained unchanged. Source digest:
+`071687791f5044a4d615116c37d6738555d663cfb08d7173df6f848f73d4dbf2`.
+All APKs retain the existing debug certificate and pass signature/ZIP alignment
+checks; both main APKs contain seven 16 KiB-aligned native libraries. All 145
+literal API contracts pass; Go core, modules and schema remain unchanged from
+`63200d6a`. All bundled Anime4K shader bytes match the prior verified assets.
+
+| Local artifact | SHA-256 |
 | --- | --- |
-| ARM64 | `d98c6ac2cf53e6fdb5b2d72b0ce3d3cd72caf72ffe15930a917af3dae23fe6f7` |
-| x86_64 | `54e1480e792ad2064b60e84525897c5d1fc438edce96dcee4f4db7adc4b9b2cf` |
-| Instrumentation | `2fb9765f9abbdf3db16dd3973b1b153813b2e0415cf56c71f271a32b6c3c19d2` |
+| ARM64 | `61483cea8699284d637e46ea8113f583ba226bfd472ae5ef9d167a5be149075d` |
+| x86_64 | `e13a091e1a6c7a694889580c89ecadfe5bae0031b4efe1d827240000fe85b5e3` |
+| Instrumentation | `b3323903acfda8677eac30a3f53739d5430d63652030cd448f39471b6ff47d1b` |
 
-These local artifacts retain the existing debug certificate. GitHub records its
-own exact built/installed pair; local hashes must not be substituted for runner
-identities. Earlier delivered R21 artifacts remain unchanged.
+These are locally built debug artifacts. The next CI run must record its own
+built/installed identities; local hashes are not substituted for runner hashes.

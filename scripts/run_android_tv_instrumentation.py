@@ -64,6 +64,7 @@ OWNED_JOURNEY_VIDEO_SECONDS = 120
 OWNED_JOURNEY_VIDEO_BIT_RATE = 1_000_000
 VIDEO_MAX_BYTES = 32 * 1024 * 1024
 APP_WAIT_SECONDS = 180
+NO_SCREENSHOTS_RECEIPT = b"seanime-native-screenshots-not-created\n"
 # Exact NativeScreenshotEvidence names, including the two parameterized fixtures.
 # Deliberately do not enumerate or copy any other application cache files.
 SCENARIOS = frozenset("""
@@ -75,6 +76,7 @@ discovery-native-advanced-filters
 discovery-page-two-restored-card-focus
 existing-debrid-download-requested
 file-match-retained-retry-draft
+isolated-go-external-open-focus
 isolated-go-external-receiver-streaming
 isolated-go-external-return-paused
 isolated-go-generated-local-media
@@ -151,7 +153,11 @@ real-go-playlist-save-focus
 real-go-search-query-restored-after-background
 real-go-settings-rail-safe-focus
 settings-category-row-restored
+settings-device-before-return
+settings-device-reopen-focus-failure
 settings-device-last-row-restored
+settings-library-before-return
+settings-library-reopen-focus-failure
 source-bounded-query-editor
 source-debrid-download-requested
 source-modes-debrid-back-focused
@@ -224,10 +230,14 @@ def probe_app_evidence_access():
 def screenshot_command():
     names = " ".join(sorted(EXPECTED_FILES))
     script = (
+        '[ ! -L cache/native-acceptance-screenshots ] || exit 2; '
+        'if [ ! -d cache/native-acceptance-screenshots ]; then '
+        'printf "seanime-native-screenshots-not-created\\n"; exit 0; fi; '
         "cd cache/native-acceptance-screenshots || exit 2; set --; "
         f"for name in {names}; do "
         '[ -f "$name" ] && [ ! -L "$name" ] && set -- "$@" "$name"; '
-        'done; [ "$#" -gt 0 ] || exit 3; exec tar -cf - "$@"'
+        'done; if [ "$#" -eq 0 ]; then printf "seanime-native-screenshots-not-created\\n"; exit 0; fi; '
+        'exec tar -cf - "$@"'
     )
     return exec_out_run_as("sh", "-c", script)
 
@@ -322,6 +332,11 @@ def collect_screenshots():
             raise ValueError("Screenshot archive too large")
         if stream.tell() == 0:
             raise ValueError("Empty screenshot archive")
+        stream.seek(0)
+        if stream.read(len(NO_SCREENSHOTS_RECEIPT) + 1) == NO_SCREENSHOTS_RECEIPT:
+            return {}, {"status": "not-created", "captured": [], "invalidPairs": [],
+                        "notCaptured": sorted(SCENARIOS),
+                        "note": "The invocation wrote no approved screenshot checkpoints; this is not a test pass."}
         stream.seek(0)
         files, invalid = validate_screenshots(stream)
     captured = sorted(Path(name).stem for name in files if name.endswith(".png"))
@@ -593,10 +608,16 @@ def sanitize_journey_manifest(data, directory):
             clean[key] = sanitize_video_paint(data[key])
     if "pictureRoundTrip" in data:
         clean["pictureRoundTrip"] = sanitize_picture_round_trip(data["pictureRoundTrip"])
-    if "picturePreferencesRestored" in data:
-        if type(data["picturePreferencesRestored"]) is not bool:
-            raise ValueError("Invalid boolean observation")
-        clean["picturePreferencesRestored"] = data["picturePreferencesRestored"]
+    for key in ("picturePreferencesRestored", "rootCanonical", "appFilesAliasObserved"):
+        if key in data:
+            if type(data[key]) is not bool:
+                raise ValueError("Invalid boolean observation")
+            clean[key] = data[key]
+    for key in ("explorerFilePath", "explorerIndexedPath"):
+        if key in data:
+            if type(data[key]) is not str or data[key] != data["mediaPath"]:
+                raise ValueError("Invalid fixture schema or path relationships")
+            clean[key] = paths["mediaPath"]
     if "verified" in data:
         allowed = {"owned-generated-multitrack-mkv", "existing-index-import", "signed-go-ranges", "library-root-boundary",
                    "remote-library-manage-files-play", "remote-explorer-play", "decoded-video-and-selected-audio",
@@ -647,7 +668,7 @@ def sanitize_owned_manifest(data, directory, invocation):
                    "native-rename-index-and-owned-bytes-verified", "owned-library-workflow-verified"}
         verified = {"generated-owned-video-copies", "existing-index-import-api", "main-native-library-route",
                     "multi-file-ignore", "native-rename", "explorer-tree", "native-delete", "signed-go-index-readback"}
-        booleans = ("originalPreserved", "retainedCopyPreserved", "recoveryAbsent")
+        booleans = ("originalPreserved", "retainedCopyPreserved", "recoveryAbsent", "rootCanonical", "appFilesAliasObserved")
     else:
         stages |= {"isolated-server-ready", "generating-owned-h264", "signed-go-range-and-library-boundary-verified",
                    "signed-go-native-frame-pause-seek-verified", "raw-media-route-verified"}
@@ -689,6 +710,14 @@ def sanitize_owned_manifest(data, directory, invocation):
                 or any(type(path) is not str for path in copies) or set(copies) != set(expected)):
             raise ValueError("Invalid fixture schema or path relationships")
         clean["ownedCopyPaths"] = owned
+        if "explorerOwnedPaths" in data:
+            targets = data["explorerOwnedPaths"]
+            relative = ["library/Renamed owned copy.mp4", paths["mediaPath"]]
+            if (not isinstance(targets, list) or len(targets) != 2
+                    or any(type(path) is not str for path in targets)
+                    or set(targets) != {root + "/" + path for path in relative}):
+                raise ValueError("Invalid fixture schema or path relationships")
+            clean["explorerOwnedPaths"] = relative
         if "originalSha256" in data:
             if type(data["originalSha256"]) is not str or not re.fullmatch(r"[0-9a-f]{64}", data["originalSha256"]):
                 raise ValueError("Invalid owned media digest")

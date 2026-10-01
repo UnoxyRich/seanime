@@ -1,6 +1,7 @@
 package app.seanime.tv.ui
 
 import android.view.KeyEvent
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
@@ -201,7 +202,10 @@ class NativeAnimeDiscoveryTest {
     }
 
     private fun awaitFocused(tag: String) {
-        compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes()
+                .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+        }
         compose.waitForIdle()
     }
 
@@ -229,7 +233,7 @@ class NativeAnimeDiscoveryTest {
         diagnosticStep(diagnostics, "Scroll to $field choice") { compose.onNodeWithTag("discovery-choices").performScrollToNode(hasTestTag("discovery-choice-$value")) }
         diagnosticStep(diagnostics, "Select $field choice") { compose.onNodeWithTag("discovery-choice-$value").performTvClick() }
         if (multiple) diagnosticStep(diagnostics, "Close $field choices") { compose.onNodeWithTag("discovery-choice-close").performTvClick() }
-        diagnosticStep(diagnostics, "Assert $field focus restored") { compose.onNodeWithTag("discovery-filter-$field").assertIsFocused() }
+        diagnosticStep(diagnostics, "Assert $field focus restored") { awaitFocused("discovery-filter-$field"); compose.onNodeWithTag("discovery-filter-$field").assertIsFocused() }
     }
 
     private fun enterFilter(field: String, value: String, diagnostics: NativeUiStepWatchdog? = null, fromSeason: Boolean = false, save: Boolean = true) {
@@ -249,13 +253,16 @@ class NativeAnimeDiscoveryTest {
         diagnosticStep(diagnostics, "Wait for $field editor initial focus") {
             compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("discovery-editor-$field") and isFocused()).fetchSemanticsNodes().isNotEmpty() }
         }
-        diagnosticStep(diagnostics, "Type $field editor value") { compose.onNodeWithTag("discovery-editor-$field").performTextReplacement(value) }
+        diagnosticStep(diagnostics, "Type $field editor value") {
+            compose.onNodeWithTag("discovery-editor-$field").performTextReplacement(value)
+            compose.onNodeWithTag("discovery-editor-$field").performImeAction()
+        }
         if (save) diagnosticStep(diagnostics, "Save $field editor") { compose.onNodeWithText("Save").performTvClick() }
         else diagnosticStep(diagnostics, "Cancel $field editor") {
             compose.onNode(hasText("Cancel") and !hasTestTag("discovery-filter-cancel")).performTvClick()
         }
         diagnosticStep(diagnostics, "Assert $field editor opener focus restored") {
-            compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("discovery-filter-$field") and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+            awaitFocused("discovery-filter-$field")
         }
     }
 
