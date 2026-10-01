@@ -594,3 +594,70 @@ Current APK SHA-256 values:
 
 These are new diagnostic APK bytes. R32 device and live-provider verification
 remain pending; previous-source results are not promoted to this candidate.
+
+## R32 terminal results and matched-file fixture correction
+
+[R32 CI run 36924198746](https://github.com/UnoxyRich/seanime/actions/runs/36924198746)
+finished **successfully** on published
+`42c967f361afd9707333286701ba43ddd4518837`. Verified XML records 178 ordinary
+passes, zero failures/errors and five opt-in skips. Four of those declarations
+run separately and each passes once without skips: the complete generated-video
+journey, library management, raw Go media and external handoff. All five installed
+pairs match their runner-built APKs. This establishes **182 unique passed
+methods**, with the remaining metadata-dependent case tested separately below.
+
+The external fixture verifies a different process and UID, three sustained
+anonymous HTTP206 ranges, foreground hosting, the exact paused return checkpoint,
+More focus and host release. Its controlled receiver reads bytes; it is not a
+commercial external-player decoder. Native decoding and controls are exercised
+by the other generated-media flows. The full artifact 11195660209 has SHA-256
+`6feeaa39e6fa347193b33dc947a90536fb75fac6cd7b0af0d8660d1e7cfe8b8e`,
+with 99 actual emulator screenshots across the five invocations.
+
+The independently built Mac R32 APK
+`648acc019c0cce3227ac43fc84a57a633490055d46c6ab9a805ed7c45ffd12c9`
+still cannot play live Bloom video or load its manga pages. Both failures record
+two DNS answers, both rejected, with families IPv4+IPv6 and kinds
+`benchmark+non_global`. The lookup succeeds; the policy prevents a connection
+to the rejected hostname. These fields neither identify the resolver component
+nor exclude an earlier redirect hop. IPv6's label is a coarse policy category,
+not its exact address range. No guard, DNS, proxy or network setting is changed.
+
+The fifth cold case subsequently runs on a fresh isolated API36 ARM64 AVD using
+the same R32 source. Its installed app/test pair matches its local build:
+
+- App: `f78d064b1c2ee81b0624ec021bd17670fa48ca30e3fcd3f475de7fdbccab4cca`
+- Test: `18ed8b3c39db028dbb6d1245751fbf873ec1f0e85cec999f7d45030d4fcd7aa6`
+- Signer: `71f1988113a28d72e8e3aaa5ab60c8cca067c1d1c5b69286de43c80816408c02`
+
+The separate isolated Android user-home/debug-key metadata explains this distinct
+signer. Private key contents were not read or transferred; prior AVDs/data remain
+untouched. Its single 4.705-second case fails after verified public AniList ID1
+insertion, generated media, automatic scan/media/episode matching, export/import
+equality and MainActivity startup. The failure occurs in
+`POST /api/v1/directstream/play/localfile`, before native decoding. The numeric
+HTTP status was not retained. Existing Go evidence identifies
+`local_file_not_found`; the created and indexed paths are unequal strings but
+canonically identify the same owned file. Artifact SHA-256:
+`fc3ccbb16d6eddd4647ed7f025049f1b556f877ed6986c568b7370121ff6334f`.
+
+The scanner resolves filesystem aliases; Android's Go path resolver leaves the
+request string unchanged, and the manager compares slash-normalized strings.
+Production file playback already sends the indexed path. **R33 changes only the
+cold fixture** to use that exact path after its existing ownership and matching
+assertions: the play request, both source-identity checks, continuity equality
+and recovery manifest now agree. The creation alias remains separately recorded.
+No assertion, route, timeout, automatic match or media check is removed; no
+warmup, retry, raw-media fallback, production or Go change is added. The corrected
+cold case requires a fresh run; the failure is not counted as a pass.
+
+R33's frozen local aggregate passes in **109 seconds**: 448 host tests, 34
+unchanged visual comparisons, 60 collector tests, lint with zero errors and
+88 warnings, both ABI/test builds, signatures/alignment, exact provider/shader
+assets and all 17 static boundaries. All 301 source/asset hashes and captured
+workflow/collector hashes remain unchanged through validation. Source digest:
+`7548d8ed70b56ca2381009f574a433c6e57818065edb4ded2347482cbf5366df`.
+Both main APKs are byte-identical to the R32 artifacts listed above. The new
+instrumentation APK has SHA-256
+`d3aa7383515279fb47570bbc0d7016958810772f220f5ca6af1800eba859efdd`.
+Device rerun remains pending; compilation does not close this cold-case gate.

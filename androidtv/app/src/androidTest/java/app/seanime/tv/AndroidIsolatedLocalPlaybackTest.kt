@@ -150,7 +150,7 @@ class AndroidIsolatedLocalPlaybackTest {
             val title = media.raw.optJSONObject("title")?.optString("romaji")?.takeIf { it.isNotBlank() } ?: media.title
             val safeTitle = title.replace(Regex("[^\\p{L}\\p{N} ._-]"), " ").trim()
             val video = File(library, "$safeTitle - 01 [NativeFixture].mp4")
-            manifest.put("mediaId", mediaId).put("mediaPath", video.absolutePath)
+            manifest.put("mediaId", mediaId).put("generatedMediaPath", video.absolutePath)
             checkpoint("generating-owned-media")
             generateVideo(File(context.filesDir, "seanime/bin/ffmpeg"), root, video)
             assertTrue(video.isFile && video.length() > 0)
@@ -164,6 +164,9 @@ class AndroidIsolatedLocalPlaybackTest {
             assertEquals(video.canonicalPath, File(local.getString("path")).canonicalPath)
             assertEquals("Automatic matching must succeed; no silent manual-match fallback", mediaId, local.getLong("mediaId"))
             assertEquals(1, local.getJSONObject("metadata").getInt("episode"))
+            // The scanner resolves Android path aliases; use its exact indexed identity for playback and recovery.
+            val indexedMediaPath = local.getString("path")
+            manifest.put("mediaPath", indexedMediaPath)
             val exported = File(root, "scanned-local-files.json").apply { writeText(scanned.toString(2)) }
             mutate("/api/v1/library/local-files/import", jsonObject("dataFilePath" to exported.absolutePath))
             val imported = apiCall { repo.request("GET", "/api/v1/library/local-files") } as JSONArray
@@ -183,10 +186,10 @@ class AndroidIsolatedLocalPlaybackTest {
                 verifyIsolation()
                 apiCall {
                     playbackApi.awaitEventsReady()
-                    playbackApi.request("POST", "/api/v1/directstream/play/localfile", jsonObject("path" to video.absolutePath, "clientId" to playbackApi.clientId))
+                    playbackApi.request("POST", "/api/v1/directstream/play/localfile", jsonObject("path" to indexedMediaPath, "clientId" to playbackApi.clientId))
                 }
             }
-            val first = openPausedThroughGo(video.absolutePath) { openThroughGo() }
+            val first = openPausedThroughGo(indexedMediaPath) { openThroughGo() }
             assertEquals(160, first.width)
             assertEquals(90, first.height)
             assertTrue("Playback must come through the actual Go HTTP stream route", first.uri.scheme == "http" && first.uri.host == "127.0.0.1" &&
@@ -211,11 +214,11 @@ class AndroidIsolatedLocalPlaybackTest {
             var history: JSONObject? = null
             compose.waitUntil(20_000) {
                 history = (apiCall { repo.request("GET", "/api/v1/continuity/item/$mediaId") } as JSONObject).optJSONObject("item")
-                history?.optString("filepath") == video.absolutePath && (history?.optDouble("currentTime") ?: 0.0) >= 9.0
+                history?.optString("filepath") == indexedMediaPath && (history?.optDouble("currentTime") ?: 0.0) >= 9.0
             }
             val seconds = requireNotNull(history).getDouble("currentTime")
             manifest.put("continuitySeconds", seconds)
-            val resumed = openPausedThroughGo(video.absolutePath) { openThroughGo() }
+            val resumed = openPausedThroughGo(indexedMediaPath) { openThroughGo() }
             assertTrue("The Go continuity checkpoint must be applied before autoplay", resumed.position >= (seconds * 1000).toLong() - 1_000)
             manifest.put("resumedPositionMs", resumed.position)
             verifyIsolation(); returnToMain()
