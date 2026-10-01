@@ -18,12 +18,15 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
 import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 class NativeLibraryManagementTest {
-    @get:Rule val compose = createComposeRule()
+    private val compose = createComposeRule()
+    private val dpad = TvDpadInputRule()
+    @get:Rule val rules: RuleChain = RuleChain.outerRule(dpad).around(compose)
 
     @Test fun selectedFileActionCancelsThenRetainsFalseAckForExactRetry() = fixture(failBulkOnce = true) { fixture ->
         selectTwoFiles()
@@ -72,7 +75,7 @@ class NativeLibraryManagementTest {
         awaitFocused("library-rename-edit")
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
         awaitFocused("library-rename-input")
-        compose.enterTvTextAndDismissIme("library-rename-input", "Discarded filename.mkv")
+        compose.enterTvTextAndDismissIme("library-rename-input", "Discarded filename.mkv", dpad)
         compose.onNodeWithTag("library-rename-input").assertTextContains("Discarded filename.mkv")
         assertTrue("Done must not submit a rename", fixture.renames.isEmpty())
         remote(KeyEvent.KEYCODE_DPAD_DOWN)
@@ -148,7 +151,7 @@ class NativeLibraryManagementTest {
         awaitFocused("library-rename-edit")
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
         awaitFocused("library-rename-input")
-        compose.enterTvTextAndDismissIme("library-rename-input", name)
+        compose.enterTvTextAndDismissIme("library-rename-input", name, dpad)
         compose.onNodeWithTag("library-rename-input").assertTextContains(name)
         remote(KeyEvent.KEYCODE_DPAD_DOWN)
         compose.onNodeWithTag("text-entry-cancel").assertIsFocused()

@@ -12,11 +12,15 @@ The package ID remains `app.seanime.tv`, so signed in-place upgrades retain the
 existing Android data/cache directories, databases and persisted SAF grants.
 The repository's GPL-3.0 license and upstream attribution remain unchanged.
 
-The current corrective revision passes 383 host JVM tests, 34 layout comparisons,
-lint and both ABI builds. The latest completed GitHub TV suite reports
-170/183 passes, 8 failures and 5 isolated skips without a crash; current fixes
-and the strengthened owned-video journey require a new device run.
-Live AniList remains blocked by HTTP 403. See the
+The R31 harness candidate passes 441 host JVM tests, 34 layout comparisons, lint,
+both ABI builds and 58 evidence-collector tests. Its main APK bytes match R30.
+The latest completed GitHub TV run (R30) has
+174 ordinary passes, 4 failures and 5 explicit isolated skips across 183 unique
+cases. The complete owned-video journey and independent Go media route pass;
+filename editing and external-player handoff remain incomplete. Real AniList
+anime/manga covers, Bloom Into You metadata and its manga chapter list work on
+the Mac TV emulator, but live video and manga page pixels still fail. No public
+release or full-parity completion is claimed. See the
 [current remote UI review and exact APK hashes](acceptance/2026-10-01-remote-ui-review.md)
 and [183-method device inventory](acceptance/2026-10-01-remote-ui-device-plan.json).
 

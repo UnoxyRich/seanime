@@ -1,7 +1,6 @@
 package app.seanime.tv.ui
 
 import android.view.KeyEvent
-import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -19,12 +18,15 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
 import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
 class NativePersonalCollectionTest {
-    @get:Rule val compose = createComposeRule()
+    private val dpad = TvDpadInputRule()
+    private val compose = createComposeRule()
+    @get:Rule val rules: RuleChain = RuleChain.outerRule(dpad).around(compose)
 
     @Test fun customSourceRangeIdsOpenExactDetailsAndRestoreTheirOwnCards() = fixture(highIds = true) { f ->
         for (id in listOf(2_147_483_648L, 4_294_967_297L, 9_007_199_254_740_991L)) {
@@ -92,9 +94,8 @@ class NativePersonalCollectionTest {
         awaitTag("manga-collection-toolbar")
         toolbar("manga-search").performTvClick()
         awaitFocused("manga-search-editor")
-        compose.onNodeWithTag("manga-search-editor").performTextReplacement("hidden alias")
-        compose.onNodeWithTag("text-entry-save").performTvClick()
-        awaitFocused("manga-search")
+        compose.enterTvTextAndDismissIme("manga-search-editor", "hidden alias", dpad)
+        finishMangaEditor(save = true)
         choose("manga-collection-options", "collection-status", "Planning", manga = true)
         closeOptions("manga-collection-options")
         mangaList().performScrollToNode(hasTestTag("manga-collection-2"))
@@ -123,13 +124,42 @@ class NativePersonalCollectionTest {
         pressBack()
         awaitFocused("manga-discover")
         toolbar("manga-search").performTvClick()
+        awaitFocused("manga-search-editor")
         compose.onNodeWithTag("manga-search-editor").assertTextContains("hidden alias")
-        compose.onNodeWithTag("text-entry-cancel").performTvClick()
-        awaitFocused("manga-search")
+        compose.enterTvTextAndDismissIme("manga-search-editor", "discarded personal query", dpad)
+        finishMangaEditor(save = false)
+        compose.onNodeWithTag("manga-personal-query").assertTextEquals("My collection: “hidden alias”")
         toolbar("manga-collection-options").performTvClick()
         compose.onNodeWithTag("collection-status").assertTextEquals("Status: Planning")
         closeOptions("manga-collection-options")
         assertTrue(f.paths.none { it.startsWith("POST /api/v1/anilist/list-entry") })
+    }
+
+    private fun finishMangaEditor(save: Boolean) {
+        // A late IME can take the first Center even after the dialog was placed.
+        // The caller observes shown -> Done -> hidden before navigating its footer.
+        var stage = "footer navigation"
+        var editorDismissed = false
+        try {
+            pressRemote(KeyEvent.KEYCODE_DPAD_DOWN)
+            compose.onNodeWithTag("text-entry-cancel").assertIsFocused()
+            if (save) {
+                pressRemote(KeyEvent.KEYCODE_DPAD_RIGHT)
+                compose.onNodeWithTag("text-entry-save").assertIsFocused().assertIsEnabled()
+            }
+            stage = "editor dismissal"
+            pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
+            compose.waitUntil(10_000) {
+                editorDismissed = compose.onAllNodesWithTag("manga-search-editor").fetchSemanticsNodes().isEmpty()
+                if (editorDismissed) stage = "opener restoration"
+                editorDismissed && compose.onAllNodes(hasTestTag("manga-search") and isFocused() and isEnabled()).fetchSemanticsNodes()
+                    .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+            }
+        } catch (failure: Throwable) {
+            runCatching { NativeScreenshotEvidence.capture("personal-collection-editor-return-failure") }
+                .exceptionOrNull()?.let(failure::addSuppressed)
+            throw AssertionError("Manga editor ${if (save) "Save" else "Cancel"}: stage=$stage dismissed=$editorDismissed; expected enabled manga-search focus in its active window", failure)
+        }
     }
 
     private fun choose(opener: String, field: String, value: String, manga: Boolean = false) {
@@ -163,6 +193,7 @@ class NativePersonalCollectionTest {
             .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
     }
     private fun pressBack() { InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); compose.waitForIdle() }
+    private fun pressRemote(key: Int) { InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(key); compose.waitForIdle() }
     private fun fixture(manga: Boolean = false, highIds: Boolean = false, body: (CollectionFixture) -> Unit) {
         val f = CollectionFixture(highIds)
         MockWebServer().use { server ->

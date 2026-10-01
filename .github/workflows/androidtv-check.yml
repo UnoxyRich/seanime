@@ -109,9 +109,12 @@ jobs:
         run: python3 scripts/verify_android_native_alignment.py androidtv/app/build/outputs/apk/debug/*.apk
 
       - name: Record installable APK identity
-        working-directory: androidtv/app/build/outputs/apk/debug
+        working-directory: androidtv/app/build/outputs/apk
         run: |
-          sha256sum app-arm64-v8a-debug.apk app-x86_64-debug.apk > SHA256SUMS
+          mkdir -p ../tv-transfer
+          cp debug/app-arm64-v8a-debug.apk debug/app-x86_64-debug.apk androidTest/debug/app-debug-androidTest.apk ../tv-transfer/
+          cd ../tv-transfer
+          sha256sum app-arm64-v8a-debug.apk app-x86_64-debug.apk app-debug-androidTest.apk > SHA256SUMS
           printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT.txt
 
       - name: Retain installable debug APKs
@@ -119,10 +122,11 @@ jobs:
         with:
           name: android-tv-debug-apks-${{ github.sha }}
           path: |
-            androidtv/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
-            androidtv/app/build/outputs/apk/debug/app-x86_64-debug.apk
-            androidtv/app/build/outputs/apk/debug/SHA256SUMS
-            androidtv/app/build/outputs/apk/debug/SOURCE_COMMIT.txt
+            androidtv/app/build/outputs/tv-transfer/app-arm64-v8a-debug.apk
+            androidtv/app/build/outputs/tv-transfer/app-x86_64-debug.apk
+            androidtv/app/build/outputs/tv-transfer/app-debug-androidTest.apk
+            androidtv/app/build/outputs/tv-transfer/SHA256SUMS
+            androidtv/app/build/outputs/tv-transfer/SOURCE_COMMIT.txt
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -147,6 +151,18 @@ jobs:
           working-directory: androidtv
           # One command: the action runs separate script lines in separate shells.
           script: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" python3 ../scripts/run_android_tv_instrumentation.py
+
+      - name: Retain failed ordinary TV evidence early
+        if: ${{ !cancelled() && steps.connected_suite.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-tv-ordinary-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            androidtv/build/native-ci-evidence/connected-suite/evidence.zip
+            androidtv/build/native-ci-evidence/connected-suite/collection-status.json
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Run owned library playback journey on a fresh AVD
         id: owned_library_journey

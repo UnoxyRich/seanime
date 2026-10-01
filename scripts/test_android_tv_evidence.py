@@ -350,6 +350,126 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
         for excluded in (b"PRIVATE_SENTINEL", b"https://", b"Authorization", b"okhttp3", b"/private/"):
             self.assertNotIn(excluded, data)
 
+    def lifecycle_evidence(self):
+        stage = {"id": "initial-autoplay", "result": "ready", "playerPresent": True,
+                 "playbackState": 3, "positionMs": 4000, "durationMs": 12000,
+                 "paused": True, "mediaMatches": True, "readyForMs": 0}
+        failed = dict(stage, id="resume-after-stop", result="error", playbackState=1, readyForMs=0,
+                      errorCode=1004, errorSummary="category=other causes=androidx.media3.exoplayer.ExoPlaybackException>java.lang.IllegalStateException cycle=false truncated=false playerCode=1004",
+                      causeFrames=[{"causeDepth": 0, "className": "androidx.media3.exoplayer.ExoPlayerImplInternal",
+                                    "methodName": "handleMessage", "lineNumber": 700},
+                                   {"causeDepth": 1, "className": "androidx.media3.exoplayer.audio.DefaultAudioSink",
+                                    "methodName": "flush", "lineNumber": 1200}])
+        # Throw sites are synthetic validator fixtures, not an R30 diagnosis.
+        return {"schemaVersion": 1, "scenario": "player-lifecycle-recreation", "outcome": "failed",
+                "startedAtMs": 1100, "completedAtMs": 1500, "stages": [stage, failed]}
+
+    def write_lifecycle_evidence(self, data):
+        path = self.root / "device" / evidence.PLAYER_LIFECYCLE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+        return path
+
+    def test_lifecycle_retains_typed_failure_stage_and_cause_frames(self):
+        original = self.lifecycle_evidence()
+        self.write_lifecycle_evidence(original)
+        files, state = evidence.collect_player_lifecycle(1000, 1600)
+        self.assertEqual(state["status"], "captured")
+        self.assertEqual(state["outcome"], "failed")
+        self.assertEqual(json.loads(files["diagnostics/player-lifecycle-recreation.json"]), original)
+        self.assertEqual(state["stageCount"], 2)
+
+    def test_lifecycle_running_and_complete_pass_require_their_actual_checkpoints(self):
+        data = self.lifecycle_evidence()
+        data["outcome"] = "running"
+        data.pop("completedAtMs")
+        data["stages"] = [data["stages"][0]]
+        self.assertEqual(evidence.sanitize_player_lifecycle(data, 1000, 1600), data)
+        data["outcome"] = "passed"
+        data["completedAtMs"] = 1500
+        with self.assertRaises(ValueError):
+            evidence.sanitize_player_lifecycle(data, 1000, 1600)
+        data["stages"] = [dict(data["stages"][0], id=stage) for stage in evidence.PLAYER_LIFECYCLE_STAGES]
+        self.assertEqual(evidence.sanitize_player_lifecycle(data, 1000, 1600), data)
+
+    def test_lifecycle_stale_future_and_missing_invocation_times_are_rejected(self):
+        for start, finish in ((1101, 1600), (1, 1099), (0, 1600), (1000, 0), (True, 1600)):
+            with self.subTest(start=start, finish=finish), self.assertRaises(ValueError):
+                evidence.sanitize_player_lifecycle(self.lifecycle_evidence(), start, finish)
+        data = self.lifecycle_evidence()
+        data["completedAtMs"] = 2000
+        with self.assertRaises(ValueError):
+            evidence.sanitize_player_lifecycle(data, 1000, 1600)
+
+    def test_lifecycle_rejects_unknown_fields_secret_text_and_invalid_types(self):
+        mutations = [
+            (("url",), "https://private.invalid/PRIVATE_SENTINEL"),
+            (("schemaVersion",), True), (("startedAtMs",), True), (("completedAtMs",), 1500.0),
+            (("scenario",), "PRIVATE_SENTINEL"), (("outcome",), "PRIVATE_SENTINEL"),
+            (("stages", 1, "message"), "PRIVATE_SENTINEL"),
+            (("stages", 1, "id"), "PRIVATE_SENTINEL"), (("stages", 1, "result"), "PRIVATE_SENTINEL"),
+            (("stages", 0, "readyForMs"), -1), (("stages", 0, "mediaMatches"), False),
+            (("stages", 1, "playbackState"), True), (("stages", 1, "positionMs"), -1),
+            (("stages", 1, "durationMs"), float("nan")), (("stages", 1, "paused"), 1),
+            (("stages", 1, "errorCode"), True), (("stages", 1, "errorCode"), 2001),
+            (("stages", 1, "errorSummary"), "category=PRIVATE_SENTINEL causes=java.lang.RuntimeException cycle=false truncated=false playerCode=1004"),
+            (("stages", 1, "errorSummary"), "category=other causes=java.lang.RuntimeException: PRIVATE_SENTINEL cycle=false truncated=false playerCode=1004"),
+            (("stages", 1, "errorSummary"), "category=other causes=https://private.invalid/PRIVATE_SENTINEL cycle=false truncated=false playerCode=1004"),
+            (("stages", 1, "errorSummary"), "category=other causes=java.lang.RuntimeException cycle=false truncated=false playerCode=1004 Authorization=PRIVATE_SENTINEL"),
+            (("stages", 1, "causeFrames", 0, "fileName"), "/private/PRIVATE_SENTINEL.java"),
+            (("stages", 1, "causeFrames", 0, "className"), "private.PRIVATE_SENTINEL"),
+            (("stages", 1, "causeFrames", 0, "methodName"), "https://private.invalid/PRIVATE_SENTINEL"),
+            (("stages", 1, "causeFrames", 0, "lineNumber"), True),
+            (("stages", 1, "causeFrames", 0, "causeDepth"), 8),
+            (("stages", 1, "causeFrames", 0, "causeDepth"), 2),
+            (("stages", 1, "causeFrames"), self.lifecycle_evidence()["stages"][1]["causeFrames"] * 17),
+        ]
+        for path, value in mutations:
+            data = self.lifecycle_evidence()
+            target = data
+            for field in path[:-1]:
+                target = target[field]
+            target[path[-1]] = value
+            with self.subTest(path=path, value=value), self.assertRaises(ValueError) as rejected:
+                evidence.sanitize_player_lifecycle(data, 1000, 1600)
+            state = evidence.capture_failure(rejected.exception)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(state))
+            self.assertEqual(state["reason"], "Invalid player lifecycle evidence")
+
+    def test_lifecycle_read_is_fixed_bounded_and_rejects_symlinks_and_duplicate_keys(self):
+        path = self.write_lifecycle_evidence(self.lifecycle_evidence())
+        path.write_bytes(b" " * (evidence.PLAYER_LIFECYCLE_MAX_BYTES + 1))
+        with self.assertRaisesRegex(ValueError, "Missing or oversized player lifecycle evidence"):
+            evidence.collect_player_lifecycle(1000, 1600)
+        path.write_text('{"schemaVersion":1,"schemaVersion":1}')
+        with self.assertRaisesRegex(ValueError, "Invalid player lifecycle evidence"):
+            evidence.collect_player_lifecycle(1000, 1600)
+        path.unlink()
+        private = self.root / "private.json"
+        private.write_text("PRIVATE_SENTINEL")
+        path.symlink_to(private)
+        files, state = evidence.collect_player_lifecycle(1000, 1600)
+        self.assertFalse(files)
+        self.assertEqual(state["status"], "missing-or-unreadable")
+        path.unlink()
+        path.parent.rmdir()
+        path.parent.symlink_to(self.root, target_is_directory=True)
+        files, state = evidence.collect_player_lifecycle(1000, 1600)
+        self.assertFalse(files)
+        self.assertEqual(state["status"], "missing-or-unreadable")
+
+    def test_only_connected_suite_collects_lifecycle_and_missing_evidence_does_not_change_result(self):
+        with patch.object(evidence, "collect_player_lifecycle", return_value=({}, {"status": "missing-or-unreadable"})) as collect:
+            for invocation in ("connected-suite", "owned-library-journey"):
+                command = list(evidence.COMMAND)
+                if invocation != "connected-suite":
+                    command += [evidence.RUNNER_ARGUMENT + "class=" + evidence.OWNED_JOURNEY]
+                evidence.collect(self.root, 19, {"gradleStartedAtMs": 1000, "gradleFinishedAtMs": 1600}, {}, invocation, command)
+                manifest = json.loads((self.root / Path(evidence.OUTPUT).parent / invocation / "collection-status.json").read_text())
+                self.assertEqual(manifest["gradleExitCode"], 19)
+                self.assertEqual("playerLifecycle" in manifest, invocation == "connected-suite")
+            collect.assert_called_once_with(1000, 1600)
+
     def journey_manifest(self, directory="native-go-fixture-12345678-1234-4123-8123-123456789abc"):
         root = f"/data/user/0/{evidence.PACKAGE}/files/{directory}"
         return {"kind": evidence.JOURNEY_KIND, "root": root, "dataDir": root + "/data", "cacheDir": root + "/cache",

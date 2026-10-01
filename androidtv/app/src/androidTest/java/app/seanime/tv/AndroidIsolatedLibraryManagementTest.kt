@@ -19,6 +19,7 @@ import app.seanime.tv.data.SeanimeRepository
 import app.seanime.tv.gomobile.mobile.Mobile
 import app.seanime.tv.ui.performTvClick
 import app.seanime.tv.ui.enterTvTextAndDismissIme
+import app.seanime.tv.ui.TvDpadInputRule
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
@@ -27,6 +28,7 @@ import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
@@ -43,7 +45,9 @@ import java.util.UUID
  * then cold-launch normal MainActivity and verify signed status.dataDir is files/seanime/data.
  */
 class AndroidIsolatedLibraryManagementTest {
-    @get:Rule val compose = createEmptyComposeRule()
+    private val compose = createEmptyComposeRule()
+    private val dpad = TvDpadInputRule()
+    @get:Rule val rules: RuleChain = RuleChain.outerRule(dpad).around(compose)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
 
     @Test fun importedOwnedUnmatchedIndexSupportsNativeBulkRenameExplorerAndDelete() {
@@ -193,7 +197,7 @@ class AndroidIsolatedLibraryManagementTest {
             awaitFocused("library-rename-edit")
             remote(KeyEvent.KEYCODE_DPAD_CENTER)
             awaitFocused("library-rename-input")
-            compose.enterTvTextAndDismissIme("library-rename-input", renamed.name)
+            compose.enterTvTextAndDismissIme("library-rename-input", renamed.name, dpad)
             compose.onNodeWithTag("library-rename-input").assertTextContains(renamed.name)
             remote(KeyEvent.KEYCODE_DPAD_DOWN)
             compose.onNodeWithTag("text-entry-cancel").assertIsFocused()

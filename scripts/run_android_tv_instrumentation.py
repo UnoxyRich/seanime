@@ -65,6 +65,10 @@ OWNED_JOURNEY_VIDEO_BIT_RATE = 1_000_000
 VIDEO_MAX_BYTES = 32 * 1024 * 1024
 APP_WAIT_SECONDS = 180
 NO_SCREENSHOTS_RECEIPT = b"seanime-native-screenshots-not-created\n"
+PLAYER_LIFECYCLE_PATH = "cache/native-acceptance-diagnostics/player-lifecycle-recreation.json"
+PLAYER_LIFECYCLE_MAX_BYTES = 65_536
+PLAYER_LIFECYCLE_STAGES = ("initial-autoplay", "resume-after-stop", "paused-media-handoff",
+                           "playing-media-handoff", "activity-recreation")
 # Exact NativeScreenshotEvidence names, including the two parameterized fixtures.
 # Deliberately do not enumerate or copy any other application cache files.
 SCENARIOS = frozenset("""
@@ -106,6 +110,7 @@ native-marketplace-install-retry
 native-setting-choice-scaled-focus
 native-title-picker-search-focus
 native-torrent-downloads-row-return
+native-torrent-editor-return-failure
 native-torrent-file-priority-return
 native-torrent-peers
 native-torrent-session-limits-accepted
@@ -124,6 +129,7 @@ owned-go-journey-seek-focus
 owned-go-journey-subtitle-enabled
 owned-go-journey-subtitle-off
 personal-collection-large-id-restoration
+personal-collection-editor-return-failure
 personal-collection-restored-filtered-card
 platform-confirm-cancel-focus
 player-error-convert-focus
@@ -268,6 +274,8 @@ def capture_failure(error):
         "Invalid verified observation", "Invalid index readback", "Invalid owned media digest",
         "Invalid observation enum", "Unexpected owned fixture path",
         "Missing or oversized owned fixture manifest",
+        "Invalid player lifecycle evidence", "Stale player lifecycle evidence",
+        "Missing or oversized player lifecycle evidence",
     }
     reason = "Unexpected collector failure"
     if type(error) is ValueError and str(error) in safe_reasons:
@@ -406,6 +414,102 @@ def collect_junit(root, started_at_ms=0):
                   "skipped": len(suites.findall("testsuite/testcase/skipped")),
                   "rejectedReportsOrCases": rejected,
                   "note": "Names, durations, outcomes and sanitized app/Compose source frames; messages, properties and output omitted."}
+
+
+def sanitize_player_lifecycle(data, started_at_ms, finished_at_ms):
+    """Accept typed generated-fixture diagnostics only, never Throwable text or source addresses."""
+    def require(condition):
+        if not condition:
+            raise ValueError("Invalid player lifecycle evidence")
+
+    def integer(value, low, high):
+        return type(value) is int and low <= value <= high
+
+    root_fields = {"schemaVersion", "scenario", "outcome", "startedAtMs", "stages"}
+    require(type(data) is dict and root_fields <= data.keys() <= root_fields | {"completedAtMs"})
+    require(type(data["schemaVersion"]) is int and data["schemaVersion"] == 1)
+    require(data["scenario"] == "player-lifecycle-recreation" and data["outcome"] in ("running", "passed", "failed"))
+    require(integer(started_at_ms, 1, 9_007_199_254_740_991) and integer(finished_at_ms, started_at_ms, 9_007_199_254_740_991))
+    require(integer(data["startedAtMs"], 1, 9_007_199_254_740_991))
+    if not started_at_ms <= data["startedAtMs"] <= finished_at_ms:
+        raise ValueError("Stale player lifecycle evidence")
+    require(("completedAtMs" in data) == (data["outcome"] != "running"))
+    if "completedAtMs" in data:
+        require(integer(data["completedAtMs"], data["startedAtMs"], finished_at_ms))
+    stages = data["stages"]
+    require(type(stages) is list and 1 <= len(stages) <= len(PLAYER_LIFECYCLE_STAGES))
+    stage_fields = {"id", "result", "playerPresent", "playbackState", "positionMs", "durationMs",
+                    "paused", "mediaMatches", "readyForMs"}
+    error_fields = {"errorCode", "errorSummary", "causeFrames"}
+    category = ("provider_dns_policy|provider_url_policy|provider_proxy_policy|provider_redirect_policy|"
+                "platform_dns|tls|timeout|socket|http|io|other")
+    identifier = r"[A-Za-z0-9_.$]{1,96}"
+    summary = re.compile(r"category=(?:" + category + r") causes=" + identifier + r"(?:>" + identifier + r"){0,7}"
+                         r" cycle=(?:true|false) truncated=(?:true|false) playerCode=(?P<code>[0-9]{1,10})"
+                         r"(?: httpStatus=[1-5][0-9]{2})?(?: operation=(?:open|read|close|other))?(?: errno=-?[0-9]{1,10})?")
+    frame_class = re.compile(r"(?:androidx\.media3|io\.github\.peerless2012|app\.seanime\.tv|android|java|javax|kotlin|kotlinx|com\.google\.common)\.[A-Za-z0-9_.$]{1,160}")
+    for index, stage in enumerate(stages):
+        require(type(stage) is dict and stage_fields <= stage.keys() <= stage_fields | error_fields)
+        require(stage["id"] == PLAYER_LIFECYCLE_STAGES[index] and stage["result"] in ("waiting", "ready", "error", "timeout"))
+        require(all(type(stage[field]) is bool for field in ("playerPresent", "paused", "mediaMatches")))
+        require(integer(stage["playbackState"], 0, 4) and integer(stage["positionMs"], 0, 9_007_199_254_740_991))
+        require(integer(stage["durationMs"], -1, 9_007_199_254_740_991) and integer(stage["readyForMs"], 0, 60_000))
+        require(index == len(stages) - 1 or stage["result"] == "ready")
+        if stage["result"] == "ready":
+            require(stage["playerPresent"] and stage["mediaMatches"] and stage["playbackState"] == 3)
+        if stage["result"] == "error":
+            require(stage.keys() == stage_fields | error_fields and stage["playerPresent"])
+            require(integer(stage["errorCode"], 0, 2_147_483_647))
+            require(type(stage["errorSummary"]) is str and len(stage["errorSummary"]) <= 1200)
+            match = summary.fullmatch(stage["errorSummary"])
+            require(match is not None and int(match["code"]) == stage["errorCode"])
+            frames = stage["causeFrames"]
+            require(type(frames) is list and len(frames) <= 32)
+            depths = []
+            for frame in frames:
+                require(type(frame) is dict and frame.keys() == {"causeDepth", "className", "methodName", "lineNumber"})
+                require(integer(frame["causeDepth"], 0, stage["errorSummary"].split(" causes=", 1)[1].split(" cycle=", 1)[0].count(">")))
+                require(type(frame["className"]) is str and frame_class.fullmatch(frame["className"]) is not None)
+                require(type(frame["methodName"]) is str and re.fullmatch(r"[A-Za-z0-9_$<>-]{1,160}", frame["methodName"]) is not None)
+                require(integer(frame["lineNumber"], -2, 1_000_000))
+                depths.append(frame["causeDepth"])
+            require(depths == sorted(depths) and all(depths.count(depth) <= 4 for depth in set(depths)))
+        else:
+            require(stage.keys() == stage_fields)
+    if data["outcome"] == "passed":
+        require(len(stages) == len(PLAYER_LIFECYCLE_STAGES) and all(stage["result"] == "ready" for stage in stages))
+    return data
+
+
+def collect_player_lifecycle(started_at_ms, finished_at_ms):
+    # Read exactly one fixed file, rejecting symbolic links including its parents.
+    # head bounds remote stdout even when app-private contents are malformed.
+    script = ('[ ! -L cache ] && [ ! -L cache/native-acceptance-diagnostics ] && '
+              f'[ ! -L {PLAYER_LIFECYCLE_PATH} ] && [ -f {PLAYER_LIFECYCLE_PATH} ] || exit 2; '
+              f'exec head -c {PLAYER_LIFECYCLE_MAX_BYTES + 1} {PLAYER_LIFECYCLE_PATH}')
+    result = subprocess.run(exec_out_run_as("sh", "-c", script), stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, timeout=10)
+    if result.returncode != 0 or not result.stdout:
+        return {}, {"status": "missing-or-unreadable"}
+    if len(result.stdout) > PLAYER_LIFECYCLE_MAX_BYTES:
+        raise ValueError("Missing or oversized player lifecycle evidence")
+
+    def unique_object(pairs):
+        value = {}
+        for key, entry in pairs:
+            if key in value:
+                raise ValueError("Invalid player lifecycle evidence")
+            value[key] = entry
+        return value
+
+    try:
+        data = json.loads(result.stdout, object_pairs_hook=unique_object)
+    except (ValueError, UnicodeDecodeError):
+        raise ValueError("Invalid player lifecycle evidence") from None
+    clean = sanitize_player_lifecycle(data, started_at_ms, finished_at_ms)
+    return {"diagnostics/player-lifecycle-recreation.json": json_bytes(clean)}, {
+        "status": "captured", "outcome": clean["outcome"], "stageCount": len(clean["stages"]),
+        "note": "Generated WAV lifecycle observations; correlate with JUnit outcome, not a standalone acceptance result."}
 
 
 def capture_installed_apks():
@@ -907,6 +1011,16 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
         files["junit-summary.xml"], manifest["junit"] = collect_junit(root, recording.get("gradleStartedAtMs", 0))
     except Exception as error:
         manifest["junit"] = {"status": "capture-failed", "errorType": type(error).__name__}
+    if invocation == "connected-suite":
+        if access["status"] != "available":
+            manifest["playerLifecycle"] = {"status": "missing-or-unreadable", "reason": access["status"]}
+        else:
+            try:
+                diagnostics, manifest["playerLifecycle"] = collect_player_lifecycle(
+                    recording.get("gradleStartedAtMs", 0), recording.get("gradleFinishedAtMs", 0))
+                files.update(diagnostics)
+            except Exception as error:
+                manifest["playerLifecycle"] = capture_failure(error)
     owned = owned_fixture_profile(invocation, command or COMMAND)
     if owned:
         key = owned["statusKey"]

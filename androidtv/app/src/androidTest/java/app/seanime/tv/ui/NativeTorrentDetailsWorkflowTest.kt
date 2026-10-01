@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.text.AnnotatedString
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.tv.material3.MaterialTheme
 import app.seanime.tv.NativeScreenshotEvidence
@@ -19,12 +21,15 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
 import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
 class NativeTorrentDetailsWorkflowTest {
-    @get:Rule val compose = createComposeRule()
+    private val dpad = TvDpadInputRule()
+    private val compose = createComposeRule()
+    @get:Rule val rules: RuleChain = RuleChain.outerRule(dpad).around(compose)
 
     @Test fun downloadsEntrySupportsExactTorrentActionsFileRetryTrackersAndLazyBackFocus() = fixture { state ->
         enabled("torrent-global-limits")
@@ -64,11 +69,13 @@ class NativeTorrentDetailsWorkflowTest {
         NativeScreenshotEvidence.capture("native-torrent-file-priority-return")
 
         scroll("torrent-detail-tab-trackers"); click("torrent-detail-tab-trackers")
-        click("torrent-detail-add-tracker"); await("torrent-tracker-editor")
-        compose.onNodeWithTag("torrent-tracker-editor").performTextReplacement("https://new.example/announce")
-        click("text-entry-cancel"); focused("torrent-detail-add-tracker"); assertEquals(changes, state.posts.size)
-        click("torrent-detail-add-tracker"); compose.onNodeWithTag("torrent-tracker-editor").performTextReplacement("https://new.example/announce")
-        click("text-entry-save"); message("Tracker added.")
+        click("torrent-detail-add-tracker"); focused("torrent-tracker-editor")
+        compose.enterTvTextAndDismissIme("torrent-tracker-editor", "https://discarded.example/announce", dpad)
+        finishTrackerEditor(save = false); assertEquals(changes, state.posts.size)
+        click("torrent-detail-add-tracker"); focused("torrent-tracker-editor")
+        compose.onNodeWithTag("torrent-tracker-editor").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
+        compose.enterTvTextAndDismissIme("torrent-tracker-editor", "https://new.example/announce", dpad)
+        finishTrackerEditor(save = true); message("Tracker added.")
         scroll("torrent-detail-tracker-1"); click("torrent-detail-tracker-1")
         compose.onNodeWithText("Cancel").performTvClick(); assertEquals(changes + 1, state.posts.size)
         click("torrent-detail-tracker-1"); compose.onNodeWithText("Confirm").performTvClick()
@@ -83,6 +90,36 @@ class NativeTorrentDetailsWorkflowTest {
         val priorities = state.posts.filter { it.getString("action") == "set-file-priority" }
         assertEquals(2, priorities.size)
         priorities.forEach { assertEquals(18, it.getInt("index")); assertEquals(2, it.getInt("priority")); assertEquals(4, it.length()) }
+        state.posts.filter { it.getString("action") in setOf("add-tracker", "remove-tracker") }.also { trackers ->
+            assertEquals(listOf("add-tracker", "remove-tracker"), trackers.map { it.getString("action") })
+            trackers.forEach { assertEquals("https://new.example/announce", it.getString("tracker")); assertEquals(3, it.length()) }
+        }
+    }
+
+    private fun finishTrackerEditor(save: Boolean) {
+        // Return from the observed IME session before using real footer arrows.
+        var stage = "footer navigation"
+        var editorDismissed = false
+        try {
+            pressRemote(KeyEvent.KEYCODE_DPAD_DOWN)
+            compose.onNodeWithTag("text-entry-cancel").assertIsFocused()
+            if (save) {
+                pressRemote(KeyEvent.KEYCODE_DPAD_RIGHT)
+                compose.onNodeWithTag("text-entry-save").assertIsFocused().assertIsEnabled()
+            }
+            stage = "editor dismissal"
+            pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
+            compose.waitUntil(10_000) {
+                editorDismissed = compose.onAllNodesWithTag("torrent-tracker-editor").fetchSemanticsNodes().isEmpty()
+                if (editorDismissed) stage = "opener restoration"
+                editorDismissed && compose.onAllNodes(hasTestTag("torrent-detail-add-tracker") and isFocused() and isEnabled()).fetchSemanticsNodes()
+                    .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+            }
+        } catch (failure: Throwable) {
+            runCatching { NativeScreenshotEvidence.capture("native-torrent-editor-return-failure") }
+                .exceptionOrNull()?.let(failure::addSuppressed)
+            throw AssertionError("Tracker editor ${if (save) "Save" else "Cancel"}: stage=$stage dismissed=$editorDismissed; expected enabled add-tracker focus in its active window", failure)
+        }
     }
 
     @Test fun sessionLimitsPreserveDraftOnFailureCancelDoesNotSubmitAndReadbackIsNotInvented() = fixture { state ->

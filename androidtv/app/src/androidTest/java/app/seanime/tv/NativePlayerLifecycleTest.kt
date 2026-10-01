@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import org.junit.Rule
 import androidx.lifecycle.Lifecycle
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import androidx.test.core.app.ActivityScenario
@@ -33,6 +34,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
@@ -407,14 +409,24 @@ class NativePlayerLifecycleTest {
         writeSilentWav(first)
         writeSilentWav(next)
         val firstUri = Uri.fromFile(first)
+        val nextUri = Uri.fromFile(next)
+        val evidence = NativePlayerLifecycleEvidence(context.cacheDir)
+        evidence.begin("initial-autoplay")
         val firstReady = CountDownLatch(1)
         val initialAutoplay = AtomicBoolean(false)
+        val initialError = AtomicReference<PlaybackException?>()
         var initialPlayer: Player? = null
         // ActivityScenario.onActivity waits for UI idle. Continuous autoplay
         // updates can prevent idle on a slow emulator even after the clip ends.
         // Observe READY directly, then establish the paused lifecycle checkpoint
         // before asking ActivityScenario to inspect the player.
         val readyListener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                initialError.compareAndSet(null, error)
+                evidence.record("error", initialPlayer, firstUri)
+                firstReady.countDown()
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 val current = initialPlayer ?: return
                 if (playbackState != Player.STATE_READY || firstReady.count == 0L ||
@@ -434,6 +446,7 @@ class NativePlayerLifecycleTest {
                 if (current != null && current.currentMediaItem?.localConfiguration?.uri == firstUri) {
                     initialPlayer = current
                     current.addListener(readyListener)
+                    current.playerError?.let(readyListener::onPlayerError)
                     readyListener.onPlaybackStateChanged(current.playbackState)
                 }
             }
@@ -445,8 +458,9 @@ class NativePlayerLifecycleTest {
                 NativePlayerActivity.intent(context, firstUri, "First episode", "[]", 3_000, "{}"),
             )
             assertTrue("No READY callback for the exact autoplay fixture", firstReady.await(10, TimeUnit.SECONDS))
+            assertEquals("initial autoplay fixture failed", null, initialError.get())
             assertTrue("initial autoplay was lost", initialAutoplay.get())
-            awaitReady(scenario)
+            awaitReady(scenario, firstUri, evidence)
             var previousPlayer: Player? = null
             scenario.onActivity { activity ->
                 val player = requireNotNull(findPlayerView(activity.window.decorView)?.player)
@@ -460,10 +474,11 @@ class NativePlayerLifecycleTest {
                     .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
                     .build()
             }
+            evidence.begin("resume-after-stop")
             scenario.moveToState(Lifecycle.State.CREATED)
             assertFalse("stopped player still reports itself visible", NativePlayerActivity.isVisible())
             scenario.moveToState(Lifecycle.State.RESUMED)
-            awaitReady(scenario)
+            awaitReady(scenario, firstUri, evidence)
             scenario.onActivity { activity ->
                 val player = requireNotNull(findPlayerView(activity.window.decorView)?.player)
                 assertNotSame("a released decoder was reused", previousPlayer, player)
@@ -477,32 +492,44 @@ class NativePlayerLifecycleTest {
 
             // A playlist handoff changes the current media without replacing
             // the launch intent. Recreation must restore that newer source.
-            NativePlayerActivity.updateMedia(Uri.fromFile(next).toString(), "Next episode", "[]", 0, "{}", paused = true)
-            awaitReady(scenario)
+            evidence.begin("paused-media-handoff")
+            NativePlayerActivity.updateMedia(nextUri.toString(), "Next episode", "[]", 0, "{}", paused = true)
+            awaitReady(scenario, nextUri, evidence)
             scenario.onActivity { activity ->
                 val current = requireNotNull(findPlayerView(activity.window.decorView)?.player)
                 assertEquals("Explicit zero was replaced by old progress", 0L, current.currentPosition)
                 assertFalse("Explicit paused handoff started playback", current.playWhenReady)
             }
+            evidence.begin("playing-media-handoff")
             scenario.onActivity { activity ->
-                NativePlayerActivity.updateMedia(Uri.fromFile(next).toString(), "Next episode", "[]", 6_000, "{}", paused = false)
+                NativePlayerActivity.updateMedia(nextUri.toString(), "Next episode", "[]", 6_000, "{}", paused = false)
                 requireNotNull(findPlayerView(activity.window.decorView)?.player).apply {
                     assertTrue("Explicit playing handoff stayed paused", playWhenReady)
                     pause()
                     seekTo(6_000)
                 }
             }
-            awaitReady(scenario)
+            awaitReady(scenario, nextUri, evidence)
+            scenario.onActivity { previousPlayer = requireNotNull(findPlayerView(it.window.decorView)?.player) }
+            evidence.begin("activity-recreation")
             scenario.recreate()
-            awaitReady(scenario)
+            awaitReady(scenario, nextUri, evidence)
             scenario.onActivity { activity ->
                 val player = requireNotNull(findPlayerView(activity.window.decorView)?.player)
-                assertEquals(Uri.fromFile(next), player.currentMediaItem?.localConfiguration?.uri)
+                assertNotSame("recreation reused the released decoder", previousPlayer, player)
+                assertEquals(nextUri, player.currentMediaItem?.localConfiguration?.uri)
                 assertEquals(6_000L, player.currentPosition)
                 assertFalse(player.playWhenReady)
                 assertEquals(1.25f, player.playbackParameters.speed, 0.001f)
+                assertEquals(0.35f, player.volume, 0.001f)
+                assertEquals(listOf("ja"), player.trackSelectionParameters.preferredAudioLanguages)
+                assertTrue(player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_TEXT))
                 assertTrue(NativePlayerActivity.isVisible())
             }
+            evidence.finish("passed")
+        } catch (error: Throwable) {
+            evidence.finish("failed")
+            throw error
         } finally {
             instrumentation.runOnMainSync {
                 lifecycleMonitor.removeLifecycleCallback(lifecycleCallback)
@@ -583,21 +610,31 @@ class NativePlayerLifecycleTest {
         compose.onNodeWithTag(tag).assertIsDisplayed().assertIsFocused()
     }
 
-    private fun awaitReady(scenario: ActivityScenario<NativePlayerActivity>) {
+    private fun awaitReady(
+        scenario: ActivityScenario<NativePlayerActivity>,
+        expectedUri: Uri? = null,
+        evidence: NativePlayerLifecycleEvidence? = null,
+    ) {
         val deadline = SystemClock.elapsedRealtime() + 10_000
         var lastState = "player absent"
         while (SystemClock.elapsedRealtime() < deadline) {
             var ready = false
             scenario.onActivity { activity ->
                 val player = findPlayerView(activity.window.decorView)?.player
+                val matches = expectedUri == null || player?.currentMediaItem?.localConfiguration?.uri == expectedUri
+                // Preserve the rapid READY-to-lifecycle transition: an added dwell
+                // could hide a real renderer race. Only the exact source may advance.
+                ready = player?.playbackState == Player.STATE_READY && matches && player.playerError == null
+                evidence?.record(if (player?.playerError != null) "error" else if (ready) "ready" else "waiting",
+                    player, expectedUri)
                 assertEquals("native player failed to open the fixture", null, player?.playerError)
-                ready = player?.playbackState == Player.STATE_READY
-                lastState = player?.let { "state=${it.playbackState}, position=${it.currentPosition}, duration=${it.duration}, playWhenReady=${it.playWhenReady}" }
+                lastState = player?.let { "state=${it.playbackState}, position=${it.currentPosition}, duration=${it.duration}, playWhenReady=${it.playWhenReady}, mediaMatches=$matches" }
                     ?: "player absent"
             }
             if (ready) return
             SystemClock.sleep(50)
         }
+        evidence?.timeout()
         throw AssertionError("native player did not prepare the local WAV fixture: $lastState")
     }
 

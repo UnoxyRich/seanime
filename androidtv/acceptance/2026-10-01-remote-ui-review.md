@@ -1,17 +1,18 @@
 # Remote UI review — October 1, 2026
 
-Current published R27 source `8f2b7800` has **178 ordinary device passes,
-zero failures and five explicit isolated skips** across 183 unique cases.
+The latest completed device run, R30 source `62c0187c`, has **174 ordinary device passes,
+four failures and five explicit isolated skips** across 183 unique cases.
 The complete owned-media journey and independent signed Go media route pass;
 isolated filename editing and external-player handoff still fail. The Mac's
 installed R27 ARM64 build loads real AniList anime/manga covers and Bloom Into
-You metadata, but live AnimeHeaven playback has a transport error. Manga reading
-is not yet verified. Full parity and public release remain open.
+You metadata/chapter lists, but live AnimeHeaven playback and Atsumaru page
+pixels fail. R30 has not yet been installed on the Mac. Full parity and public
+release remain open.
 
-Local R30 includes the R28 custom-artwork correction, R29 harness repairs and
-bounded diagnostic evidence. It passes **441 JVM tests, 34 unchanged-reference
-comparisons**, lint and both ABI builds. It has not run on a device. The per-source results below must not be transferred
-to newer APKs.
+R30 includes the R28 custom-artwork correction, R29 harness changes and bounded
+diagnostic evidence. Its local aggregate passes **441 JVM tests, 34 unchanged
+reference comparisons, 52 collector tests**, lint and both ABI builds. Exact
+per-source and per-APK results below must not be transferred to newer builds.
 
 ## Actual R25 emulator evidence
 
@@ -161,7 +162,7 @@ This process-local build configuration changes no app or server networking.
 | Scope | Status |
 | --- | --- |
 | Current local R30 aggregate | Passed:441 JVM,34 visual,52 collector tests; APK signatures/alignment/API boundaries verified |
-| Published R27 TV automation |178 ordinary passes,0 failures,5 isolated skips; two isolated passes and two isolated failures |
+| Published R30 TV automation |174 ordinary passes,4 failures,5 isolated skips; two isolated passes and two isolated failures |
 | Library Explorer / native owned playback | Complete generated-media D-pad journey, seek, decoded audio, subtitle pixels, picture round-trip and same-file return focus pass |
 | Library management and external handoff | Partial subflows pass; filename-editor physical footer transition and real standalone player acceptance remain open |
 | Settings reentry and previous ordinary failures | All ordinary methods pass at R27; this does not validate later source |
@@ -389,3 +390,107 @@ remained unchanged. Source digest:
 These are a new diagnostic candidate, not a live playback or manga fix. R27's
 actual device passes and failures remain tied to its exact APKs; R30 device and
 live-provider results are pending. Public release remains held.
+
+## R30 terminal device evidence
+
+[Run 36903247274](https://github.com/UnoxyRich/seanime/actions/runs/36903247274)
+completed with failure on published `62c0187cc9f072a7748d60272912d46d8b90c17d`,
+whose tree equals local `22cf28df`. The sanitized XML contains **183 unique
+ordinary cases: 174 passed, 4 failed, 0 errors and 5 skipped**. Console counters
+that finish at 188 are not additional cases. All five invocations verify that
+the installed app/test APKs match their corresponding runner-built artifacts.
+
+| Ordinary failure | Evidence and limit |
+| --- | --- |
+| Player recreation | `NativePlayerLifecycleTest` sees an unexpected-runtime `ExoPlaybackException` while awaiting READY. The retained log/recording does not identify the lifecycle stage or nested cause; no runtime cause is invented |
+| Filename editing | The helper fails before activation because the TV emulator has no enumerated nonvirtual D-pad. This invalidates the R29 harness assumption; it does not establish a new production footer defect |
+| Personal manga collection | Timeout waiting for search-opener focus after cancelling its second editor; dialog dismissal and IME handoff were not separately established |
+| Torrent details | Timeout waiting for Add tracker focus after cancelling its editor; prior priority retry/cancel succeeded |
+
+The full Library→Files→player→Explorer→player journey and independent raw Go
+media flow both pass once without skips. Isolated management fails at the same
+missing-device precondition after verified import/bulk-ignore/signed readback.
+The external case fails its original unscoped receiver query before chooser
+launch; scoped wildcard and concrete-video queries find the enabled/exported
+receiver under a different UID. It is stopped, but the intent does not exclude
+stopped packages. These typed diagnostics survived strict artifact sanitization.
+The known separate-process receiver dependency defect is corrected in the APK;
+it is not an explanation of the remaining query result.
+
+Artifact 11186200194 has SHA-256
+`da3fd43e2397fcf8cc0b6b0e397ab3feadcdce7ad8a715d597468ed7597d3a47`.
+It retains 76 ordinary screenshots, 12 journey screenshots, and one from each
+other isolated flow. Generated-media screenshots/recordings are not live anime
+or manga evidence. Neither failure nor a missing capture is counted as a pass.
+
+R31's pending test corrections use a temporary CTS-style uinput D-pad before
+Activity creation to exercise Compose's real input path. Instrumentation key
+injection rewrites device IDs to the virtual keyboard, so borrowing a device ID
+cannot establish the intended TV Select behavior. Temporary input is removed
+after teardown; this is emulated remote coverage, not physical hardware proof.
+The original footer and backend assertions remain. The personal/torrent tests
+will establish actual editor dismissal before opener restoration.
+
+The external fixture needs the normal BROWSABLE category on its existing HTTP,
+video-only filter. Android 16's domain resolver applies to these VIEW intents
+even with video MIME; package-scoped queries bypass that post-filter. Generic
+web-capable handlers are classified through BROWSABLE. This source-backed
+fixture correction keeps unscoped MATCH_DEFAULT_ONLY and the real chooser,
+without broader permissions or an explicit test-component target. The observed
+candidate's identity was intentionally not captured; its exact domain status is
+an inference from the source and the scoped/unscoped differential. Runtime
+confirmation remains required.
+
+Primary platform sources: [domain intent classification](https://android.googlesource.com/platform/frameworks/base/+/android16-release/services/core/java/com/android/server/pm/verify/domain/DomainVerificationUtils.java),
+[domain preference filtering](https://android.googlesource.com/platform/frameworks/base/+/android16-release/services/core/java/com/android/server/pm/CrossProfileIntentResolverEngine.java),
+[generic handler classification](https://android.googlesource.com/platform/frameworks/base/+/android16-release/core/java/android/content/IntentFilter.java),
+[input dispatch](https://android.googlesource.com/platform/frameworks/native/+/refs/heads/android16-release/services/inputflinger/dispatcher/InputDispatcher.cpp)
+and [CTS uinput protocol](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/cmds/uinput/README.md).
+
+R30's Mac update is blocked before byte transfer: the supported Library helper
+cannot reach its service, and Chrome blocks the GitHub artifact host. Neither
+route is bypassed. An independent authorized local source build uses its own
+signature and APK identity in a separate AVD, preserving the original R27 data.
+A live diagnostic result remains pending; no transport or provider guard change
+is justified by the current generic error.
+
+## R31 harness candidate validation
+
+R31 changes test and evidence handling only. It adds the temporary uinput remote
+for IME activation, explicit editor-dismissal observation, BROWSABLE on the owned
+network-player fixture, and bounded lifecycle stage/cause evidence. Production
+Kotlin, provider payloads, transport policy, Go/API/schema and native media code
+remain unchanged from R30. Both locally built main APKs are **byte-identical to
+R30**, including their signatures and verified provider/shader assets.
+
+The lifecycle test keeps its original first-READY transition timing and immediate
+error assertion, while requiring the exact expected media. An initial validation
+variant added a 250ms dwell; review removed it because waiting could avoid the
+unexplained transition race. That first passed aggregate is retained separately.
+No sleeps or retries were added to make this failure disappear, and no runtime
+repair is inferred from the new diagnostics.
+
+The final aggregate completed in **60 seconds**, reusing unchanged host/build
+inputs as Gradle reports them up to date: **441 host tests, 34 unchanged visual
+comparisons, lint with zero errors and 88 warnings**, main and test packaging,
+signatures, ZIP/native16KiB alignment and all 17 source/APK boundaries pass.
+All 301 Android source/asset hashes and the captured workflow/collector hashes
+remained unchanged. Source digest:
+`b9662032063b07270572299c2965e532d96939f828fdfc5dbab8cb3e84d00e3b`.
+The collector's **58 tests** pass, including stale/future timestamps, strict
+stage/summary/frame grammar, malicious values/types, duplicate keys, size limits
+and symlink rejection. The fixed diagnostics path is read only for the ordinary
+suite; absence never turns a failing test green.
+
+The final instrumentation APK SHA-256 is
+`56409540117a74beedb7deb974bbb9d93238bd08d00bc4adc39a8bcd50f0e5c5`
+(2,080,326 bytes). Its packaged receiver declaration preserves VIEW,
+DEFAULT+BROWSABLE, HTTP/video-only matching, exported separate process and the
+same merged INTERNET/REORDER_TASKS permissions. Genuine chooser and lifecycle
+results require the new exact-commit device run.
+
+CI now retains the matching instrumentation APK and all three APK checksums in
+one installable artifact. Failed ordinary-suite evidence is uploaded early with
+a one-day retention period, using only the existing sanitized ZIP/status files;
+the final full evidence artifact remains. No raw log, credential, signing key or
+broader workflow permission is added. Public release remains held.
