@@ -323,7 +323,13 @@ class AndroidIsolatedRawMediaPlaybackTest {
             }
             NativeScreenshotEvidence.capture("isolated-go-external-open-focus")
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            compose.waitUntil(10_000) { compose.onAllNodesWithTag("native-player-dialog").fetchSemanticsNodes().isEmpty() }
+            // The system chooser can own the window before this absence check runs,
+            // leaving no active Compose roots in Seanime. That is valid here; the
+            // chooser/receiver and native-return assertions below still prove the handoff.
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithTag("native-player-dialog")
+                    .fetchSemanticsNodes(atLeastOneRootRequired = false).isEmpty()
+            }
             waitExternal("Android did not show the owned player in its chooser") {
                 if (results.any { it.getStringExtra("type") == "ready" }) return@waitExternal true
                 val matches = instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText("Owned test player").orEmpty()
@@ -377,6 +383,7 @@ class AndroidIsolatedRawMediaPlaybackTest {
             val returned = awaitPlayer(uri) { it.ready && it.paused }
             assertEquals("Returning must preserve the native pause checkpoint", pausedPosition, returned.position)
             awaitNativeFocus("native-player-options")
+            compose.onNodeWithTag("native-player-dialog").assertDoesNotExist()
             assertNull("External session lease survived native return", app.externalPlaybackLease.current)
             waitExternal("Foreground host service survived native return") {
                 @Suppress("DEPRECATION")

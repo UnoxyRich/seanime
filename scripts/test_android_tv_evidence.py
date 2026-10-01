@@ -392,6 +392,50 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
         data["stages"] = [dict(data["stages"][0], id=stage) for stage in evidence.PLAYER_LIFECYCLE_STAGES]
         self.assertEqual(evidence.sanitize_player_lifecycle(data, 1000, 1600), data)
 
+    def test_lifecycle_dns_policy_retains_only_fixed_reasons_and_saturated_counts(self):
+        suffixes = [
+            "dnsReason=invalid_host dnsAnswers=0 dnsRejected=0 dnsFamilies=none dnsKinds=none",
+            "dnsReason=empty_answers dnsAnswers=0 dnsRejected=0 dnsFamilies=none dnsKinds=none",
+            "dnsReason=nonpublic_answers dnsAnswers=2 dnsRejected=1 dnsFamilies=ipv4 dnsKinds=benchmark",
+            "dnsReason=nonpublic_answers dnsAnswers=2 dnsRejected=2 dnsFamilies=ipv4+ipv6 dnsKinds=nat64+private",
+            "dnsReason=nonpublic_answers dnsAnswers=255 dnsRejected=255 dnsFamilies=ipv4+ipv6+other dnsKinds=nat64+transition+private+local+multicast+benchmark+non_global",
+        ]
+        for suffix in suffixes:
+            data = self.lifecycle_evidence()
+            stage = data["stages"][1]
+            stage["errorSummary"] = stage["errorSummary"].replace("category=other", "category=provider_dns_policy") + " " + suffix
+            with self.subTest(suffix=suffix):
+                self.assertEqual(evidence.sanitize_player_lifecycle(data, 1000, 1600), data)
+
+    def test_lifecycle_dns_policy_rejects_unbounded_inconsistent_or_private_fields(self):
+        valid = "dnsReason=nonpublic_answers dnsAnswers=2 dnsRejected=1 dnsFamilies=ipv4 dnsKinds=benchmark"
+        invalid = [
+            valid.replace("nonpublic_answers", "PRIVATE_SENTINEL"),
+            valid.replace("dnsAnswers=2", "dnsAnswers=256"),
+            valid.replace("dnsRejected=1", "dnsRejected=3"),
+            valid.replace("dnsRejected=1", "dnsRejected=0"),
+            valid.replace("ipv4", "ipv4+ipv4"),
+            valid.replace("ipv4", "ipv6+ipv4"),
+            valid.replace("ipv4", "none"),
+            valid.replace("benchmark", "none"),
+            valid.replace("benchmark", "private+nat64"),
+            valid.replace("benchmark", "benchmark+benchmark"),
+            valid.replace("benchmark", "https://PRIVATE_SENTINEL"),
+            valid.replace("nonpublic_answers", "empty_answers"),
+            valid + " dnsHost=PRIVATE_SENTINEL",
+            "dnsReason=empty_answers",
+        ]
+        for suffix in invalid:
+            data = self.lifecycle_evidence()
+            stage = data["stages"][1]
+            stage["errorSummary"] = stage["errorSummary"].replace("category=other", "category=provider_dns_policy") + " " + suffix
+            with self.subTest(suffix=suffix), self.assertRaises(ValueError):
+                evidence.sanitize_player_lifecycle(data, 1000, 1600)
+        data = self.lifecycle_evidence()
+        data["stages"][1]["errorSummary"] += " " + valid
+        with self.assertRaises(ValueError):
+            evidence.sanitize_player_lifecycle(data, 1000, 1600)
+
     def test_lifecycle_stale_future_and_missing_invocation_times_are_rejected(self):
         for start, finish in ((1101, 1600), (1, 1099), (0, 1600), (1000, 0), (True, 1600)):
             with self.subTest(start=start, finish=finish), self.assertRaises(ValueError):

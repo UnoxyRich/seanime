@@ -494,3 +494,103 @@ one installable artifact. Failed ordinary-suite evidence is uploaded early with
 a one-day retention period, using only the existing sanitized ZIP/status files;
 the final full evidence artifact remains. No raw log, credential, signing key or
 broader workflow permission is added. Public release remains held.
+
+## R31 exact-commit device result
+
+[CI run 36916944613](https://github.com/UnoxyRich/seanime/actions/runs/36916944613)
+finished with failure on published `37ebb72df2c8bdea3b82220182fe3130283560c8`,
+whose tree equals local `b45cddfb`. Authoritative sanitized XML contains **183
+unique ordinary cases: 177 passed, 1 failed, 0 errors and 5 skipped**. All four
+R30 ordinary failures pass here. The five installed app/test pairs match their
+respective runner-built artifacts. The early and final ordinary evidence have
+the same 163 file hashes; their results are one run, not duplicate coverage.
+
+| Flow | Exact result |
+| --- | --- |
+| Full Library/Files/player/Explorer journey | Pass once, without skips, with 12 actual generated-video screenshots |
+| Isolated library management | Pass once, without skips: import, bulk ignore, filename editor lifecycle, rename, signed readback and owned-file deletion; 3 actual screenshots |
+| Independent raw Go media playback | Pass once, without skips |
+| External-player handoff | Fails after unscoped discovery and native Open selection, when the test queries a Compose hierarchy that is no longer present. The separate-player range/background/return assertions have not run successfully |
+| Torrent session-limit draft | Ordinary failure after the second numeric editor Save and Down. That method still used the old direct IME action without proving editor dismissal and active-window opener restoration |
+
+Player lifecycle evidence records all five exact-media stages as READY, with
+the original first-READY timing (`readyForMs=0`): initial autoplay, resume after
+stop, paused handoff, playing handoff and Activity recreation. This is a passed
+rerun and **non-recurrence**, not proof that an unexplained R30 runtime error was
+fixed by unchanged production code.
+
+Artifact 11192287664 has SHA-256
+`d9e0be01ab955ccf561791f4fa3e7518b21253263f29c01e8d17595b8faa04d3`.
+It contains 78 ordinary screenshots, 12 journey screenshots, 3 management
+screenshots, 1 raw-media screenshot and 2 external-flow screenshots. These are
+generated owned-media tests; they do not establish live anime or manga playback.
+
+## Mac R30 live-provider diagnostic
+
+An independent source build of published
+`62c0187cc9f072a7748d60272912d46d8b90c17d` installed in a second isolated ARM64
+Android TV AVD, preserving the original AVD and its data. APK SHA-256:
+`6e2be564b9414559e43b0d887dde6d65be32b1a9a5f00bac6a537fa6c2211973`.
+Its signer and bytes are distinct from the cloud-built APK; results belong to
+this local build. Official task-local tooling and the same verified gobind
+version were used without new SDK license or global-cache changes.
+
+Real AniList covers/Bloom details and AnimeHeaven source selection work.
+Atsumaru lists Bloom chapter 1 with 49 page descriptors. **Video and page 1/2
+images still fail.** Existing `SeanimeNetworkFailure` records identify
+`provider_dns_policy` for both, before an HTTP response. The old diagnostic
+combines empty DNS results with any rejected nonpublic answer; it does not prove
+which occurred, a resolver cause, or an upstream service refusal. Back/focus
+recovery succeeds. No provider guard or network route is relaxed from this
+ambiguous result. Public release remains held pending working required flows.
+
+## R32 diagnostic and transition candidate
+
+The DNS decision is unchanged. A typed `UnknownHostException` now carries only
+fixed rejection reason/family/kind enums and answer/rejection counts capped at
+255. It preserves legacy messages and the original platform DNS exception when
+the resolver itself throws. Debug-only logging distinguishes invalid host,
+empty answers, and nonpublic answers; it never retains or prints their hostname,
+numeric addresses, signed URL, credentials or raw throwable. The existing host,
+address, proxy, redirect and media-authority predicates are source-identical.
+The collector accepts only the bounded ordered grammar and coherent counts.
+
+Known address labels include the translation prefixes described by
+[RFC 6052](https://www.rfc-editor.org/rfc/rfc6052.html#section-2.1) and
+[RFC 8215](https://www.rfc-editor.org/rfc/rfc8215.html#section-5), plus the
+[benchmark range](https://www.rfc-editor.org/rfc/rfc2544.html#appendix-C.2.2).
+Such a label identifies an address range, not the resolver's cause or a proxy,
+and does not establish that a translation mechanism is unsafe. No new network
+route or exception to the policy is introduced by these diagnostics.
+
+All three numeric session-limit editor paths now observe real emulated-D-pad
+IME shown/Done/hidden, remote footer traversal, editor removal and enabled
+opener focus in its active window within the same ten-second return deadline.
+Cancellation must reload the original defaults; draft edits make no POST; both
+failed values survive; the two Apply POSTs retain their exact three-key payload.
+
+The external test's post-Select absence query explicitly sets Compose's
+documented `atLeastOneRootRequired=false`: a system chooser may leave the
+application with no Compose roots. Its existing timeout and absence predicate
+remain, without catching exceptions or adding delays. Actual separate-UID
+handoff, sustained anonymous Go ranges, background hosting and paused return
+are still required. Dialog absence is checked again after native More focus
+returns. Neither harness change is presented as a production player repair.
+
+R32's frozen aggregate passes in **217 seconds**: **448 host tests, 34 unchanged
+visual comparisons, 60 collector tests, lint with zero errors/88 warnings**, both
+ABI APKs and instrumentation packaging, signatures, ZIP/native 16KiB alignment,
+the exact provider/shader assets and 17 static source/APK boundaries. All 301
+Android source/asset hashes plus captured workflow/collector hashes remain
+unchanged through the run. Source digest:
+`a7c6c7ca6f99b6bb049fd6c8a4680a8bdb4479c9178d39620a2d1f698d29b638`.
+Current APK SHA-256 values:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| ARM64 | `ec5d05278cdb177eabe85fd1536165db62ffd2e06eb916e3d188c5c6ae3ac0dc` |
+| x86_64 | `3c68157add1aa2ac56e2acffef2725a78851548a11207bc108fbf966d3e00747` |
+| Instrumentation | `96b5c516704713121538ccb2d4826e66fe6327b1be04cbeaf5544e5ebd4831d1` |
+
+These are new diagnostic APK bytes. R32 device and live-provider verification
+remain pending; previous-source results are not promoted to this candidate.

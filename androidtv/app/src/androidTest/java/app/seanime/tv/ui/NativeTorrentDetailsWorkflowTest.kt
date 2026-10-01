@@ -123,28 +123,67 @@ class NativeTorrentDetailsWorkflowTest {
     }
 
     @Test fun sessionLimitsPreserveDraftOnFailureCancelDoesNotSubmitAndReadbackIsNotInvented() = fixture { state ->
-        await("torrent-global-limits"); click("torrent-global-limits")
-        enabled("torrent-limits-download"); click("torrent-limits-download")
-        compose.onNodeWithTag("torrent-limit-editor").performTextReplacement("2048")
-        compose.onNodeWithTag("torrent-limit-editor").performImeAction()
-        click("text-entry-save"); focused("torrent-limits-download")
-        click("torrent-limits-cancel"); focused("torrent-global-limits"); assertTrue(state.posts.isEmpty())
-        click("torrent-global-limits"); enabled("torrent-limits-download"); click("torrent-limits-download")
-        compose.onNodeWithTag("torrent-limit-editor").performTextReplacement("2048")
-        compose.onNodeWithTag("torrent-limit-editor").performImeAction(); click("text-entry-save")
-        focused("torrent-limits-download")
-        pressRemote(KeyEvent.KEYCODE_DPAD_DOWN); focused("torrent-limits-upload")
-        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
-        compose.onNodeWithTag("torrent-limit-editor").performTextReplacement("0")
-        compose.onNodeWithTag("torrent-limit-editor").performImeAction(); click("text-entry-save"); focused("torrent-limits-upload")
-        click("torrent-limits-apply"); await("torrent-limits-error")
-        compose.onNodeWithTag("torrent-limits-download").assertTextEquals("Download: 2048 KB/s")
-        click("torrent-limits-apply"); await("torrent-limits-accepted")
-        compose.onNodeWithTag("torrent-limits-accepted").assertTextEquals("Session limit request accepted. These values are not saved as startup defaults.")
-        NativeScreenshotEvidence.capture("native-torrent-session-limits-accepted")
-        click("torrent-limits-cancel"); focused("torrent-global-limits")
-        assertEquals(2, state.posts.size)
-        state.posts.forEach { assertEquals("set-limits", it.getString("action")); assertEquals(2048, it.getInt("downloadLimit")); assertEquals(0, it.getInt("uploadLimit")); assertFalse(it.has("hash")) }
+        try {
+            await("torrent-global-limits"); click("torrent-global-limits")
+            enabled("torrent-limits-download"); click("torrent-limits-download")
+            saveSessionLimitDraft("torrent-limits-download", "2048")
+            compose.onNodeWithTag("torrent-limits-download").assertTextEquals("Download: 2048 KB/s")
+            assertTrue("Saving a numeric draft must not apply session limits", state.posts.isEmpty())
+            click("torrent-limits-cancel"); focused("torrent-global-limits"); assertTrue(state.posts.isEmpty())
+            click("torrent-global-limits"); enabled("torrent-limits-download")
+            compose.onNodeWithTag("torrent-limits-download").assertTextEquals("Download: 1024 KB/s")
+            click("torrent-limits-download")
+            saveSessionLimitDraft("torrent-limits-download", "2048")
+            pressRemote(KeyEvent.KEYCODE_DPAD_DOWN); focused("torrent-limits-upload")
+            pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
+            saveSessionLimitDraft("torrent-limits-upload", "0")
+            assertTrue("Editing both draft limits must not submit before Apply", state.posts.isEmpty())
+            click("torrent-limits-apply"); await("torrent-limits-error")
+            compose.onNodeWithTag("torrent-limits-download").assertTextEquals("Download: 2048 KB/s")
+            compose.onNodeWithTag("torrent-limits-upload").assertTextEquals("Upload: 0 KB/s")
+            click("torrent-limits-apply"); await("torrent-limits-accepted")
+            compose.onNodeWithTag("torrent-limits-accepted").assertTextEquals("Session limit request accepted. These values are not saved as startup defaults.")
+            NativeScreenshotEvidence.capture("native-torrent-session-limits-accepted")
+            click("torrent-limits-cancel"); focused("torrent-global-limits")
+            assertEquals(2, state.posts.size)
+            state.posts.forEach {
+                assertEquals(setOf("action", "downloadLimit", "uploadLimit"), it.keys().asSequence().toSet())
+                assertEquals("set-limits", it.getString("action")); assertEquals(2048, it.getInt("downloadLimit")); assertEquals(0, it.getInt("uploadLimit")); assertFalse(it.has("hash"))
+            }
+        } catch (failure: Throwable) {
+            runCatching { NativeScreenshotEvidence.capture("native-torrent-session-limits-failure") }
+                .exceptionOrNull()?.let(failure::addSuppressed)
+            throw failure
+        }
+    }
+
+    private fun saveSessionLimitDraft(opener: String, value: String) {
+        var stage = "editor focus"
+        var editorDismissed = false
+        try {
+            focused("torrent-limit-editor")
+            stage = "IME handoff"
+            compose.enterTvTextAndDismissIme("torrent-limit-editor", value, dpad)
+            compose.onNodeWithTag("torrent-limit-editor").assertTextContains(value)
+            stage = "footer navigation"
+            pressRemote(KeyEvent.KEYCODE_DPAD_DOWN)
+            compose.onNodeWithTag("text-entry-cancel").assertIsFocused()
+            pressRemote(KeyEvent.KEYCODE_DPAD_RIGHT)
+            compose.onNodeWithTag("text-entry-save").assertIsFocused().assertIsEnabled()
+            stage = "editor dismissal"
+            pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
+            // The parent dialog may retain semantic focus while this nested editor
+            // still owns input. Require removal and active-window focus together,
+            // within the original return deadline, before another remote arrow.
+            compose.waitUntil(10_000) {
+                editorDismissed = compose.onAllNodesWithTag("torrent-limit-editor").fetchSemanticsNodes().isEmpty()
+                if (editorDismissed) stage = "opener restoration"
+                editorDismissed && compose.onAllNodes(hasTestTag(opener) and isFocused() and isEnabled()).fetchSemanticsNodes()
+                    .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+            }
+        } catch (failure: Throwable) {
+            throw AssertionError("Session limit Save: stage=$stage dismissed=$editorDismissed; expected enabled $opener focus in its active window", failure)
+        }
     }
 
     private fun fixture(block: (Fixture) -> Unit) {

@@ -41,6 +41,7 @@ internal object NativeNetworkFailure {
         val cycle = next != null && next in seen
         val truncated = next != null && !cycle
         val policy = causes.firstNotNullOfOrNull(::policyCategory)
+        val dnsPolicy = causes.filterIsInstance<ProviderUrlPolicy.DnsPolicyException>().firstOrNull()
         val httpStatus = causes.firstNotNullOfOrNull {
             when (it) {
                 is HttpDataSource.InvalidResponseCodeException -> it.responseCode
@@ -74,6 +75,13 @@ internal object NativeNetworkFailure {
             httpStatus?.let { append(" httpStatus=").append(it) }
             operation?.let { append(" operation=").append(it) }
             errno?.let { append(" errno=").append(it) }
+            dnsPolicy?.takeIf { category == "provider_dns_policy" }?.let {
+                append(" dnsReason=").append(it.reason.name.lowercase())
+                append(" dnsAnswers=").append(it.answerCount)
+                append(" dnsRejected=").append(it.rejectedCount)
+                append(" dnsFamilies=").append(it.rejectedFamilies.joinToString("+") { family -> family.name.lowercase() }.ifEmpty { "none" })
+                append(" dnsKinds=").append(it.rejectedKinds.joinToString("+") { kind -> kind.name.lowercase() }.ifEmpty { "none" })
+            }
         }
     }
 
@@ -82,6 +90,7 @@ internal object NativeNetworkFailure {
         ?: "unknown"
 
     private fun policyCategory(error: Throwable): String? {
+        if (error is ProviderUrlPolicy.DnsPolicyException) return "provider_dns_policy"
         // Matching a message alone could mislabel a platform DNS error with the same text.
         // Require the throwing frame to belong to our policy, and never emit either value.
         val owner = error.stackTrace.firstOrNull()?.className ?: return null

@@ -114,6 +114,7 @@ native-torrent-editor-return-failure
 native-torrent-file-priority-return
 native-torrent-peers
 native-torrent-session-limits-accepted
+native-torrent-session-limits-failure
 offline-metadata-server-finished
 offline-poster-native-render-focus
 owned-go-journey-audio-second-track
@@ -444,9 +445,12 @@ def sanitize_player_lifecycle(data, started_at_ms, finished_at_ms):
     category = ("provider_dns_policy|provider_url_policy|provider_proxy_policy|provider_redirect_policy|"
                 "platform_dns|tls|timeout|socket|http|io|other")
     identifier = r"[A-Za-z0-9_.$]{1,96}"
-    summary = re.compile(r"category=(?:" + category + r") causes=" + identifier + r"(?:>" + identifier + r"){0,7}"
+    summary = re.compile(r"category=(?P<category>" + category + r") causes=" + identifier + r"(?:>" + identifier + r"){0,7}"
                          r" cycle=(?:true|false) truncated=(?:true|false) playerCode=(?P<code>[0-9]{1,10})"
-                         r"(?: httpStatus=[1-5][0-9]{2})?(?: operation=(?:open|read|close|other))?(?: errno=-?[0-9]{1,10})?")
+                         r"(?: httpStatus=[1-5][0-9]{2})?(?: operation=(?:open|read|close|other))?(?: errno=-?[0-9]{1,10})?"
+                         r"(?: dnsReason=(?P<dns_reason>invalid_host|empty_answers|nonpublic_answers)"
+                         r" dnsAnswers=(?P<dns_answers>[0-9]{1,3}) dnsRejected=(?P<dns_rejected>[0-9]{1,3})"
+                         r" dnsFamilies=(?P<dns_families>[a-z0-9_+]{1,16}) dnsKinds=(?P<dns_kinds>[a-z0-9_+]{1,72}))?")
     frame_class = re.compile(r"(?:androidx\.media3|io\.github\.peerless2012|app\.seanime\.tv|android|java|javax|kotlin|kotlinx|com\.google\.common)\.[A-Za-z0-9_.$]{1,160}")
     for index, stage in enumerate(stages):
         require(type(stage) is dict and stage_fields <= stage.keys() <= stage_fields | error_fields)
@@ -463,6 +467,19 @@ def sanitize_player_lifecycle(data, started_at_ms, finished_at_ms):
             require(type(stage["errorSummary"]) is str and len(stage["errorSummary"]) <= 1200)
             match = summary.fullmatch(stage["errorSummary"])
             require(match is not None and int(match["code"]) == stage["errorCode"])
+            if match["dns_reason"] is not None:
+                require(match["category"] == "provider_dns_policy")
+                answers, rejected = int(match["dns_answers"]), int(match["dns_rejected"])
+                require(0 <= rejected <= answers <= 255)
+                families, kinds = match["dns_families"], match["dns_kinds"]
+                if match["dns_reason"] in ("invalid_host", "empty_answers"):
+                    require(answers == rejected == 0 and families == kinds == "none")
+                else:
+                    require(rejected > 0)
+                    for tokens, ordered in ((families, ("ipv4", "ipv6", "other")),
+                                            (kinds, ("nat64", "transition", "private", "local", "multicast", "benchmark", "non_global"))):
+                        values = tokens.split("+")
+                        require(values == [value for value in ordered if value in values] and len(values) > 0)
             frames = stage["causeFrames"]
             require(type(frames) is list and len(frames) <= 32)
             depths = []

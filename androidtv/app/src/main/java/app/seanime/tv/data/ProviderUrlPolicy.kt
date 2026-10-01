@@ -15,6 +15,26 @@ import okhttp3.OkHttpClient
 
 /** Only for untrusted provider results. The selected Seanime server and local media use a separate context. */
 object ProviderUrlPolicy {
+    internal enum class DnsReason { INVALID_HOST, EMPTY_ANSWERS, NONPUBLIC_ANSWERS }
+    internal enum class DnsFamily { IPV4, IPV6, OTHER }
+    internal enum class DnsRejectionKind { NAT64, TRANSITION, PRIVATE, LOCAL, MULTICAST, BENCHMARK, NON_GLOBAL }
+
+    /** Retains only fixed classifications and counts, never the hostname or resolved addresses. */
+    internal class DnsPolicyException(
+        val reason: DnsReason,
+        answerCount: Int = 0,
+        rejectedAnswers: List<InetAddress> = emptyList(),
+    ) : UnknownHostException(if (reason == DnsReason.INVALID_HOST) "The provider address is not public"
+        else "The provider address did not resolve exclusively to public IP addresses") {
+        // 255 means 255 or more. Keep diagnostic size bounded even for unusual resolver results.
+        val answerCount = answerCount.coerceIn(0, 255)
+        val rejectedCount = rejectedAnswers.size.coerceAtMost(255)
+        val rejectedFamilies = rejectedAnswers.map {
+            when (it.address.size) { 4 -> DnsFamily.IPV4; 16 -> DnsFamily.IPV6; else -> DnsFamily.OTHER }
+        }.distinct().sortedBy { it.ordinal }
+        val rejectedKinds = rejectedAnswers.map(::dnsRejectionKind).distinct().sortedBy { it.ordinal }
+    }
+
     fun requirePublicUrl(value: String): HttpUrl {
         require(value.isNotBlank() && value.none { it.isWhitespace() || it.isISOControl() || it == '\\' }) { "The provider returned an invalid address" }
         val raw = runCatching { URI(value) }.getOrNull()
@@ -64,11 +84,35 @@ object ProviderUrlPolicy {
     internal fun publicDns(delegate: Dns = Dns.SYSTEM): Dns = object : Dns {
         override fun lookup(hostname: String): List<InetAddress> {
             try { requirePublicHost(hostname) }
-            catch (_: IllegalArgumentException) { throw UnknownHostException("The provider address is not public") }
+            catch (_: IllegalArgumentException) { throw DnsPolicyException(DnsReason.INVALID_HOST) }
             val answers = delegate.lookup(hostname)
-            if (answers.isEmpty() || answers.any { !isPublicAddress(it) }) throw UnknownHostException("The provider address did not resolve exclusively to public IP addresses")
+            if (answers.isEmpty()) throw DnsPolicyException(DnsReason.EMPTY_ANSWERS)
+            val rejected = answers.filterNot(::isPublicAddress)
+            if (rejected.isNotEmpty()) throw DnsPolicyException(DnsReason.NONPUBLIC_ANSWERS, answers.size, rejected)
             return answers
         }
+    }
+
+    /** Diagnostic labels only. isPublicAddress remains the sole address acceptance predicate. */
+    private fun dnsRejectionKind(address: InetAddress): DnsRejectionKind {
+        if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress) return DnsRejectionKind.LOCAL
+        if (address.isSiteLocalAddress) return DnsRejectionKind.PRIVATE
+        if (address.isMulticastAddress) return DnsRejectionKind.MULTICAST
+        val bytes = address.address.map { it.toInt() and 255 }
+        if (bytes.size == 16) {
+            if (bytes[0] and 0xfe == 0xfc) return DnsRejectionKind.PRIVATE
+            // Well-known NAT64 /96 and local-use NAT64 /48; no assumption about network-specific prefixes.
+            if (bytes.take(4) == listOf(0x00, 0x64, 0xff, 0x9b) &&
+                ((bytes[4] == 0 && bytes[5] == 1) || bytes.subList(4, 12).all { it == 0 })) return DnsRejectionKind.NAT64
+            if ((bytes[0] == 0x20 && bytes[1] == 0x02) ||
+                (bytes.take(4) == listOf(0x20, 0x01, 0x00, 0x00)) ||
+                (bytes.take(10).all { it == 0 } && ((bytes[10] == 0 && bytes[11] == 0) ||
+                    (bytes[10] == 0xff && bytes[11] == 0xff)))) return DnsRejectionKind.TRANSITION
+        } else if (bytes.size == 4) {
+            if (bytes.take(3) == listOf(192, 88, 99)) return DnsRejectionKind.TRANSITION
+            if (bytes[0] == 198 && bytes[1] in 18..19) return DnsRejectionKind.BENCHMARK
+        }
+        return DnsRejectionKind.NON_GLOBAL
     }
 
     /** DNS is checked before connecting, and every redirect is checked before OkHttp follows it. */

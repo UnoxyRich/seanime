@@ -49,6 +49,63 @@ class NativeNetworkFailureTest {
         })
         assertSame(platform, runCatching { delegate.lookup("fixture.example") }.exceptionOrNull())
         assertTrue(summary(platform).startsWith("category=platform_dns "))
+        assertFalse(summary(platform).contains("dnsReason="))
+    }
+
+    @Test fun emptyDnsAndInvalidHostSummariesHaveOnlyFixedZeroAnswerDetails() {
+        val empty = dnsFailure(emptyList())
+        val invalid = runCatching { ProviderUrlPolicy.publicDns(object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> = throw AssertionError("Unexpected DNS")
+        }).lookup("localhost") }.exceptionOrNull()!!
+        for ((failure, reason) in listOf(empty to "empty_answers", invalid to "invalid_host")) {
+            val result = summary(failure)
+            assertTrue(result.startsWith("category=provider_dns_policy "))
+            assertTrue(result.endsWith("dnsReason=$reason dnsAnswers=0 dnsRejected=0 dnsFamilies=none dnsKinds=none"))
+            assertRedacted(result)
+        }
+    }
+
+    @Test fun wrappedProviderDnsDetailsUseBoundedOrderedClassificationsWithoutAddresses() {
+        val answers = listOf(
+            namedIp(8, 8, 8, 8),
+            namedIp(198, 18, 0, 1),
+            namedIp(0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0, 8, 8, 8, 8),
+            namedIp(0xfc, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1),
+            namedIp(127, 0, 0, 1),
+            namedIp(224, 0, 0, 1),
+            namedIp(192, 0, 2, 1),
+            namedIp(0x20, 2, 8, 8, 8, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1),
+        )
+        val source = HttpDataSource.HttpDataSourceException.createForIOException(dnsFailure(answers),
+            DataSpec(Uri.parse("https://private.example/video?token=signed-secret")), HttpDataSource.HttpDataSourceException.TYPE_OPEN)
+        val player = PlaybackException(secret, source, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+        val result = NativeNetworkFailure.summary(player, player.errorCode)
+        assertTrue(result.startsWith("category=provider_dns_policy "))
+        assertTrue(result.contains("playerCode=2001 operation=open"))
+        assertTrue(result.endsWith("dnsReason=nonpublic_answers dnsAnswers=8 dnsRejected=7 dnsFamilies=ipv4+ipv6 " +
+            "dnsKinds=nat64+transition+private+local+multicast+benchmark+non_global"))
+        assertRedacted(result)
+        answers.forEach { assertFalse(result.contains(it.hostAddress!!)) }
+        val bounded = summary(dnsFailure(List(300) { answers[1] }))
+        assertTrue(bounded.endsWith("dnsReason=nonpublic_answers dnsAnswers=255 dnsRejected=255 dnsFamilies=ipv4 dnsKinds=benchmark"))
+        assertTrue(bounded.length < 600)
+        assertRedacted(bounded)
+    }
+
+    @Test fun legacyDnsRecognitionStillRequiresPolicyProvenanceAndInventsNoDetails() {
+        val legacy = UnknownHostException("The provider address did not resolve exclusively to public IP addresses")
+        assertTrue(summary(legacy).startsWith("category=platform_dns "))
+        legacy.stackTrace = arrayOf(StackTraceElement(ProviderUrlPolicy::class.java.name, "publicDns", "ProviderUrlPolicy.kt", 107))
+        val result = summary(legacy)
+        assertTrue(result.startsWith("category=provider_dns_policy "))
+        assertFalse(result.contains("dnsReason="))
+    }
+
+    private fun namedIp(vararg bytes: Int): InetAddress = InetAddress.getByAddress("private.example", bytes.map { it.toByte() }.toByteArray())
+
+    private fun dnsFailure(answers: List<InetAddress>): ProviderUrlPolicy.DnsPolicyException {
+        val dns = ProviderUrlPolicy.publicDns(object : Dns { override fun lookup(hostname: String) = answers })
+        return assertThrows(ProviderUrlPolicy.DnsPolicyException::class.java) { dns.lookup("private.example") }
     }
 
     @Test fun wrappedPlayerDnsFailurePreservesOnlyNumericCodeOperationAndClassChain() {

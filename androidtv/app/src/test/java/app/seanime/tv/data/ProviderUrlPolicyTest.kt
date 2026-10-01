@@ -45,6 +45,80 @@ class ProviderUrlPolicyTest {
         assertFalse(lookedUp)
     }
 
+    @Test fun dnsEmptyAnswersAndInvalidHostsHaveDistinctFixedReasons() {
+        val empty = dnsRejection(emptyList())
+        assertEquals(ProviderUrlPolicy.DnsReason.EMPTY_ANSWERS, empty.reason)
+        assertEquals("The provider address did not resolve exclusively to public IP addresses", empty.message)
+        assertEquals(0, empty.answerCount)
+        assertEquals(0, empty.rejectedCount)
+        assertTrue(empty.rejectedFamilies.isEmpty())
+        assertTrue(empty.rejectedKinds.isEmpty())
+        val dns = ProviderUrlPolicy.publicDns(object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> = throw AssertionError("Invalid host reached DNS")
+        })
+        val invalid = assertThrows(ProviderUrlPolicy.DnsPolicyException::class.java) { dns.lookup("localhost") }
+        assertEquals(ProviderUrlPolicy.DnsReason.INVALID_HOST, invalid.reason)
+        assertEquals("The provider address is not public", invalid.message)
+        assertEquals(0, invalid.answerCount)
+        assertEquals(0, invalid.rejectedCount)
+    }
+
+    @Test fun dnsMixedPublicAndPrivateAnswersCountOnlyRejectedFamiliesAndKinds() {
+        val public = ip(8, 8, 8, 8)
+        val privateV4 = ip(192, 168, 1, 2)
+        val privateV6 = ip(0xfc, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+        val publicV6 = ip(0x26, 0x06, 0x47, 0, 0x47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11, 0x11)
+        val mixed = dnsRejection(listOf(public, publicV6, privateV4))
+        assertEquals(ProviderUrlPolicy.DnsReason.NONPUBLIC_ANSWERS, mixed.reason)
+        assertEquals(3, mixed.answerCount)
+        assertEquals(1, mixed.rejectedCount)
+        assertEquals(listOf(ProviderUrlPolicy.DnsFamily.IPV4), mixed.rejectedFamilies)
+        assertEquals(listOf(ProviderUrlPolicy.DnsRejectionKind.PRIVATE), mixed.rejectedKinds)
+        val both = dnsRejection(listOf(privateV6, public, privateV4, privateV4))
+        assertEquals(4, both.answerCount)
+        assertEquals(3, both.rejectedCount)
+        assertEquals(listOf(ProviderUrlPolicy.DnsFamily.IPV4, ProviderUrlPolicy.DnsFamily.IPV6), both.rejectedFamilies)
+        assertEquals(listOf(ProviderUrlPolicy.DnsRejectionKind.PRIVATE), both.rejectedKinds)
+    }
+
+    @Test fun dnsNat64TransitionAndBenchmarkLabelsDoNotAllowRejectedAddresses() {
+        val cases = listOf(
+            ip(0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0, 8, 8, 8, 8) to ProviderUrlPolicy.DnsRejectionKind.NAT64,
+            ip(0, 0x64, 0xff, 0x9b, 0, 1, 1, 2, 3, 4, 5, 6, 8, 8, 8, 8) to ProviderUrlPolicy.DnsRejectionKind.NAT64,
+            ip(0x20, 2, 8, 8, 8, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1) to ProviderUrlPolicy.DnsRejectionKind.TRANSITION,
+            ip(0x20, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1) to ProviderUrlPolicy.DnsRejectionKind.TRANSITION,
+            ip(192, 88, 99, 1) to ProviderUrlPolicy.DnsRejectionKind.TRANSITION,
+            ip(198, 18, 0, 1) to ProviderUrlPolicy.DnsRejectionKind.BENCHMARK,
+            ip(198, 19, 255, 254) to ProviderUrlPolicy.DnsRejectionKind.BENCHMARK,
+            ip(192, 0, 2, 1) to ProviderUrlPolicy.DnsRejectionKind.NON_GLOBAL,
+        )
+        cases.forEach { (address, kind) ->
+            assertFalse(ProviderUrlPolicy.isPublicAddress(address))
+            assertEquals(listOf(kind), dnsRejection(listOf(address)).rejectedKinds)
+        }
+        // A lookalike outside the recognized NAT64 prefixes keeps the generic rejected label.
+        val other = ip(0, 0x64, 0xff, 0x9b, 0, 2, 0, 0, 0, 0, 0, 0, 8, 8, 8, 8)
+        assertEquals(listOf(ProviderUrlPolicy.DnsRejectionKind.NON_GLOBAL), dnsRejection(listOf(other)).rejectedKinds)
+    }
+
+    @Test fun dnsDiagnosticCountsSaturateAndPlatformExceptionsPropagateUnchanged() {
+        val bounded = dnsRejection(List(300) { ip(10, 0, 0, 1) })
+        assertEquals(255, bounded.answerCount)
+        assertEquals(255, bounded.rejectedCount)
+        val platform = UnknownHostException("private-host.example 192.168.1.2 token=secret")
+        val dns = ProviderUrlPolicy.publicDns(object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> = throw platform
+        })
+        assertSame(platform, runCatching { dns.lookup("provider.example") }.exceptionOrNull())
+    }
+
+    private fun ip(vararg bytes: Int): InetAddress = InetAddress.getByAddress(bytes.map { it.toByte() }.toByteArray())
+
+    private fun dnsRejection(answers: List<InetAddress>): ProviderUrlPolicy.DnsPolicyException {
+        val dns = ProviderUrlPolicy.publicDns(object : Dns { override fun lookup(hostname: String) = answers })
+        return assertThrows(ProviderUrlPolicy.DnsPolicyException::class.java) { dns.lookup("provider.example") }
+    }
+
     @Test fun configuredProxyIsRejectedWithoutChoosingADirectFallback() {
         var selections = 0
         val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress.createUnresolved("proxy.example", 8080))
