@@ -1,6 +1,7 @@
 package app.seanime.tv
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import android.os.Process
@@ -14,6 +15,8 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.media3.common.C
+import androidx.media3.common.ColorInfo
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -100,6 +103,11 @@ class AndroidIsolatedLocalPlaybackTest {
             manifest.put("stage", stage)
             File(root, "fixture.json").writeText(manifest.toString(2))
             Log.i("NativeGoFixture", "stage=$stage root=${root.absolutePath}")
+        }
+        fun verifyVideoPaint(checkpoint: VideoPaintCheckpoint, positionMs: Long) {
+            manifest.put(checkpoint.manifestKey, awaitOwnedVideoPixels(positionMs, root, checkpoint) {
+                manifest.put("videoPaintFailure", it)
+            })
         }
         checkpoint("created")
         var scenario: ActivityScenario<MainActivity>? = null
@@ -196,7 +204,13 @@ class AndroidIsolatedLocalPlaybackTest {
             assertTrue("Playback must come through the actual Go HTTP stream route", first.uri.scheme == "http" && first.uri.host == "127.0.0.1" &&
                 first.uri.port == 43211 && first.uri.path == "/api/v1/directstream/stream")
             assertTrue(first.duration in 29_000..31_000)
-            manifest.put("videoPaintBeforeSeek", awaitOwnedVideoPixels(first.position))
+            val colorInfo = requireNotNull(first.colorInfo) { "Generated clip must declare its video color metadata" }
+            manifest.put("videoColorInfo", JSONObject().put("colorSpace", colorInfo.colorSpace)
+                .put("colorRange", colorInfo.colorRange).put("colorTransfer", colorInfo.colorTransfer))
+            assertEquals("Media3 must read the generated BT.709 primaries", C.COLOR_SPACE_BT709, colorInfo.colorSpace)
+            assertEquals("Media3 must read the generated limited range", C.COLOR_RANGE_LIMITED, colorInfo.colorRange)
+            assertEquals("Media3 must read the generated BT.709/SMPTE170M transfer", C.COLOR_TRANSFER_SDR, colorInfo.colorTransfer)
+            verifyVideoPaint(VideoPaintCheckpoint.BEFORE_SEEK, first.position)
             if (compose.onAllNodesWithTag("native-player-seek").fetchSemanticsNodes().isEmpty()) key(KeyEvent.KEYCODE_DPAD_CENTER)
             compose.onNodeWithTag("native-player-seek").performSemanticsAction(SemanticsActions.RequestFocus)
             verifyIsolation()
@@ -205,7 +219,7 @@ class AndroidIsolatedLocalPlaybackTest {
             // frame. Observe READY and a newly rendered buffer before its pixels.
             val sought = awaitPlayer { it.ready && it.rendered && it.paused && it.position >= 9_000 &&
                 it.videoBuffers > first.videoBuffers && it.uri == first.uri }
-            manifest.put("videoPaintAfterSeek", awaitOwnedVideoPixels(sought.position))
+            verifyVideoPaint(VideoPaintCheckpoint.AFTER_SEEK, sought.position)
             verifyIsolation(); key(KeyEvent.KEYCODE_MEDIA_PLAY)
             try {
                 // Keep this bounded play/pause sequence free of UI-idle or HTTP
@@ -213,7 +227,7 @@ class AndroidIsolatedLocalPlaybackTest {
                 awaitPlayer { !it.paused && it.position >= sought.position + 250 }
             } finally { key(KeyEvent.KEYCODE_MEDIA_PAUSE) }
             val paused = awaitPlayer { it.ready && it.rendered && it.paused && it.position >= sought.position + 250 && it.uri == first.uri }
-            manifest.put("videoPaintAfterResumePause", awaitOwnedVideoPixels(paused.position))
+            verifyVideoPaint(VideoPaintCheckpoint.AFTER_RESUME_PAUSE, paused.position)
             // The pixel check hides the HUD through Back without changing the
             // paused decoder, so this evidence shows the actual generated frame.
             NativeScreenshotEvidence.capture("isolated-go-generated-local-media")
@@ -273,7 +287,7 @@ class AndroidIsolatedLocalPlaybackTest {
     private fun <T> apiCall(block: suspend () -> T): T = runBlocking { withTimeout(90_000) { block() } }
 
     private data class PlayerEvidence(val ready: Boolean, val rendered: Boolean, val paused: Boolean, val position: Long,
-        val duration: Long, val width: Int, val height: Int, val uri: Uri, val videoBuffers: Int) {
+        val duration: Long, val width: Int, val height: Int, val uri: Uri, val videoBuffers: Int, val colorInfo: ColorInfo?) {
         override fun toString() = "PlayerEvidence(redacted)"
     }
 
@@ -344,7 +358,7 @@ class AndroidIsolatedLocalPlaybackTest {
                         (player.videoDecoderCounters?.renderedOutputBufferCount ?: 0) > 0, !player.playWhenReady,
                         player.currentPosition, player.duration, player.videoSize.width, player.videoSize.height,
                         player.currentMediaItem?.localConfiguration?.uri ?: Uri.EMPTY,
-                        player.videoDecoderCounters?.renderedOutputBufferCount ?: 0)
+                        player.videoDecoderCounters?.renderedOutputBufferCount ?: 0, player.videoFormat?.colorInfo)
                 }
             }
             state?.let { if (condition(it)) return it }
@@ -353,29 +367,27 @@ class AndroidIsolatedLocalPlaybackTest {
         throw AssertionError("Actual Go-issued native playback did not reach the expected observable state")
     }
 
+    private enum class VideoPaintCheckpoint(val manifestKey: String, val evidenceName: String) {
+        BEFORE_SEEK("videoPaintBeforeSeek", "before-seek"),
+        AFTER_SEEK("videoPaintAfterSeek", "after-seek"),
+        AFTER_RESUME_PAUSE("videoPaintAfterResumePause", "after-resume-pause"),
+    }
+
     /** Check real compositor pixels while paused; never paint or replace the player surface. */
-    private fun awaitOwnedVideoPixels(positionMs: Long): JSONObject {
+    private fun awaitOwnedVideoPixels(positionMs: Long, root: File, checkpoint: VideoPaintCheckpoint,
+        recordFailure: (JSONObject) -> Unit): JSONObject {
         if (compose.onAllNodesWithTag("native-player-play").fetchSemanticsNodes().isNotEmpty()) key(KeyEvent.KEYCODE_BACK)
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("native-player-play").fetchSemanticsNodes().isEmpty() &&
                 compose.onAllNodesWithTag("native-player-buffering").fetchSemanticsNodes().isEmpty()
         }
         compose.onNodeWithTag("native-player-presentation").assertExists()
-        // The source is 10 fps YUV420p: Y=40+(frame%6)*20, U=V=128.
-        // Allow only the immediate neighboring frames for pause/render timing,
-        // including the last frame just before an exact 100 ms boundary.
-        val frame = positionMs.coerceIn(0, 29_999) / 100
-        val expectedFrames = (-1L..1L).map { (frame + it).coerceIn(0, 299) }.distinct().associateWith {
-            (1.164 * (40 + (it % 6) * 20 - 16)).toInt().coerceIn(0, 255)
-        }
-        // Neutral limited-range YUV has equal RGB channels. Twelve levels allow
-        // encoder/conversion rounding while excluding a black/unpainted surface.
-        val tolerance = 12
+        // The declared limited-range BT.709 source and Bitmap.getPixel's sRGB
+        // output have different transfer curves, even for neutral grayscale.
+        val expectedFrames = OwnedVideoColorOracle.expectedFrames(positionMs)
+        val tolerance = OwnedVideoColorOracle.CHANNEL_TOLERANCE
         val deadline = SystemClock.elapsedRealtime() + 5_000
-        var last = emptyList<Int>()
-        var lastMin = emptyList<Int>()
-        var lastMax = emptyList<Int>()
-        while (SystemClock.elapsedRealtime() < deadline) {
+        while (true) {
             instrumentation.waitForIdleSync()
             val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
             try {
@@ -396,36 +408,55 @@ class AndroidIsolatedLocalPlaybackTest {
                     }
                 }
                 check(count > 0)
-                last = sums.map { (it / count).toInt() }
-                lastMin = minimum.toList(); lastMax = maximum.toList()
+                val mean = sums.map { (it / count).toInt() }
                 // Check every sampled channel, not just a mean that could hide UI ink.
-                val expected = expectedFrames.entries.firstOrNull { (_, gray) ->
-                    minimum.all { it >= gray - tolerance } && maximum.all { it <= gray + tolerance }
-                }
+                val expected = OwnedVideoColorOracle.matchingFrame(positionMs, minimum, maximum)
+                val evidence = JSONObject().put("positionMs", positionMs)
+                    .put("meanRgb", JSONArray(mean)).put("minRgb", JSONArray(minimum.toList()))
+                    .put("maxRgb", JSONArray(maximum.toList())).put("channelTolerance", tolerance)
+                    .put("sampleCount", count).put("hudHidden", true).put("oracle", OwnedVideoColorOracle.ID)
                 if (expected != null) {
-                    return JSONObject().put("positionMs", positionMs).put("matchedFrame", expected.key)
-                        .put("meanRgb", JSONArray(last)).put("minRgb", JSONArray(lastMin)).put("maxRgb", JSONArray(lastMax))
-                        .put("expectedRgb", JSONArray(List(3) { expected.value })).put("channelTolerance", tolerance)
-                        .put("sampleCount", count).put("hudHidden", true)
+                    return evidence.put("matchedFrame", expected.key).put("expectedRgb", JSONArray(List(3) { expected.value }))
                         .put("region", "center 47%-53% width, 40%-46% height; HUD hidden")
+                }
+                if (SystemClock.elapsedRealtime() >= deadline) {
+                    evidence.put("checkpoint", checkpoint.evidenceName)
+                        .put("expectedFrames", JSONArray(expectedFrames.map { (frame, gray) ->
+                            JSONObject().put("frame", frame).put("gray", gray)
+                        })).put("bitmapWidth", bitmap.width).put("bitmapHeight", bitmap.height)
+                        .put("screenshot", "video-paint-failure.png")
+                    // Fixed typed fields only, plus this owned fixture's exact sampled
+                    // bitmap. Preserve these locally even when artifact collection fails.
+                    recordFailure(evidence)
+                    val failure = AssertionError("Owned grayscale video did not paint its timestamp-derived frame at $positionMs ms: " +
+                        "mean=$mean min=${minimum.toList()} max=${maximum.toList()} expected=$expectedFrames tolerance=$tolerance")
+                    runCatching {
+                        File(root, "video-paint-failure.png").outputStream().use {
+                            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
+                        }
+                    }.exceptionOrNull()?.let(failure::addSuppressed)
+                    throw failure
                 }
             } finally { bitmap.recycle() }
             SystemClock.sleep(50)
         }
-        throw AssertionError("Owned grayscale video did not paint its timestamp-derived frame at $positionMs ms: " +
-            "mean=$last min=$lastMin max=$lastMax expected=$expectedFrames tolerance=$tolerance")
     }
 
     private fun generateVideo(ffmpeg: File, root: File, video: File) {
         val raw = File(root, "generated-source.yuv")
-        raw.outputStream().use { stream -> repeat(300) { frame ->
-            stream.write(ByteArray(160 * 90) { (40 + (frame % 6) * 20).toByte() })
+        raw.outputStream().use { stream -> repeat(OwnedVideoColorOracle.FRAME_COUNT) { frame ->
+            val luma = OwnedVideoColorOracle.lumaForFrame(frame.toLong()).toByte()
+            stream.write(ByteArray(160 * 90) { luma })
             stream.write(ByteArray(160 * 90 / 2) { 128.toByte() })
         } }
         val output = File(root, "ffmpeg.log")
+        // Declare the raw frames as well as the encoded stream: output-only
+        // options can leave frame-propagated transfer/primaries unspecified.
         val process = ProcessBuilder(ffmpeg.absolutePath, "-v", "error", "-f", "rawvideo", "-pixel_format", "yuv420p",
-            "-video_size", "160x90", "-framerate", "10", "-i", raw.absolutePath, "-threads", "1", "-c:v", "libx264",
-            "-pix_fmt", "yuv420p", "-an", "-movflags", "+faststart", video.absolutePath)
+            "-video_size", "160x90", "-framerate", "10", "-color_range", "tv", "-color_primaries", "bt709",
+            "-color_trc", "bt709", "-colorspace", "bt709", "-i", raw.absolutePath, "-threads", "1", "-c:v", "libx264",
+            "-pix_fmt", "yuv420p", "-color_range", "tv", "-color_primaries", "bt709", "-color_trc", "bt709",
+            "-colorspace", "bt709", "-an", "-movflags", "+faststart", video.absolutePath)
             .redirectErrorStream(true).redirectOutput(output).start()
         try {
             val deadline = SystemClock.elapsedRealtime() + 60_000

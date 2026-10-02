@@ -2,6 +2,7 @@ package app.seanime.tv.data
 
 import java.io.Closeable
 import java.io.IOException
+import java.net.ProxySelector
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -32,6 +33,7 @@ class NativeImageTransport internal constructor(
     private val cleanupExecutor: Executor = Dispatchers.IO.asExecutor(),
     private val socketFactory: SocketFactory = SocketFactory.getDefault(),
     private val protocols: List<Protocol>? = null,
+    private val proxySelector: ProxySelector? = null,
 ) : Call.Factory, Closeable {
     /** Coil forwards this tag to OkHttp without putting these values on the request itself. */
     class SourceHeaders(headers: Map<String, String>, internal val providerResult: Boolean = false, internal val offlineAssetMediaId: Long? = null) {
@@ -84,7 +86,11 @@ class NativeImageTransport internal constructor(
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
         .dispatcher(Dispatcher().apply { maxRequests = 4; maxRequestsPerHost = 4 })
         .connectionPool(pool).socketFactory(socketFactory)
-        .apply { this@NativeImageTransport.protocols?.let { protocols(it) } }
+        .apply {
+            this@NativeImageTransport.protocols?.let { protocols(it) }
+            // Fixture overrides remain per-client; the provider policy still validates their routes.
+            this@NativeImageTransport.proxySelector?.let { proxySelector(it) }
+        }
         .followRedirects(followRedirects).followSslRedirects(false)
         .eventListener(object : EventListener() {
             override fun callStart(call: Call) {

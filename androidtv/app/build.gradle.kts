@@ -119,6 +119,9 @@ android {
 
     sourceSets.getByName("main").jniLibs.srcDir(generatedAndroidRuntimeJniLibs)
     sourceSets.getByName("main").assets.srcDir(generatedAnime4KAssets)
+    // One test-only color oracle serves both host JVM and device assertions.
+    sourceSets.getByName("test").java.srcDir("src/sharedTest/java")
+    sourceSets.getByName("androidTest").java.srcDir("src/sharedTest/java")
 
     signingConfigs {
         create("release") {

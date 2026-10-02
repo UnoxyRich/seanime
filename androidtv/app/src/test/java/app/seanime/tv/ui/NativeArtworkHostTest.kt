@@ -48,7 +48,14 @@ import java.io.File
 import java.io.IOException
 import java.net.InetAddress
 import java.net.Proxy
+import java.net.ProtocolException
+import java.net.ProxySelector
+import java.net.SocketAddress
+import java.net.URI
+import java.net.UnknownHostException
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -211,41 +218,52 @@ class NativeArtworkHostTest {
         val actionStarted = AtomicBoolean()
         val actionFailure = AtomicReference("none")
         val threadNames = CopyOnWriteArrayList<String>()
+        val releaseResponse = CountDownLatch(1)
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 requests += request
+                check(releaseResponse.await(10, TimeUnit.SECONDS)) { "test did not release fixture response" }
                 return json(org.json.JSONArray())
             }
         }
-        show {
-            val action = rememberFeatureAction()
-            LaunchedEffect(Unit) {
-                effectStarted.set(true)
-                action.run {
-                    actionStarted.set(true)
-                    mainBefore.set(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
-                    threadNames += "before: " + Thread.currentThread().name
-                    try {
-                        app.seanime.tv.data.SeanimeRepository(api).playlists()
-                    } catch (failure: Throwable) {
-                        actionFailure.set(safeFailureSummary(failure))
-                        throw failure
+        try {
+            show {
+                val action = rememberFeatureAction()
+                LaunchedEffect(Unit) {
+                    effectStarted.set(true)
+                    action.run {
+                        actionStarted.set(true)
+                        mainBefore.set(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+                        threadNames += "before: " + Thread.currentThread().name
+                        try {
+                            app.seanime.tv.data.SeanimeRepository(api).playlists()
+                        } catch (failure: Throwable) {
+                            actionFailure.set(safeFailureSummary(failure))
+                            throw failure
+                        }
+                        mainAfter.set(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+                        threadNames += "after: " + Thread.currentThread().name
+                        completed.set(true)
                     }
-                    mainAfter.set(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
-                    threadNames += "after: " + Thread.currentThread().name
-                    completed.set(true)
                 }
             }
-        }
-        try {
-            compose.waitUntil(10_000) { completed.get() }
-        } catch (failure: ComposeTimeoutException) {
-            reportTimeout("feature_action", "effectStarted=${effectStarted.get()} actionStarted=${actionStarted.get()} " +
-                "mainBefore=${mainBefore.get()} mainAfter=${mainAfter.get()} completed=${completed.get()} actionFailure=${actionFailure.get()}")
-            throw failure
-        }
-        assertTrue(threadNames.toString(), mainBefore.get())
-        assertTrue(threadNames.toString(), mainAfter.get())
+            // Force the HTTP continuation to arrive after setContent's initial implicit idle.
+            assertFalse("the fixture response must remain gated through initial Compose idle", completed.get())
+            releaseResponse.countDown()
+            try {
+                compose.waitUntil(10_000) {
+                    // Compose's clock does not drain Android Handler work in Robolectric PAUSED mode.
+                    org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                    completed.get()
+                }
+            } catch (failure: ComposeTimeoutException) {
+                reportTimeout("feature_action", "effectStarted=${effectStarted.get()} actionStarted=${actionStarted.get()} " +
+                    "mainBefore=${mainBefore.get()} mainAfter=${mainAfter.get()} completed=${completed.get()} actionFailure=${actionFailure.get()}")
+                throw failure
+            }
+            assertTrue(threadNames.toString(), mainBefore.get())
+            assertTrue(threadNames.toString(), mainAfter.get())
+        } finally { releaseResponse.countDown() }
     }
 
     @Test fun serverRelativeAbsoluteAndOfflineMarkersDecodeIntoVisiblePixelsWithScopedHeaders() = fixture { api, server, requests, show ->
@@ -709,6 +727,21 @@ class NativeArtworkHostTest {
         bitmap.recycle()
         return MockResponse().setHeader("Content-Type", "image/png").setHeader("Cache-Control", "max-age=3600").setBody(Buffer().write(bytes))
     }
+    // These aliases exist only inside the fixture and can resolve only to its loopback server.
+    private val fixtureHosts = setOf("localhost", "127.0.0.1", "api.example", "provider.example")
+    private val fixtureDns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            if (hostname !in fixtureHosts) throw UnknownHostException("Unexpected fixture host")
+            return listOf(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+        }
+    }
+    private val fixtureProxySelector = object : ProxySelector() {
+        override fun select(uri: URI): List<Proxy> {
+            if (uri.host !in fixtureHosts) throw ProtocolException("Unexpected fixture host")
+            return listOf(Proxy.NO_PROXY)
+        }
+        override fun connectFailed(uri: URI, sa: SocketAddress, ioe: IOException) = Unit
+    }
     private fun fixture(apiHost: String? = null, test: (SeanimeApiClient, MockWebServer, CopyOnWriteArrayList<RecordedRequest>, (@Composable () -> Unit) -> Unit) -> Unit) {
         MockWebServer().use { server ->
             server.start(InetAddress.getByName("127.0.0.1"), 0)
@@ -716,16 +749,15 @@ class NativeArtworkHostTest {
             val fixtureDiagnostics = FixtureDiagnostics()
             diagnostics = fixtureDiagnostics
             val apiHttp = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
-                .eventListener(fixtureDiagnostics)
-                .dns(object : Dns { override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1")) }).build()
+                .eventListener(fixtureDiagnostics).proxySelector(fixtureProxySelector).dns(fixtureDns).build()
             SeanimeApiClient(serverUrl, "fixture-native-token", apiHttp).use { api ->
                 val requests = CopyOnWriteArrayList<RecordedRequest>()
                 var showing by mutableStateOf(true)
                 try {
                     test(api, server, requests) { content -> compose.setContent {
-                        if (showing) SeanimeTheme { NativeArtworkProvider(api, transportFactory = { client -> NativeImageTransport(client, object : Dns {
-                            override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1"))
-                        }) }, content = content) }
+                        if (showing) SeanimeTheme { NativeArtworkProvider(api, transportFactory = { client ->
+                            NativeImageTransport(client, providerDns = fixtureDns, proxySelector = fixtureProxySelector)
+                        }, content = content) }
                     } }
                 } finally { compose.runOnIdle { showing = false }; compose.waitForIdle(); diagnostics = null }
             }

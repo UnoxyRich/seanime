@@ -5,7 +5,13 @@ import java.io.FilterInputStream
 import java.io.InputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.ProtocolException
+import java.net.Proxy
+import java.net.ProxySelector
 import java.net.Socket
+import java.net.SocketAddress
+import java.net.URI
+import java.net.UnknownHostException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
@@ -13,6 +19,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import javax.net.SocketFactory
 import kotlin.coroutines.resume
@@ -41,13 +48,13 @@ import org.junit.Test
 class NativeImageTransportLifecycleTest {
     @Test fun `cancellation waits for a blocked decoder read to unwind before closing its source`() {
         MockWebServer().use { server ->
-            server.start()
+            server.start(loopback, 0)
             server.enqueue(incompleteImage())
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            fixtureApi(server).use { api ->
                 val cleanup = Executors.newSingleThreadExecutor()
                 val reader = Executors.newSingleThreadExecutor()
                 val sockets = RecordingSockets(holdReadExit = true)
-                val transport = NativeImageTransport(api, cleanupExecutor = cleanup, socketFactory = sockets)
+                val transport = NativeImageTransport(api, proxySelector = fixtureProxySelector, cleanupExecutor = cleanup, socketFactory = sockets)
                 try {
                     val call = transport.newCall(request(server))
                     val response = call.execute()
@@ -92,11 +99,11 @@ class NativeImageTransportLifecycleTest {
                     return incompleteImage()
                 }
             }
-            server.start()
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            server.start(loopback, 0)
+            fixtureApi(server).use { api ->
                 val cleanup = Executors.newSingleThreadExecutor()
                 val sockets = RecordingSockets()
-                val transport = NativeImageTransport(api, cleanupExecutor = cleanup, socketFactory = sockets)
+                val transport = NativeImageTransport(api, proxySelector = fixtureProxySelector, cleanupExecutor = cleanup, socketFactory = sockets)
                 val call = transport.newCall(request(server))
                 val handedOff = CountDownLatch(1)
                 val consumerRan = AtomicBoolean(false)
@@ -144,13 +151,13 @@ class NativeImageTransportLifecycleTest {
     @Test fun `cancel releases an abandoned HTTP2 stream and keeps its connection reusable`() {
         MockWebServer().use { server ->
             server.protocols = listOf(Protocol.H2_PRIOR_KNOWLEDGE)
-            server.start()
+            server.start(loopback, 0)
             server.enqueue(incompleteImage())
             server.enqueue(MockResponse().setBody("next image"))
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            fixtureApi(server).use { api ->
                 val cleanup = Executors.newSingleThreadExecutor()
                 val sockets = RecordingSockets()
-                val transport = NativeImageTransport(api, cleanupExecutor = cleanup, socketFactory = sockets,
+                val transport = NativeImageTransport(api, proxySelector = fixtureProxySelector, cleanupExecutor = cleanup, socketFactory = sockets,
                     protocols = listOf(Protocol.H2_PRIOR_KNOWLEDGE))
                 val caller = Thread.currentThread()
                 try {
@@ -180,11 +187,11 @@ class NativeImageTransportLifecycleTest {
 
     @Test fun `Coil style cancellation returns before socket teardown and preserves callback identity`() {
         MockWebServer().use { server ->
-            server.start()
+            server.start(loopback, 0)
             server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            fixtureApi(server).use { api ->
                 val sockets = RecordingSockets(blockClose = true)
-                val transport = NativeImageTransport(api, socketFactory = sockets)
+                val transport = NativeImageTransport(api, proxySelector = fixtureProxySelector, socketFactory = sockets)
                 val call = transport.newCall(request(server))
                 val finished = CountDownLatch(1)
                 val failedCall = AtomicReference<Call>()
@@ -215,11 +222,11 @@ class NativeImageTransportLifecycleTest {
 
     @Test fun `cancellation rejects saved calls before cleanup but clones have independent state`() {
         MockWebServer().use { server ->
-            server.start()
+            server.start(loopback, 0)
             server.enqueue(MockResponse().setBody("cloned image"))
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            fixtureApi(server).use { api ->
                 val cleanup = CopyOnWriteArrayList<Runnable>()
-                val transport = NativeImageTransport(api, cleanupExecutor = Executor { cleanup += it })
+                val transport = NativeImageTransport(api, proxySelector = fixtureProxySelector, cleanupExecutor = Executor { cleanup += it })
                 try {
                     val call = transport.newCall(request(server))
                     repeat(10) { call.cancel() }
@@ -245,11 +252,11 @@ class NativeImageTransportLifecycleTest {
 
     @Test fun `close returns while real socket cleanup is blocked and never closes on its caller`() {
         MockWebServer().use { server ->
-            server.start()
+            server.start(loopback, 0)
             server.enqueue(MockResponse().setBody("image"))
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            fixtureApi(server).use { api ->
                 val sockets = RecordingSockets(blockClose = true)
-                val transport = NativeImageTransport(api, socketFactory = sockets)
+                val transport = NativeImageTransport(api, proxySelector = fixtureProxySelector, socketFactory = sockets)
                 try {
                     transport.newCall(request(server)).execute().use { assertEquals("image", it.body!!.string()) }
                     val caller = Thread.currentThread()
@@ -270,10 +277,10 @@ class NativeImageTransportLifecycleTest {
 
     @Test fun `retirement rejects saved calls and clones before and after asynchronous cleanup`() {
         MockWebServer().use { server ->
-            server.start()
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            server.start(loopback, 0)
+            fixtureApi(server).use { api ->
                 val cleanup = CopyOnWriteArrayList<Runnable>()
-                val transport = NativeImageTransport(api, cleanupExecutor = Executor { cleanup += it })
+                val transport = NativeImageTransport(api, proxySelector = fixtureProxySelector, cleanupExecutor = Executor { cleanup += it })
                 val saved = List(4) { transport.newCall(request(server)) }
                 val cloned = saved.first().clone()
                 try {
@@ -296,13 +303,13 @@ class NativeImageTransportLifecycleTest {
 
     @Test fun `retirement cancels both pending requests and responses already handed to a reader`() {
         MockWebServer().use { server ->
-            server.start()
+            server.start(loopback, 0)
             // Advertise more bytes than are sent so the body stays open without a sleeping server task.
             server.enqueue(incompleteImage())
             server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            fixtureApi(server).use { api ->
                 val sockets = RecordingSockets()
-                val transport = NativeImageTransport(api, socketFactory = sockets)
+                val transport = NativeImageTransport(api, proxySelector = fixtureProxySelector, socketFactory = sockets)
                 val bodyCall = transport.newCall(request(server))
                 val response = bodyCall.execute()
                 val pending = transport.newCall(request(server))
@@ -327,17 +334,18 @@ class NativeImageTransportLifecycleTest {
 
     @Test fun `retirement during DNS prevents a request from connecting after cleanup finishes`() {
         MockWebServer().use { server ->
-            server.start()
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            server.start(loopback, 0)
+            fixtureApi(server).use { api ->
                 val dnsStarted = CountDownLatch(1)
                 val releaseDns = CountDownLatch(1)
                 val cleanup = CopyOnWriteArrayList<Runnable>()
                 val sockets = RecordingSockets()
-                val transport = NativeImageTransport(api, providerDns = object : Dns {
+                val transport = NativeImageTransport(api, proxySelector = fixtureProxySelector, providerDns = object : Dns {
                     override fun lookup(hostname: String): List<InetAddress> {
+                        requireFixtureHost(hostname)
                         dnsStarted.countDown()
                         check(releaseDns.await(10, TimeUnit.SECONDS)) { "test did not release DNS" }
-                        return listOf(InetAddress.getByName("127.0.0.1"))
+                        return listOf(loopback)
                     }
                 }, cleanupExecutor = Executor { cleanup += it }, socketFactory = sockets)
                 val call = transport.newCall(Request.Builder().url(server.url("/image.png").newBuilder().host("provider.example").build())
@@ -375,16 +383,16 @@ class NativeImageTransportLifecycleTest {
 
     @Test fun `rapid replacement keeps new owners usable while old owners finish closing`() {
         MockWebServer().use { server ->
-            server.start()
+            server.start(loopback, 0)
             repeat(8) { server.enqueue(MockResponse().setBody("image-$it")) }
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            fixtureApi(server).use { api ->
                 val oldCalls = mutableListOf<Call>()
                 val retiredSockets = mutableListOf<RecordingSockets>()
                 try {
                     repeat(8) { index ->
                         val sockets = RecordingSockets(blockClose = true)
                         retiredSockets += sockets
-                        NativeImageTransport(api, socketFactory = sockets).use { transport ->
+                        NativeImageTransport(api, proxySelector = fixtureProxySelector, socketFactory = sockets).use { transport ->
                             transport.newCall(request(server)).execute().use { assertEquals("image-$index", it.body!!.string()) }
                             oldCalls += transport.newCall(request(server))
                         }
@@ -400,14 +408,98 @@ class NativeImageTransportLifecycleTest {
         }
     }
 
+    @Test fun `fixture direct selector permits only loopback aliases without changing the default selector`() {
+        val originalDefault = ProxySelector.getDefault()
+        MockWebServer().use { server ->
+            server.start(loopback, 0)
+            server.enqueue(MockResponse().setBody("fixture provider image"))
+            fixtureApi(server).use { api ->
+                val sockets = RecordingSockets()
+                NativeImageTransport(api, providerDns = fixtureDns, socketFactory = sockets,
+                    proxySelector = fixtureProxySelector, cleanupExecutor = Executor { it.run() }).use { transport ->
+                    transport.newCall(providerRequest(server)).execute().use {
+                        assertEquals("fixture provider image", it.body!!.string())
+                    }
+                    assertEquals(1, server.requestCount)
+                    assertEquals(1, sockets.sockets.size)
+                    assertTrue(sockets.sockets.single().inetAddress.isLoopbackAddress)
+                    assertSame(originalDefault, ProxySelector.getDefault())
+                }
+                // Omitting the new optional argument preserves the selector inherited by OkHttp.
+                val inherited = OkHttpClient.Builder().build().proxySelector
+                NativeImageTransport(api, cleanupExecutor = Executor { it.run() }).use { transport ->
+                    for (name in listOf("http", "offlineAssetHttp")) {
+                        val client = NativeImageTransport::class.java.getDeclaredField(name)
+                            .apply { isAccessible = true }.get(transport) as OkHttpClient
+                        assertSame(inherited, client.proxySelector)
+                    }
+                }
+            }
+        }
+        assertThrows(UnknownHostException::class.java) { fixtureDns.lookup("unexpected.example") }
+        assertThrows(ProtocolException::class.java) { fixtureProxySelector.select(URI("http://unexpected.example/image.png")) }
+        assertSame(originalDefault, ProxySelector.getDefault())
+    }
+
+    @Test fun `provider selector overrides reject HTTP and SOCKS before DNS or sockets without retry or global mutation`() {
+        val originalDefault = ProxySelector.getDefault()
+        MockWebServer().use { server ->
+            server.start(loopback, 0)
+            fixtureApi(server).use { api ->
+                for (type in listOf(Proxy.Type.HTTP, Proxy.Type.SOCKS)) {
+                    val selections = AtomicInteger()
+                    val lookups = AtomicInteger()
+                    val sockets = RecordingSockets()
+                    val completed = CountDownLatch(1)
+                    val failure = AtomicReference<IOException>()
+                    val proxy = Proxy(type, InetSocketAddress(loopback, server.port))
+                    val selector = object : ProxySelector() {
+                        override fun select(uri: URI): List<Proxy> {
+                            requireFixtureHost(uri.host)
+                            selections.incrementAndGet()
+                            return listOf(proxy, Proxy.NO_PROXY)
+                        }
+                        override fun connectFailed(uri: URI, sa: SocketAddress, ioe: IOException) = Unit
+                    }
+                    NativeImageTransport(api, providerDns = object : Dns {
+                        override fun lookup(hostname: String): List<InetAddress> {
+                            lookups.incrementAndGet()
+                            return fixtureDns.lookup(hostname)
+                        }
+                    }, socketFactory = sockets, proxySelector = selector,
+                        cleanupExecutor = Executor { it.run() }).use { transport ->
+                        val call = transport.newCall(providerRequest(server))
+                        call.timeout().timeout(2, TimeUnit.SECONDS)
+                        try {
+                            call.enqueue(object : Callback {
+                                override fun onFailure(call: Call, e: IOException) { failure.set(e); completed.countDown() }
+                                override fun onResponse(call: Call, response: Response) { response.close(); completed.countDown() }
+                            })
+                            assertTrue("$type rejection must complete its callback", completed.await(5, TimeUnit.SECONDS))
+                            // A timeout bounds regressions but is never accepted as policy rejection.
+                            assertTrue("$type failure was ${failure.get()}", failure.get() is ProtocolException)
+                            assertEquals("Provider requests cannot validate destinations through the configured proxy. The proxy was not bypassed.", failure.get().message)
+                            assertEquals("provider policy rejection must be terminal", 1, selections.get())
+                            assertEquals(0, lookups.get())
+                            assertTrue(sockets.sockets.isEmpty())
+                            assertEquals(0, server.requestCount)
+                            assertSame(originalDefault, ProxySelector.getDefault())
+                        } finally { call.cancel() }
+                    }
+                }
+            }
+        }
+        assertSame(originalDefault, ProxySelector.getDefault())
+    }
+
     private fun abandonedResponse(async: Boolean, retire: Boolean) {
         MockWebServer().use { server ->
-            server.start()
+            server.start(loopback, 0)
             server.enqueue(incompleteImage())
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            fixtureApi(server).use { api ->
                 val cleanup = Executors.newSingleThreadExecutor()
                 val sockets = RecordingSockets()
-                val transport = NativeImageTransport(api, cleanupExecutor = cleanup, socketFactory = sockets)
+                val transport = NativeImageTransport(api, proxySelector = fixtureProxySelector, cleanupExecutor = cleanup, socketFactory = sockets)
                 val call = transport.newCall(request(server))
                 val response = AtomicReference<Response>()
                 val delivered = CountDownLatch(1)
@@ -458,6 +550,32 @@ class NativeImageTransportLifecycleTest {
         (NativeImageTransport::class.java.getDeclaredField(name).apply { isAccessible = true }.get(transport) as OkHttpClient)
             .connectionPool.idleConnectionCount()
     }
+    private val loopback = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+    private val fixtureHosts = setOf("localhost", "127.0.0.1", "provider.example")
+    private fun requireFixtureHost(host: String) {
+        if (host !in fixtureHosts) throw UnknownHostException("Unexpected fixture host")
+    }
+    private val fixtureDns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            requireFixtureHost(hostname)
+            return listOf(loopback)
+        }
+    }
+    private val fixtureProxySelector = object : ProxySelector() {
+        override fun select(uri: URI): List<Proxy> {
+            if (uri.host !in fixtureHosts) throw ProtocolException("Unexpected fixture host")
+            return listOf(Proxy.NO_PROXY)
+        }
+        override fun connectFailed(uri: URI, sa: SocketAddress, ioe: IOException) = Unit
+    }
+    private fun fixtureApi(server: MockWebServer) = SeanimeApiClient(server.url("/").toString(),
+        httpClient = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
+            .proxySelector(fixtureProxySelector).dns(fixtureDns).build())
+    private fun providerRequest(server: MockWebServer) = Request.Builder()
+        .url(server.url("/image.png").newBuilder().host("provider.example").build())
+        .tag(NativeImageTransport.SourceHeaders::class.java,
+            NativeImageTransport.SourceHeaders(emptyMap(), providerResult = true)).build()
+
     private fun incompleteImage() = MockResponse().setBody("partial image").setHeader("Content-Length", 1_048_576)
     private fun request(server: MockWebServer) = Request.Builder().url(server.url("/image.png")).build()
     private fun assertClosed(call: Call) {
