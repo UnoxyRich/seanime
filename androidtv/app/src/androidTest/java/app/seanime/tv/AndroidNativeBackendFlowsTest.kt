@@ -24,6 +24,7 @@ import app.seanime.tv.data.jsonObject
 import app.seanime.tv.gomobile.mobile.Mobile
 import app.seanime.tv.ui.settingChoices
 import app.seanime.tv.ui.validateSettingNumber
+import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -154,6 +155,18 @@ class AndroidNativeBackendFlowsTest {
 
     @Test
     fun typedSettingsPersistPreserveOtherFieldsAndRejectInvalidWritesAtomically() = withNativeServer { _, repo ->
+        val evidence = SettingsPreservationObservation(System.currentTimeMillis())
+        val evidenceFile = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,
+            "native-acceptance-diagnostics/native-settings-preservation.json")
+        fun observe(phase: String, expected: JSONObject, actual: JSONObject) {
+            evidence.record(phase, expected, actual, System.currentTimeMillis())
+            check(evidenceFile.parentFile?.let { it.isDirectory || it.mkdirs() } == true)
+            evidenceFile.writeText(evidence.toJson())
+        }
+        fun assertObservedSettingsEqual(phase: String, expected: JSONObject, actual: JSONObject) {
+            observe(phase, expected, actual)
+            assertSettingsEqual(expected, actual)
+        }
         val original = serverCall { repo.settings() }
         val originalBoolean = original.getJSONObject("anilist").getBoolean("hideAudienceScore")
         val originalNumber = original.getJSONObject("library").get("scannerMatchingThreshold")
@@ -173,17 +186,18 @@ class AndroidNativeBackendFlowsTest {
             changedPaths += "anilist.hideAudienceScore" to originalBoolean
             serverCall { repo.patchSetting("anilist.hideAudienceScore", newBoolean) }
             expected.getJSONObject("anilist").put("hideAudienceScore", newBoolean)
-            assertSettingsEqual(expected, serverCall { repo.settings() })
+            assertObservedSettingsEqual("after-boolean", expected, serverCall { repo.settings() })
 
             changedPaths += "library.scannerMatchingThreshold" to originalNumber
             serverCall { repo.patchSetting("library.scannerMatchingThreshold", newNumber) }
             expected.getJSONObject("library").put("scannerMatchingThreshold", newNumber)
-            assertSettingsEqual(expected, serverCall { repo.settings() })
+            assertObservedSettingsEqual("after-number", expected, serverCall { repo.settings() })
 
             changedPaths += "library.scannerMatchingAlgorithm" to originalChoice
             serverCall { repo.patchSetting("library.scannerMatchingAlgorithm", newChoice) }
             expected.getJSONObject("library").put("scannerMatchingAlgorithm", newChoice)
             val reloaded = serverCall { repo.settings() }
+            observe("after-choice", expected, reloaded)
             assertTrue("Boolean setting must not become a string", reloaded.getJSONObject("anilist").get("hideAudienceScore") is Boolean)
             assertTrue("Numeric setting must not become a string", reloaded.getJSONObject("library").get("scannerMatchingThreshold") is Number)
             assertEquals(newChoice, reloaded.getJSONObject("library").getString("scannerMatchingAlgorithm"))
@@ -199,12 +213,14 @@ class AndroidNativeBackendFlowsTest {
                 assertEquals("/api/v1/settings/path", failure.path)
                 assertTrue("A rejected write must explain its error", failure.message.isNotBlank())
             }
+            val afterRejectedWrite = serverCall { repo.settings() }
+            observe("rejected-write", beforeRejectedWrite, afterRejectedWrite)
             assertTrue("Rejected writes must not mutate even one setting",
-                canonical(beforeRejectedWrite) == canonical(serverCall { repo.settings() }))
+                canonical(beforeRejectedWrite) == canonical(afterRejectedWrite))
 
             SeanimeApiClient().use { reader ->
                 assertTrue(reader.restoreSession(repo.client.snapshotSession()))
-                assertSettingsEqual(expected, serverCall { SeanimeRepository(reader).settings() })
+                assertObservedSettingsEqual("fresh-client", expected, serverCall { SeanimeRepository(reader).settings() })
             }
         } finally {
             var cleanupFailure: Throwable? = null
@@ -215,7 +231,7 @@ class AndroidNativeBackendFlowsTest {
                 }
             }
             cleanupFailure?.let { throw AssertionError("Unable to restore original settings", it) }
-            assertSettingsEqual(original, serverCall { repo.settings() })
+            assertObservedSettingsEqual("restored", original, serverCall { repo.settings() })
         }
     }
 

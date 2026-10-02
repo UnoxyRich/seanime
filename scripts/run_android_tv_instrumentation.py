@@ -77,10 +77,26 @@ PLUGIN_STARTUP_TESTS = (
 PLUGIN_STARTUP_MAX_BYTES = 8192
 NATIVE_SEARCH_HARDWARE_INPUT_PATH = "cache/native-acceptance-diagnostics/native-search-hardware-input.json"
 NATIVE_SEARCH_HARDWARE_INPUT_MAX_BYTES = 8192
+NATIVE_SEARCH_HARDWARE_INPUT_TEST = "app.seanime.tv.AndroidTvStartupTest#remoteLetterKeysEnterNativeSearchWithoutStealingCursorFocus"
 NATIVE_SEARCH_HARDWARE_INPUT_STAGES = (
     ("before-a", 0), ("after-a", 1), ("before-b", 1), ("after-b", 2),
     ("text-delivered", 2), ("after-left", 3),
 )
+NATIVE_SETTINGS_PRESERVATION_PATH = "cache/native-acceptance-diagnostics/native-settings-preservation.json"
+NATIVE_SETTINGS_PRESERVATION_MAX_BYTES = 16384
+NATIVE_SETTINGS_PRESERVATION_TEST = "app.seanime.tv.AndroidNativeBackendFlowsTest#typedSettingsPersistPreserveOtherFieldsAndRejectInvalidWritesAtomically"
+NATIVE_SETTINGS_PRESERVATION_PHASES = (
+    "after-boolean", "after-number", "after-choice", "rejected-write", "fresh-client", "restored",
+)
+NATIVE_SETTINGS_PRESERVATION_SECTIONS = frozenset((
+    "id", "library", "mediaPlayer", "torrent", "manga", "anilist", "listSync",
+    "autoDownloader", "discord", "notifications", "nakama",
+))
+NATIVE_SETTINGS_PRESERVATION_FIELDS = frozenset((
+    "hideAudienceScore", "scannerMatchingThreshold", "scannerMatchingAlgorithm", "libraryPath", "libraryPaths",
+    "richPresenceUseMediaTitleStatus", "richPresenceShowAniListMediaButton",
+))
+NATIVE_SETTINGS_PRESERVATION_TYPES = ("missing", "null", "boolean", "number", "string", "object", "array")
 PLUGIN_STARTUP_EVENT_TYPES = frozenset((
     "screen:changed", "tray:render", "tray:opened", "tray:list-icons", "tray:closed", "handler:triggered",
     "command-palette:render", "command-palette:opened", "command-palette:list", "command-palette:input",
@@ -298,6 +314,8 @@ def capture_failure(error):
         "Missing or oversized player lifecycle evidence",
         "Invalid native search hardware input evidence", "Stale native search hardware input evidence",
         "Missing or oversized native search hardware input evidence",
+        "Invalid native settings preservation evidence", "Stale native settings preservation evidence",
+        "Missing or oversized native settings preservation evidence",
     }
     reason = "Unexpected collector failure"
     if type(error) is ValueError and str(error) in safe_reasons:
@@ -721,6 +739,79 @@ def collect_native_search_hardware_input(started_at_ms, finished_at_ms):
     return {"diagnostics/native-search-hardware-input.json": json_bytes(clean)}, {
         "status": "captured", "outcome": clean["outcome"], "observationCount": len(clean["observations"]),
         "note": "Fixed native keyboard fixture observations; correlate with JUnit outcome, not a standalone acceptance result."}
+
+
+def sanitize_native_settings_preservation(data, started_at_ms, finished_at_ms):
+    """Keep only settings equality flags and fixed JSON types, never config values."""
+    def require(condition):
+        if not condition:
+            raise ValueError("Invalid native settings preservation evidence")
+
+    def integer(value, low, high):
+        return type(value) is int and low <= value <= high
+
+    require(type(data) is dict and data.keys() == {"schemaVersion", "scenario", "startedAtMs", "observations"})
+    require(type(data["schemaVersion"]) is int and data["schemaVersion"] == 1)
+    require(data["scenario"] == "native-settings-preservation")
+    require(integer(started_at_ms, 1, 9_007_199_254_740_991) and integer(finished_at_ms, started_at_ms, 9_007_199_254_740_991))
+    require(integer(data["startedAtMs"], 1, 9_007_199_254_740_991))
+    if not started_at_ms <= data["startedAtMs"] <= finished_at_ms:
+        raise ValueError("Stale native settings preservation evidence")
+    observations = data["observations"]
+    require(type(observations) is list and len(observations) <= len(NATIVE_SETTINGS_PRESERVATION_PHASES))
+    previous_phase, previous_time = -1, data["startedAtMs"]
+    for observation in observations:
+        require(type(observation) is dict and observation.keys() == {
+            "phase", "observedAtMs", "wholeConfigEqual", "auditTimesEqual", "sectionsEqual", "fields"})
+        require(observation["phase"] in NATIVE_SETTINGS_PRESERVATION_PHASES)
+        phase = NATIVE_SETTINGS_PRESERVATION_PHASES.index(observation["phase"])
+        require(phase > previous_phase and integer(observation["observedAtMs"], previous_time, finished_at_ms))
+        previous_phase, previous_time = phase, observation["observedAtMs"]
+        require(type(observation["wholeConfigEqual"]) is bool and type(observation["auditTimesEqual"]) is bool)
+        sections = observation["sectionsEqual"]
+        require(type(sections) is dict and sections.keys() == NATIVE_SETTINGS_PRESERVATION_SECTIONS)
+        require(all(type(value) is bool for value in sections.values()))
+        fields = observation["fields"]
+        require(type(fields) is dict and fields.keys() == NATIVE_SETTINGS_PRESERVATION_FIELDS)
+        for field in fields.values():
+            require(type(field) is dict and field.keys() == {"equal", "expectedType", "actualType"})
+            require(type(field["equal"]) is bool)
+            require(field["expectedType"] in NATIVE_SETTINGS_PRESERVATION_TYPES
+                    and field["actualType"] in NATIVE_SETTINGS_PRESERVATION_TYPES)
+    return data
+
+
+def collect_native_settings_preservation(started_at_ms, finished_at_ms):
+    path = NATIVE_SETTINGS_PRESERVATION_PATH
+    script = ('[ ! -L cache ] && [ ! -L cache/native-acceptance-diagnostics ] && '
+              f'[ ! -L {path} ] && [ -f {path} ] || exit 2; '
+              f'exec head -c {NATIVE_SETTINGS_PRESERVATION_MAX_BYTES + 1} {path}')
+    result = subprocess.run(exec_out_run_as("sh", "-c", script), stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, timeout=10)
+    if result.returncode != 0 or not result.stdout:
+        return {}, {"status": "missing-or-unreadable"}
+    if len(result.stdout) > NATIVE_SETTINGS_PRESERVATION_MAX_BYTES:
+        raise ValueError("Missing or oversized native settings preservation evidence")
+
+    def unique_object(pairs):
+        value = {}
+        for key, entry in pairs:
+            if key in value:
+                raise ValueError("Invalid native settings preservation evidence")
+            value[key] = entry
+        return value
+
+    try:
+        data = json.loads(result.stdout, object_pairs_hook=unique_object)
+    except (ValueError, UnicodeDecodeError):
+        raise ValueError("Invalid native settings preservation evidence") from None
+    clean = sanitize_native_settings_preservation(data, started_at_ms, finished_at_ms)
+    any_mismatch = any(not observation["wholeConfigEqual"]
+                       or (observation["phase"] == "rejected-write" and not observation["auditTimesEqual"])
+                       for observation in clean["observations"])
+    return {"diagnostics/native-settings-preservation.json": json_bytes(clean)}, {
+        "status": "captured", "observationCount": len(clean["observations"]), "anyMismatch": any_mismatch,
+        "note": "Fixed settings equality observations; wholeConfigEqual excludes root audit times. Only rejected-write audit changes count as mismatches. JUnit determines the test outcome; observations are not standalone acceptance."}
 
 
 def capture_installed_apks():
@@ -1226,7 +1317,6 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
         if access["status"] != "available":
             manifest["playerLifecycle"] = {"status": "missing-or-unreadable", "reason": access["status"]}
             manifest["pluginStartup"] = {"status": "missing-or-unreadable", "reason": access["status"]}
-            manifest["nativeSearchHardwareInput"] = {"status": "missing-or-unreadable", "reason": access["status"]}
         else:
             try:
                 diagnostics, manifest["playerLifecycle"] = collect_player_lifecycle(
@@ -1240,12 +1330,21 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
                 files.update(diagnostics)
             except Exception as error:
                 manifest["pluginStartup"] = capture_failure(error)
+    selected_methods = [arg for arg in (command or COMMAND) if arg.startswith(RUNNER_ARGUMENT + "class=")]
+    for key, selector, collector in (
+            ("nativeSearchHardwareInput", NATIVE_SEARCH_HARDWARE_INPUT_TEST, collect_native_search_hardware_input),
+            ("nativeSettingsPreservation", NATIVE_SETTINGS_PRESERVATION_TEST, collect_native_settings_preservation)):
+        if invocation != "connected-suite" and selected_methods != [RUNNER_ARGUMENT + "class=" + selector]:
+            continue
+        if access["status"] != "available":
+            manifest[key] = {"status": "missing-or-unreadable", "reason": access["status"]}
+        else:
             try:
-                diagnostics, manifest["nativeSearchHardwareInput"] = collect_native_search_hardware_input(
+                diagnostics, manifest[key] = collector(
                     recording.get("gradleStartedAtMs", 0), recording.get("gradleFinishedAtMs", 0))
                 files.update(diagnostics)
             except Exception as error:
-                manifest["nativeSearchHardwareInput"] = capture_failure(error)
+                manifest[key] = capture_failure(error)
     owned = owned_fixture_profile(invocation, command or COMMAND)
     if owned:
         key = owned["statusKey"]

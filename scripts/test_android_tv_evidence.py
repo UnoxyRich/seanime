@@ -860,6 +860,292 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
         self.assertEqual(state["nativeSearchHardwareInput"], {
             "status": "missing-or-unreadable", "reason": "package-not-installed"})
 
+    def native_settings_preservation_evidence(self):
+        field_types = {"hideAudienceScore": "boolean", "scannerMatchingThreshold": "number",
+                       "scannerMatchingAlgorithm": "string", "libraryPath": "string", "libraryPaths": "array",
+                       "richPresenceUseMediaTitleStatus": "boolean", "richPresenceShowAniListMediaButton": "boolean"}
+        observations = []
+        for index, phase in enumerate(evidence.NATIVE_SETTINGS_PRESERVATION_PHASES):
+            observations.append({
+                "phase": phase, "observedAtMs": 1100 + index * 50,
+                "wholeConfigEqual": True, "auditTimesEqual": True,
+                "sectionsEqual": {key: True for key in evidence.NATIVE_SETTINGS_PRESERVATION_SECTIONS},
+                "fields": {key: {"equal": True, "expectedType": kind, "actualType": kind}
+                           for key, kind in field_types.items()},
+            })
+        return {"schemaVersion": 1, "scenario": "native-settings-preservation",
+                "startedAtMs": 1100, "observations": observations}
+
+    def write_native_settings_preservation_evidence(self, data):
+        path = self.root / "device" / evidence.NATIVE_SETTINGS_PRESERVATION_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+        return path
+
+    def test_native_settings_preservation_collects_full_skipped_and_empty_observations(self):
+        original = self.native_settings_preservation_evidence()
+        variants = [original, dict(original, observations=[]),
+                    dict(original, observations=[original["observations"][0], original["observations"][-1]]),
+                    dict(original, observations=original["observations"][-1:])]
+        same_millisecond = copy.deepcopy(original)
+        for observation in same_millisecond["observations"]:
+            observation["observedAtMs"] = 1100
+        variants.append(same_millisecond)
+        for kind in evidence.NATIVE_SETTINGS_PRESERVATION_TYPES:
+            typed = copy.deepcopy(original)
+            typed["observations"][0]["fields"]["libraryPath"].update(expectedType=kind, actualType=kind)
+            variants.append(typed)
+        for index, data in enumerate(variants):
+            with self.subTest(index=index):
+                self.write_native_settings_preservation_evidence(data)
+                files, state = evidence.collect_native_settings_preservation(1000, 1600)
+                self.assertEqual(json.loads(files["diagnostics/native-settings-preservation.json"]), data)
+                self.assertEqual(state["status"], "captured")
+                self.assertEqual(state["observationCount"], len(data["observations"]))
+                self.assertIs(state["anyMismatch"], False)
+                self.assertIn("JUnit determines the test outcome", state["note"])
+                self.assertIn("not standalone acceptance", state["note"])
+
+    def test_native_settings_preservation_summary_distinguishes_expected_and_rejected_write_audit_changes(self):
+        for index, phase in enumerate(evidence.NATIVE_SETTINGS_PRESERVATION_PHASES):
+            data = self.native_settings_preservation_evidence()
+            data["observations"][index]["auditTimesEqual"] = False
+            self.write_native_settings_preservation_evidence(data)
+            with self.subTest(phase=phase, difference="audit"):
+                files, state = evidence.collect_native_settings_preservation(1000, 1600)
+                self.assertIs(state["anyMismatch"], phase == "rejected-write")
+                self.assertEqual(json.loads(files["diagnostics/native-settings-preservation.json"]), data)
+            data["observations"][index]["wholeConfigEqual"] = False
+            self.write_native_settings_preservation_evidence(data)
+            with self.subTest(phase=phase, difference="config"):
+                _, state = evidence.collect_native_settings_preservation(1000, 1600)
+                self.assertIs(state["anyMismatch"], True)
+
+    def test_native_settings_preservation_rejects_unknown_schema_private_values_and_invalid_types(self):
+        mutations = [
+            (("value",), "PRIVATE_SENTINEL"), (("schemaVersion",), True), (("schemaVersion",), 2),
+            (("scenario",), "PRIVATE_SENTINEL"), (("startedAtMs",), True), (("startedAtMs",), 1100.0),
+            (("startedAtMs",), 0), (("observations",), {}), (("observations",), [None]),
+            (("observations", 0, "value"), "PRIVATE_SENTINEL"),
+            (("observations", 0, "phase"), "PRIVATE_SENTINEL"), (("observations", 0, "phase"), []),
+            (("observations", 0, "observedAtMs"), True), (("observations", 0, "observedAtMs"), 1100.0),
+            (("observations", 0, "observedAtMs"), 1099), (("observations", 0, "observedAtMs"), 1601),
+            (("observations", 0, "wholeConfigEqual"), 1), (("observations", 0, "auditTimesEqual"), "true"),
+            (("observations", 0, "sectionsEqual"), []), (("observations", 0, "sectionsEqual", "library"), 1),
+            (("observations", 0, "sectionsEqual", "private"), "PRIVATE_SENTINEL"),
+            (("observations", 0, "fields"), []), (("observations", 0, "fields", "private"), "PRIVATE_SENTINEL"),
+            (("observations", 0, "fields", "libraryPath"), "PRIVATE_SENTINEL"),
+            (("observations", 0, "fields", "libraryPath", "equal"), 1),
+            (("observations", 0, "fields", "libraryPath", "expectedType"), "PRIVATE_SENTINEL"),
+            (("observations", 0, "fields", "libraryPath", "actualType"), None),
+            (("observations", 0, "fields", "libraryPath", "expectedValue"), "PRIVATE_SENTINEL"),
+            (("observations", 0, "fields", "libraryPath", "actualValue"), "/private/PRIVATE_SENTINEL"),
+            (("observations", 0, "fields", "libraryPath", "sha256"), "PRIVATE_SENTINEL"),
+            (("observations", 0, "fields", "libraryPath", "length"), 10),
+        ]
+        for path, value in mutations:
+            data = self.native_settings_preservation_evidence()
+            target = data
+            for field in path[:-1]:
+                target = target[field]
+            target[path[-1]] = value
+            with self.subTest(path=path, value=value), self.assertRaises(ValueError) as rejected:
+                evidence.sanitize_native_settings_preservation(data, 1000, 1600)
+            state = evidence.capture_failure(rejected.exception)
+            self.assertEqual(state["reason"], "Invalid native settings preservation evidence")
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(state))
+
+    def test_native_settings_preservation_rejects_missing_keys_reordered_phases_and_timestamps(self):
+        original = self.native_settings_preservation_evidence()
+        observations = original["observations"]
+        variants = [dict(original, observations=observations + observations[-1:]),
+                    dict(original, observations=[observations[0], observations[0]]),
+                    dict(original, observations=list(reversed(observations)))]
+        decreasing_time = copy.deepcopy(original)
+        decreasing_time["observations"][2]["observedAtMs"] = 1149
+        variants.append(decreasing_time)
+        for path in (("startedAtMs",), ("observations", 0, "wholeConfigEqual"),
+                     ("observations", 0, "sectionsEqual", "id"),
+                     ("observations", 0, "fields", "libraryPaths"),
+                     ("observations", 0, "fields", "libraryPath", "equal")):
+            data = copy.deepcopy(original)
+            target = data
+            for field in path[:-1]:
+                target = target[field]
+            del target[path[-1]]
+            variants.append(data)
+        for index, data in enumerate(variants):
+            with self.subTest(index=index), self.assertRaises(ValueError):
+                evidence.sanitize_native_settings_preservation(data, 1000, 1600)
+
+    def test_native_settings_preservation_rejects_stale_and_invalid_invocation_times(self):
+        for start, finish in ((1101, 1600), (1, 1099), (0, 1600), (1000, 0),
+                              (True, 1600), (1000, False), (1000.0, 1600)):
+            with self.subTest(start=start, finish=finish), self.assertRaises(ValueError):
+                evidence.sanitize_native_settings_preservation(self.native_settings_preservation_evidence(), start, finish)
+        data = self.native_settings_preservation_evidence()
+        data["startedAtMs"] = 999
+        self.write_native_settings_preservation_evidence(data)
+        with self.assertRaisesRegex(ValueError, "Stale native settings preservation evidence"):
+            evidence.collect_native_settings_preservation(1000, 1600)
+
+    def test_native_settings_preservation_read_bounds_and_duplicate_key_rejection(self):
+        path = self.write_native_settings_preservation_evidence(self.native_settings_preservation_evidence())
+        valid = path.read_bytes()
+        path.write_bytes(valid.ljust(evidence.NATIVE_SETTINGS_PRESERVATION_MAX_BYTES, b" "))
+        _, state = evidence.collect_native_settings_preservation(1000, 1600)
+        self.assertEqual(state["status"], "captured")
+        path.write_bytes(b" " * (evidence.NATIVE_SETTINGS_PRESERVATION_MAX_BYTES + 1))
+        with self.assertRaisesRegex(ValueError, "Missing or oversized native settings preservation evidence"):
+            evidence.collect_native_settings_preservation(1000, 1600)
+        for raw in (b'{"schemaVersion":1,"schemaVersion":1}', b"\xffPRIVATE_SENTINEL", b"PRIVATE_SENTINEL",
+                    valid.replace(b'"library": true', b'"library": true, "library": true', 1),
+                    valid.replace(b'"equal": true', b'"equal": true, "equal": true', 1)):
+            path.write_bytes(raw)
+            with self.subTest(raw=raw[:24]), self.assertRaisesRegex(ValueError, "Invalid native settings preservation evidence"):
+                evidence.collect_native_settings_preservation(1000, 1600)
+
+    def test_native_settings_preservation_rejects_file_and_both_parent_symlinks(self):
+        path = self.write_native_settings_preservation_evidence(self.native_settings_preservation_evidence())
+        for target in (path, path.parent, path.parent.parent):
+            alternate = target.with_name(target.name + "-target")
+            target.rename(alternate)
+            target.symlink_to(alternate, target_is_directory=alternate.is_dir())
+            try:
+                files, state = evidence.collect_native_settings_preservation(1000, 1600)
+                self.assertEqual(files, {})
+                self.assertEqual(state, {"status": "missing-or-unreadable"})
+            finally:
+                target.unlink()
+                alternate.rename(target)
+        path.unlink()
+        path.mkdir()
+        files, state = evidence.collect_native_settings_preservation(1000, 1600)
+        self.assertEqual(files, {})
+        self.assertEqual(state["status"], "missing-or-unreadable")
+
+    def test_native_settings_preservation_survives_screenshot_failure_without_retaining_private_values(self):
+        original = self.native_settings_preservation_evidence()
+        original["observations"][0]["wholeConfigEqual"] = False
+        original["observations"][0]["fields"]["libraryPath"].update(equal=False, actualType="missing")
+        self.write_native_settings_preservation_evidence(original)
+        private = self.root / "device/cache/native-acceptance-diagnostics/private.json"
+        private.write_text('{"libraryPath":"/private/PRIVATE_SENTINEL","credential":"PRIVATE_SENTINEL"}')
+        command = evidence.exec_out_run_as("sh", "-c", 'printf "PRIVATE_SENTINEL\\n" >&2; exit 17')
+        with patch.object(evidence, "screenshot_command", return_value=command):
+            evidence.collect(self.root, 19, {"status": "app-process-not-observed",
+                             "gradleStartedAtMs": 1000, "gradleFinishedAtMs": 1600}, {})
+        with zipfile.ZipFile(self.root / evidence.OUTPUT / "evidence.zip") as saved:
+            state = json.loads(saved.read("collection-status.json"))
+            path = "diagnostics/native-settings-preservation.json"
+            raw = saved.read(path)
+            self.assertEqual(json.loads(raw), original)
+            self.assertEqual(state["fileSha256"][path], hashlib.sha256(raw).hexdigest())
+            self.assertEqual(state["nativeSettingsPreservation"]["status"], "captured")
+            self.assertIs(state["nativeSettingsPreservation"]["anyMismatch"], True)
+            self.assertEqual(state["screenshots"]["status"], "capture-failed")
+            self.assertEqual(state["gradleExitCode"], 19)
+            self.assertEqual(state["realServiceAcceptance"], "not-established")
+            self.assertNotIn(b"PRIVATE_SENTINEL", b"".join(saved.read(name) for name in saved.namelist()))
+
+    def test_native_settings_preservation_collects_only_with_suite_and_app_access(self):
+        with patch.object(evidence, "collect_native_settings_preservation", return_value=(
+                {}, {"status": "missing-or-unreadable"})) as collect:
+            for invocation in ("connected-suite", "owned-library-journey"):
+                evidence.collect(self.root, 19, {"status": "app-process-not-observed",
+                                 "gradleStartedAtMs": 1000, "gradleFinishedAtMs": 1600}, {}, invocation)
+                state = json.loads((self.root / Path(evidence.OUTPUT).parent / invocation / "collection-status.json").read_text())
+                self.assertEqual("nativeSettingsPreservation" in state, invocation == "connected-suite")
+                self.assertEqual(state["gradleExitCode"], 19)
+            collect.assert_called_once_with(1000, 1600)
+            with patch.dict(os.environ, {"FAKE_APP_MISSING": "1"}):
+                evidence.collect(self.root, 19, {"status": "app-process-not-observed"}, {})
+            collect.assert_called_once()
+        state = json.loads((self.root / evidence.OUTPUT / "collection-status.json").read_text())
+        self.assertEqual(state["nativeSettingsPreservation"], {
+            "status": "missing-or-unreadable", "reason": "package-not-installed"})
+
+    def test_named_diagnostic_invocations_collect_only_the_exact_selected_method_file(self):
+        self.write_native_search_hardware_input_evidence(self.native_search_hardware_input_evidence())
+        self.write_native_settings_preservation_evidence(self.native_settings_preservation_evidence())
+        screenshot_command = evidence.exec_out_run_as("sh", "-c", 'printf "PRIVATE_SENTINEL\\n" >&2; exit 17')
+        profiles = (
+            ("focused-keyboard", evidence.NATIVE_SEARCH_HARDWARE_INPUT_TEST, "nativeSearchHardwareInput",
+             "native-search-hardware-input", "collect_native_search_hardware_input", "collect_native_settings_preservation"),
+            ("focused-settings", evidence.NATIVE_SETTINGS_PRESERVATION_TEST, "nativeSettingsPreservation",
+             "native-settings-preservation", "collect_native_settings_preservation", "collect_native_search_hardware_input"),
+        )
+        for invocation, selector, key, filename, selected, unselected in profiles:
+            command = evidence.COMMAND + [evidence.RUNNER_ARGUMENT + "class=" + selector,
+                                          evidence.RUNNER_ARGUMENT + "freshInstrumentationProcess=true"]
+            with self.subTest(invocation=invocation), patch.object(
+                    evidence, selected, wraps=getattr(evidence, selected)) as collect_selected, patch.object(
+                    evidence, unselected) as collect_unselected, patch.object(
+                    evidence, "collect_player_lifecycle") as player, patch.object(
+                    evidence, "collect_plugin_startup") as plugin, patch.object(
+                    evidence, "screenshot_command", return_value=screenshot_command):
+                evidence.collect(self.root, 19, {"status": "app-process-not-observed",
+                                 "gradleStartedAtMs": 1000, "gradleFinishedAtMs": 1600}, {}, invocation, command)
+            collect_selected.assert_called_once_with(1000, 1600)
+            collect_unselected.assert_not_called()
+            player.assert_not_called()
+            plugin.assert_not_called()
+            with zipfile.ZipFile(self.root / Path(evidence.OUTPUT).parent / invocation / "evidence.zip") as saved:
+                state = json.loads(saved.read("collection-status.json"))
+                diagnostic = "diagnostics/" + filename + ".json"
+                self.assertEqual([name for name in saved.namelist() if name.startswith("diagnostics/")], [diagnostic])
+                self.assertEqual(state["fileSha256"][diagnostic], hashlib.sha256(saved.read(diagnostic)).hexdigest())
+                self.assertEqual(state[key]["status"], "captured")
+                self.assertEqual(state["screenshots"]["status"], "capture-failed")
+                self.assertEqual(state["command"], command)
+                self.assertEqual(state["gradleExitCode"], 19)
+                self.assertEqual(state["realServiceAcceptance"], "not-established")
+                self.assertNotIn("playerLifecycle", state)
+                self.assertNotIn("pluginStartup", state)
+                self.assertNotIn(b"PRIVATE_SENTINEL", b"".join(saved.read(name) for name in saved.namelist()))
+
+    def test_named_diagnostics_do_not_read_for_wrong_combined_missing_or_duplicate_selectors(self):
+        keyboard, settings = evidence.NATIVE_SEARCH_HARDWARE_INPUT_TEST, evidence.NATIVE_SETTINGS_PRESERVATION_TEST
+        selector_sets = ([], [keyboard.split("#")[0]], [settings.split("#")[0]],
+                         [keyboard + "Other"], [settings + "Other"], [keyboard + "," + settings],
+                         [keyboard, settings], [keyboard, keyboard], [settings, settings])
+        for selectors in selector_sets:
+            command = evidence.COMMAND + [evidence.RUNNER_ARGUMENT + "class=" + value for value in selectors]
+            with self.subTest(selectors=selectors), patch.object(
+                    evidence, "collect_native_search_hardware_input") as collect_keyboard, patch.object(
+                    evidence, "collect_native_settings_preservation") as collect_settings, patch.object(
+                    evidence, "collect_player_lifecycle") as player, patch.object(
+                    evidence, "collect_plugin_startup") as plugin:
+                evidence.collect(self.root, 0, {"status": "app-process-not-observed",
+                                 "gradleStartedAtMs": 1000, "gradleFinishedAtMs": 1600}, {}, "focused-settings", command)
+            for collector in (collect_keyboard, collect_settings, player, plugin):
+                collector.assert_not_called()
+            state = json.loads((self.root / Path(evidence.OUTPUT).parent / "focused-settings/collection-status.json").read_text())
+            for key in ("nativeSearchHardwareInput", "nativeSettingsPreservation", "playerLifecycle", "pluginStartup"):
+                self.assertNotIn(key, state)
+
+    def test_named_diagnostics_preserve_app_access_and_invocation_freshness_gates(self):
+        self.write_native_search_hardware_input_evidence(self.native_search_hardware_input_evidence())
+        self.write_native_settings_preservation_evidence(self.native_settings_preservation_evidence())
+        for selector, key, collector_name in (
+                (evidence.NATIVE_SEARCH_HARDWARE_INPUT_TEST, "nativeSearchHardwareInput", "collect_native_search_hardware_input"),
+                (evidence.NATIVE_SETTINGS_PRESERVATION_TEST, "nativeSettingsPreservation", "collect_native_settings_preservation")):
+            command = evidence.COMMAND + [evidence.RUNNER_ARGUMENT + "class=" + selector]
+            with self.subTest(key=key), patch.dict(os.environ, {"FAKE_APP_MISSING": "1"}), patch.object(
+                    evidence, collector_name) as collector:
+                evidence.collect(self.root, 0, {"status": "app-process-not-observed"}, {}, "focused-gates", command)
+            collector.assert_not_called()
+            output = self.root / Path(evidence.OUTPUT).parent / "focused-gates"
+            state = json.loads((output / "collection-status.json").read_text())
+            self.assertEqual(state[key], {"status": "missing-or-unreadable", "reason": "package-not-installed"})
+            evidence.collect(self.root, 0, {"status": "app-process-not-observed",
+                             "gradleStartedAtMs": 2000, "gradleFinishedAtMs": 2100}, {}, "focused-gates", command)
+            with zipfile.ZipFile(output / "evidence.zip") as saved:
+                state = json.loads(saved.read("collection-status.json"))
+                self.assertEqual(state[key]["status"], "capture-failed")
+                self.assertTrue(state[key]["reason"].startswith("Stale native "))
+                self.assertFalse(any(name.startswith("diagnostics/") for name in saved.namelist()))
+
     def journey_manifest(self, directory="native-go-fixture-12345678-1234-4123-8123-123456789abc"):
         root = f"/data/user/0/{evidence.PACKAGE}/files/{directory}"
         return {"kind": evidence.JOURNEY_KIND, "root": root, "dataDir": root + "/data", "cacheDir": root + "/cache",

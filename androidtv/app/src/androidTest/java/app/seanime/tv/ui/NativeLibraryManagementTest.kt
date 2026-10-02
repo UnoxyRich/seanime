@@ -59,6 +59,10 @@ class NativeLibraryManagementTest {
         chooseAction("match")
         awaitTag("media-picker-42")
         compose.onNodeWithTag("media-picker-42").performScrollTo().performTvClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("media-picker-42").fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithTag("media-picker-42").assertDoesNotExist()
+        awaitFocused("library-bulk-confirm-cancel")
+        compose.onNodeWithTag("library-bulk-confirm-cancel").assertIsFocused()
         compose.onNodeWithText("Anime: Owned anime fixture").assertIsDisplayed()
         NativeScreenshotEvidence.capture("library-folder-typed-match-preview")
         compose.onNodeWithTag("library-bulk-apply").performTvClick()

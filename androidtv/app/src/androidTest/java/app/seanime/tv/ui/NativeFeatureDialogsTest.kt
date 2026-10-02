@@ -2,6 +2,7 @@ package app.seanime.tv.ui
 
 import android.view.KeyEvent
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -11,6 +12,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class NativeFeatureDialogsTest {
@@ -35,10 +37,26 @@ class NativeFeatureDialogsTest {
 
     @Test fun optionalSettingsCanBeClearedExplicitly() {
         var saved: String? = null
-        compose.setContent { MaterialTheme { TextEntryDialog("Optional setting", "Value", initial = "Old", allowEmpty = true, onDismiss = {}, onSubmit = { saved = it }) } }
-        compose.onNode(hasSetTextAction()).performTextClearance()
+        val submitCount = AtomicInteger()
+        compose.setContent { MaterialTheme { TextEntryDialog("Optional setting", "Value", initial = "Old", allowEmpty = true,
+            onDismiss = {}, onSubmit = { saved = it; submitCount.incrementAndGet() }) } }
+        // Let the dialog grant its initial focus before a text action can request it.
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().any {
+                val view = (it.root as ViewRootForTest).view
+                view.isAttachedToWindow && view.isLaidOut && view.hasWindowFocus()
+            }
+        }
+        val editor = compose.onNode(hasSetTextAction()).assertIsDisplayed().assertIsFocused()
+        editor.performTextClearance()
+        assertEquals("The optional draft must be empty before Save", "",
+            editor.fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
         compose.onNodeWithText("Save").assertIsEnabled().performTvClick()
-        compose.runOnIdle { assertEquals("", saved) }
+        compose.waitUntil(10_000) { submitCount.get() > 0 }
+        compose.runOnIdle {
+            assertEquals("One Save press must invoke one submission", 1, submitCount.get())
+            assertEquals("", saved)
+        }
     }
 
     @Test fun longConfirmationCanBeReadWithArrowsAndReturnsToCancel() {

@@ -21,6 +21,7 @@ import app.seanime.tv.ui.performTvClick
 import app.seanime.tv.ui.enterTvTextAndDismissIme
 import app.seanime.tv.ui.TvDpadInputRule
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
@@ -44,8 +45,11 @@ import java.util.UUID
  * After force-stop, inspect kind/root/mediaPath, restore prior recovery byte-for-byte,
  * then cold-launch normal MainActivity and verify signed status.dataDir is files/seanime/data.
  */
+@OptIn(ExperimentalTestApi::class)
 class AndroidIsolatedLibraryManagementTest {
-    private val compose = createEmptyComposeRule()
+    // Queue test effects on Compose's main-thread clock so OkHttp event callbacks
+    // cannot resume the test recomposer inline while it disposes Android dialogs.
+    private val compose = createEmptyComposeRule(effectContext = StandardTestDispatcher())
     private val dpad = TvDpadInputRule()
     @get:Rule val rules: RuleChain = RuleChain.outerRule(dpad).around(compose)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
