@@ -23,12 +23,15 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestName
+import java.io.File
 import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 
 class NativePluginPresentationTest {
     @get:Rule val compose = createComposeRule()
+    @get:Rule val testName = TestName()
 
     @Test fun globalTrayOpenRendersOnlyItsSurfaceAndBackRestoresTheOpener() = fixture { fixture ->
         focusOpener()
@@ -120,6 +123,7 @@ class NativePluginPresentationTest {
             val repo = SeanimeRepository(api)
             compose.setContent { SeanimeTheme { SeanimeTvApp(repo, status, {}, {}, {}) } }
             api.connectEvents()
+            val startedAtMs = System.currentTimeMillis()
             val started = SystemClock.elapsedRealtime()
             var libraryReady = false
             try {
@@ -131,9 +135,22 @@ class NativePluginPresentationTest {
                         fixture.events.any { it.optString("type") == "screen:changed" }
                 }
             } catch (failure: Throwable) {
-                Log.e("NativePluginStartup", "Presentation fixture failed after ${SystemClock.elapsedRealtime() - started}ms; " +
-                    "libraryReady=$libraryReady, socket=${fixture.socket.get() != null}, connected=${api.connected.value}; " +
-                    "eventTypes=${fixture.events.map { it.optString("type") }}", failure)
+                // Retain only bounded fixture state, since CI intentionally omits logcat.
+                // A diagnostic write must never replace the original wait failure.
+                runCatching {
+                    val eventTypes = fixture.events.map { it.optString("type") }
+                        .map { if (it in STARTUP_EVENT_TYPES) it else "other" }.distinct().sorted()
+                    val diagnostic = JSONObject().put("schemaVersion", 1).put("scenario", "plugin-presentation-startup")
+                        .put("testName", testName.methodName).put("outcome", "failed")
+                        .put("startedAtMs", startedAtMs).put("completedAtMs", System.currentTimeMillis())
+                        .put("elapsedMs", SystemClock.elapsedRealtime() - started)
+                        .put("libraryReady", libraryReady).put("socket", fixture.socket.get() != null)
+                        .put("connected", api.connected.value).put("eventTypes", JSONArray(eventTypes))
+                    val file = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,
+                        "native-acceptance-diagnostics/plugin-startup-${testName.methodName}.json")
+                    check(file.parentFile?.let { it.isDirectory || it.mkdirs() } == true)
+                    file.writeText(diagnostic.toString(2))
+                }.onFailure { Log.e("NativePluginStartup", "Unable to retain sanitized startup diagnostic") }
                 throw failure
             }
             test(fixture)
@@ -172,5 +189,11 @@ class NativePluginPresentationTest {
             }
             return MockResponse().setBody(JSONObject().put("data", data).toString())
         }
+    }
+
+    private companion object {
+        val STARTUP_EVENT_TYPES = setOf("screen:changed", "tray:render", "tray:opened", "tray:list-icons", "tray:closed",
+            "handler:triggered", "command-palette:render", "command-palette:opened", "command-palette:list",
+            "command-palette:input", "command-palette:item-selected", "command-palette:closed")
     }
 }

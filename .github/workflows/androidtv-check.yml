@@ -100,10 +100,10 @@ jobs:
       - name: Test Android storage and direct streaming
         run: go test -ldflags=-checklinkname=0 ./internal/androidtvstorage ./internal/directstream -count=1
 
-      - name: Build Android TV APKs
+      - name: Verify native host tests, layouts, lint and APKs
         id: build_apks
         working-directory: androidtv
-        run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+        run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" ./gradlew :app:testDebugUnitTest :app:lintDebug :app:validateDebugScreenshotTest :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=2 --no-parallel
 
       - name: Verify APK native alignment
         run: python3 scripts/verify_android_native_alignment.py androidtv/app/build/outputs/apk/debug/*.apk

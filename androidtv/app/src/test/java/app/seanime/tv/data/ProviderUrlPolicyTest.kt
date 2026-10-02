@@ -2,13 +2,25 @@ package app.seanime.tv.data
 
 import java.io.IOException
 import java.net.InetSocketAddress
+import java.net.ProtocolException
 import java.net.Proxy
 import java.net.ProxySelector
+import java.net.Socket
 import java.net.SocketAddress
 import java.net.URI
 import java.net.InetAddress
 import java.net.UnknownHostException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import javax.net.SocketFactory
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Dns
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -135,6 +147,52 @@ class ProviderUrlPolicyTest {
             override fun connectFailed(uri: URI, sa: SocketAddress, ioe: IOException) = Unit
         })
         assertEquals(listOf(Proxy.NO_PROXY), direct.select(URI("https://provider.example/video")))
+    }
+
+    @Test fun configuredProxyRejectionCompletesWithoutRetryingDnsOrOpeningSockets() {
+        for (type in listOf(Proxy.Type.HTTP, Proxy.Type.SOCKS)) {
+            val selections = AtomicInteger()
+            val lookups = AtomicInteger()
+            val sockets = AtomicInteger()
+            val completed = CountDownLatch(1)
+            val failure = AtomicReference<IOException>()
+            val proxy = Proxy(type, InetSocketAddress.createUnresolved("proxy.example", 8080))
+            val builder = OkHttpClient.Builder().proxySelector(object : ProxySelector() {
+                override fun select(uri: URI): List<Proxy> { selections.incrementAndGet(); return listOf(proxy, Proxy.NO_PROXY) }
+                override fun connectFailed(uri: URI, sa: SocketAddress, ioe: IOException) = Unit
+            }).socketFactory(object : SocketFactory() {
+                private fun unexpectedSocket(): Socket { sockets.incrementAndGet(); throw IOException("Unexpected socket creation") }
+                override fun createSocket() = unexpectedSocket()
+                override fun createSocket(host: String, port: Int) = unexpectedSocket()
+                override fun createSocket(host: String, port: Int, local: InetAddress, localPort: Int) = unexpectedSocket()
+                override fun createSocket(host: InetAddress, port: Int) = unexpectedSocket()
+                override fun createSocket(host: InetAddress, port: Int, local: InetAddress, localPort: Int) = unexpectedSocket()
+            }).callTimeout(2, TimeUnit.SECONDS)
+            val client = ProviderUrlPolicy.secureClient(builder).dns(object : Dns {
+                override fun lookup(hostname: String): List<InetAddress> {
+                    lookups.incrementAndGet()
+                    throw UnknownHostException("Unexpected DNS lookup")
+                }
+            }).build()
+            val call = client.newCall(Request.Builder().url("http://provider.example/image.png").build())
+            try {
+                call.enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) { failure.set(e); completed.countDown() }
+                    override fun onResponse(call: Call, response: Response) { response.close(); completed.countDown() }
+                })
+                assertTrue("$type rejection must complete its callback", completed.await(5, TimeUnit.SECONDS))
+                // The timeout only bounds a regression; timing out must never count as rejection.
+                assertTrue("$type failure was ${failure.get()}", failure.get() is ProtocolException)
+                assertEquals("Provider requests cannot validate destinations through the configured proxy. The proxy was not bypassed.", failure.get().message)
+                assertEquals(1, selections.get())
+                assertEquals(0, lookups.get())
+                assertEquals(0, sockets.get())
+            } finally {
+                call.cancel()
+                client.dispatcher.executorService.shutdown()
+                client.connectionPool.evictAll()
+            }
+        }
     }
 
     @Test fun persistedOnlineRecordsRemainProviderContextWithoutANewSecurityFlag() {

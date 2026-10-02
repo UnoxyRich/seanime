@@ -2,6 +2,7 @@ package app.seanime.tv.data
 
 import java.io.IOException
 import java.net.InetAddress
+import java.net.ProtocolException
 import java.net.Proxy
 import java.net.ProxySelector
 import java.net.SocketAddress
@@ -129,7 +130,8 @@ object ProviderUrlPolicy {
     internal fun validatingProxySelector(delegate: ProxySelector): ProxySelector = object : ProxySelector() {
         override fun select(uri: URI): List<Proxy> {
             val routes = delegate.select(uri)
-            if (routes.any { it.type() != Proxy.Type.DIRECT }) throw IOException(
+            // A policy rejection cannot recover by retrying route selection.
+            if (routes.any { it.type() != Proxy.Type.DIRECT }) throw ProtocolException(
                 "Provider requests cannot validate destinations through the configured proxy. The proxy was not bypassed.")
             return routes
         }

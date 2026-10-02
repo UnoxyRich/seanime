@@ -477,7 +477,11 @@ internal fun MangaReader(
             .diskCache(null).bitmapFactoryMaxParallelism(2).build()
     }
     DisposableEffect(imageLoader, imageTransport) {
-        onDispose { imageLoader.shutdown(); imageTransport.close() }
+        onDispose {
+            // Retire first; transport-owned calls also dispatch Coil's synchronous cancellation to IO.
+            imageTransport.close()
+            imageLoader.shutdown()
+        }
     }
     val preferences = remember { context.getSharedPreferences("native_manga_reader", Context.MODE_PRIVATE) }
     val readerSettings = remember(media.id) { loadNativeMangaReaderSettings(media.id) { key -> if (preferences.contains(key)) preferences.getBoolean(key, false) else null } }

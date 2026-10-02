@@ -69,6 +69,17 @@ PLAYER_LIFECYCLE_PATH = "cache/native-acceptance-diagnostics/player-lifecycle-re
 PLAYER_LIFECYCLE_MAX_BYTES = 65_536
 PLAYER_LIFECYCLE_STAGES = ("initial-autoplay", "resume-after-stop", "paused-media-handoff",
                            "playing-media-handoff", "activity-recreation")
+PLUGIN_STARTUP_TESTS = (
+    "globalTrayOpenRendersOnlyItsSurfaceAndBackRestoresTheOpener",
+    "globalCommandsUseTheirOwnerAndIgnoreUnrelatedCloseRequests",
+    "relativeAnchorItemsNavigateNativelyAndHandlerLinksKeepTheirCallbackContract",
+)
+PLUGIN_STARTUP_MAX_BYTES = 8192
+PLUGIN_STARTUP_EVENT_TYPES = frozenset((
+    "screen:changed", "tray:render", "tray:opened", "tray:list-icons", "tray:closed", "handler:triggered",
+    "command-palette:render", "command-palette:opened", "command-palette:list", "command-palette:input",
+    "command-palette:item-selected", "command-palette:closed", "other",
+))
 # Exact NativeScreenshotEvidence names, including the two parameterized fixtures.
 # Deliberately do not enumerate or copy any other application cache files.
 SCENARIOS = frozenset("""
@@ -276,6 +287,7 @@ def capture_failure(error):
         "Invalid observation enum", "Unexpected owned fixture path",
         "Missing or oversized owned fixture manifest",
         "Invalid player lifecycle evidence", "Stale player lifecycle evidence",
+        "Invalid plugin startup evidence", "Stale plugin startup evidence", "Missing or oversized plugin startup evidence",
         "Missing or oversized player lifecycle evidence",
     }
     reason = "Unexpected collector failure"
@@ -527,6 +539,73 @@ def collect_player_lifecycle(started_at_ms, finished_at_ms):
     return {"diagnostics/player-lifecycle-recreation.json": json_bytes(clean)}, {
         "status": "captured", "outcome": clean["outcome"], "stageCount": len(clean["stages"]),
         "note": "Generated WAV lifecycle observations; correlate with JUnit outcome, not a standalone acceptance result."}
+
+
+def sanitize_plugin_startup(data, test_name, started_at_ms, finished_at_ms):
+    """Keep only fixed startup flags and event kinds, never plugin payloads or exception text."""
+    def require(condition):
+        if not condition:
+            raise ValueError("Invalid plugin startup evidence")
+
+    def integer(value, low, high):
+        return type(value) is int and low <= value <= high
+
+    fields = {"schemaVersion", "scenario", "testName", "outcome", "startedAtMs", "completedAtMs",
+              "elapsedMs", "libraryReady", "socket", "connected", "eventTypes"}
+    require(type(data) is dict and data.keys() == fields)
+    require(type(data["schemaVersion"]) is int and data["schemaVersion"] == 1)
+    require(test_name in PLUGIN_STARTUP_TESTS and data["testName"] == test_name)
+    require(data["scenario"] == "plugin-presentation-startup" and data["outcome"] == "failed")
+    require(integer(started_at_ms, 1, 9_007_199_254_740_991) and integer(finished_at_ms, started_at_ms, 9_007_199_254_740_991))
+    require(integer(data["startedAtMs"], 1, 9_007_199_254_740_991))
+    if not started_at_ms <= data["startedAtMs"] <= finished_at_ms:
+        raise ValueError("Stale plugin startup evidence")
+    require(integer(data["completedAtMs"], data["startedAtMs"], finished_at_ms))
+    require(integer(data["elapsedMs"], 0, 9_007_199_254_740_991))
+    require(all(type(data[field]) is bool for field in ("libraryReady", "socket", "connected")))
+    kinds = data["eventTypes"]
+    require(type(kinds) is list and len(kinds) <= len(PLUGIN_STARTUP_EVENT_TYPES))
+    require(all(type(kind) is str and kind in PLUGIN_STARTUP_EVENT_TYPES for kind in kinds))
+    require(kinds == sorted(set(kinds)))
+    return data
+
+
+def collect_plugin_startup(started_at_ms, finished_at_ms):
+    files, tests = {}, {}
+    for test_name in PLUGIN_STARTUP_TESTS:
+        path = f"cache/native-acceptance-diagnostics/plugin-startup-{test_name}.json"
+        # Read only these fixed paths; never enumerate the application's cache.
+        script = ('[ ! -L cache ] && [ ! -L cache/native-acceptance-diagnostics ] && '
+                  f'[ ! -L {path} ] && [ -f {path} ] || exit 2; '
+                  f'exec head -c {PLUGIN_STARTUP_MAX_BYTES + 1} {path}')
+        try:
+            result = subprocess.run(exec_out_run_as("sh", "-c", script), stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, timeout=10)
+            if result.returncode != 0 or not result.stdout:
+                tests[test_name] = {"status": "missing-or-unreadable"}
+                continue
+            if len(result.stdout) > PLUGIN_STARTUP_MAX_BYTES:
+                raise ValueError("Missing or oversized plugin startup evidence")
+
+            def unique_object(pairs):
+                value = {}
+                for key, entry in pairs:
+                    if key in value:
+                        raise ValueError("Invalid plugin startup evidence")
+                    value[key] = entry
+                return value
+
+            try:
+                data = json.loads(result.stdout, object_pairs_hook=unique_object)
+            except (ValueError, UnicodeDecodeError):
+                raise ValueError("Invalid plugin startup evidence") from None
+            clean = sanitize_plugin_startup(data, test_name, started_at_ms, finished_at_ms)
+            files[f"diagnostics/plugin-startup-{test_name}.json"] = json_bytes(clean)
+            tests[test_name] = {"status": "captured"}
+        except Exception as error:
+            tests[test_name] = capture_failure(error)
+    return files, {"status": "captured" if files else "not-captured", "snapshotCount": len(files), "tests": tests,
+                   "note": "On-failure fixture startup observations only; absence is not proof of a passing test. Correlate with JUnit outcome."}
 
 
 def capture_installed_apks():
@@ -1031,6 +1110,7 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
     if invocation == "connected-suite":
         if access["status"] != "available":
             manifest["playerLifecycle"] = {"status": "missing-or-unreadable", "reason": access["status"]}
+            manifest["pluginStartup"] = {"status": "missing-or-unreadable", "reason": access["status"]}
         else:
             try:
                 diagnostics, manifest["playerLifecycle"] = collect_player_lifecycle(
@@ -1038,6 +1118,12 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
                 files.update(diagnostics)
             except Exception as error:
                 manifest["playerLifecycle"] = capture_failure(error)
+            try:
+                diagnostics, manifest["pluginStartup"] = collect_plugin_startup(
+                    recording.get("gradleStartedAtMs", 0), recording.get("gradleFinishedAtMs", 0))
+                files.update(diagnostics)
+            except Exception as error:
+                manifest["pluginStartup"] = capture_failure(error)
     owned = owned_fixture_profile(invocation, command or COMMAND)
     if owned:
         key = owned["statusKey"]

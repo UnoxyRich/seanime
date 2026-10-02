@@ -12,15 +12,17 @@ The package ID remains `app.seanime.tv`, so signed in-place upgrades retain the
 existing Android data/cache directories, databases and persisted SAF grants.
 The repository's GPL-3.0 license and upstream attribution remain unchanged.
 
-The R31 harness candidate passes 441 host JVM tests, 34 layout comparisons, lint,
-both ABI builds and 58 evidence-collector tests. Its main APK bytes match R30.
-The latest completed GitHub TV run (R30) has
-174 ordinary passes, 4 failures and 5 explicit isolated skips across 183 unique
-cases. The complete owned-video journey and independent Go media route pass;
-filename editing and external-player handoff remain incomplete. Real AniList
-anime/manga covers, Bloom Into You metadata and its manga chapter list work on
-the Mac TV emulator, but live video and manga page pixels still fail. No public
-release or full-parity completion is claimed. See the
+The latest completed GitHub TV run, R33 (`83be8b3c`), has 177 ordinary passes,
+one plugin-startup fixture timeout and five explicit isolated skips across 183
+unique cases. All four separately invoked owned-media/management/external-handoff
+cases pass. The separate Mac cold scan test passes automatic matching, import
+and generated Go-stream pause/seek, then exposes an artwork-disposal crash;
+continuity/resume remains incomplete. The current lifecycle correction requires
+a fresh build and device verification. See the [current lifecycle evidence](acceptance/2026-10-02-artwork-lifecycle.md).
+Real AniList anime/manga covers, Bloom Into You metadata and its manga chapter
+list work on the Mac TV emulator. Live video and manga pages are blocked by the
+provider destination policy because the configured resolver returns rejected
+nonpublic addresses. No public release or full-parity completion is claimed. See the
 [current remote UI review and exact APK hashes](acceptance/2026-10-01-remote-ui-review.md)
 and [183-method device inventory](acceptance/2026-10-01-remote-ui-device-plan.json).
 

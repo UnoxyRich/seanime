@@ -1,6 +1,7 @@
 package app.seanime.tv
 
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Process
 import android.os.SystemClock
@@ -195,18 +196,26 @@ class AndroidIsolatedLocalPlaybackTest {
             assertTrue("Playback must come through the actual Go HTTP stream route", first.uri.scheme == "http" && first.uri.host == "127.0.0.1" &&
                 first.uri.port == 43211 && first.uri.path == "/api/v1/directstream/stream")
             assertTrue(first.duration in 29_000..31_000)
+            manifest.put("videoPaintBeforeSeek", awaitOwnedVideoPixels(first.position))
             if (compose.onAllNodesWithTag("native-player-seek").fetchSemanticsNodes().isEmpty()) key(KeyEvent.KEYCODE_DPAD_CENTER)
             compose.onNodeWithTag("native-player-seek").performSemanticsAction(SemanticsActions.RequestFocus)
             verifyIsolation()
             compose.onNodeWithTag("native-player-seek").performKeyInput { pressKey(Key.DirectionRight) }
-            val sought = awaitPlayer { it.paused && it.position >= 9_000 }
+            // currentPosition changes before a seek has decoded its replacement
+            // frame. Observe READY and a newly rendered buffer before its pixels.
+            val sought = awaitPlayer { it.ready && it.rendered && it.paused && it.position >= 9_000 &&
+                it.videoBuffers > first.videoBuffers && it.uri == first.uri }
+            manifest.put("videoPaintAfterSeek", awaitOwnedVideoPixels(sought.position))
             verifyIsolation(); key(KeyEvent.KEYCODE_MEDIA_PLAY)
             try {
                 // Keep this bounded play/pause sequence free of UI-idle or HTTP
                 // waits. Isolation was checked immediately before its first key.
                 awaitPlayer { !it.paused && it.position >= sought.position + 250 }
             } finally { key(KeyEvent.KEYCODE_MEDIA_PAUSE) }
-            awaitPlayer { it.paused }
+            val paused = awaitPlayer { it.ready && it.rendered && it.paused && it.position >= sought.position + 250 && it.uri == first.uri }
+            manifest.put("videoPaintAfterResumePause", awaitOwnedVideoPixels(paused.position))
+            // The pixel check hides the HUD through Back without changing the
+            // paused decoder, so this evidence shows the actual generated frame.
             NativeScreenshotEvidence.capture("isolated-go-generated-local-media")
             checkpoint("go-http-native-decode-pause-seek-verified")
             verifyIsolation(); returnToMain()
@@ -264,7 +273,7 @@ class AndroidIsolatedLocalPlaybackTest {
     private fun <T> apiCall(block: suspend () -> T): T = runBlocking { withTimeout(90_000) { block() } }
 
     private data class PlayerEvidence(val ready: Boolean, val rendered: Boolean, val paused: Boolean, val position: Long,
-        val duration: Long, val width: Int, val height: Int, val uri: Uri) {
+        val duration: Long, val width: Int, val height: Int, val uri: Uri, val videoBuffers: Int) {
         override fun toString() = "PlayerEvidence(redacted)"
     }
 
@@ -334,13 +343,77 @@ class AndroidIsolatedLocalPlaybackTest {
                     state = PlayerEvidence(player.playbackState == Player.STATE_READY,
                         (player.videoDecoderCounters?.renderedOutputBufferCount ?: 0) > 0, !player.playWhenReady,
                         player.currentPosition, player.duration, player.videoSize.width, player.videoSize.height,
-                        player.currentMediaItem?.localConfiguration?.uri ?: Uri.EMPTY)
+                        player.currentMediaItem?.localConfiguration?.uri ?: Uri.EMPTY,
+                        player.videoDecoderCounters?.renderedOutputBufferCount ?: 0)
                 }
             }
             state?.let { if (condition(it)) return it }
             SystemClock.sleep(50)
         }
         throw AssertionError("Actual Go-issued native playback did not reach the expected observable state")
+    }
+
+    /** Check real compositor pixels while paused; never paint or replace the player surface. */
+    private fun awaitOwnedVideoPixels(positionMs: Long): JSONObject {
+        if (compose.onAllNodesWithTag("native-player-play").fetchSemanticsNodes().isNotEmpty()) key(KeyEvent.KEYCODE_BACK)
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("native-player-play").fetchSemanticsNodes().isEmpty() &&
+                compose.onAllNodesWithTag("native-player-buffering").fetchSemanticsNodes().isEmpty()
+        }
+        compose.onNodeWithTag("native-player-presentation").assertExists()
+        // The source is 10 fps YUV420p: Y=40+(frame%6)*20, U=V=128.
+        // Allow only the immediate neighboring frames for pause/render timing,
+        // including the last frame just before an exact 100 ms boundary.
+        val frame = positionMs.coerceIn(0, 29_999) / 100
+        val expectedFrames = (-1L..1L).map { (frame + it).coerceIn(0, 299) }.distinct().associateWith {
+            (1.164 * (40 + (it % 6) * 20 - 16)).toInt().coerceIn(0, 255)
+        }
+        // Neutral limited-range YUV has equal RGB channels. Twelve levels allow
+        // encoder/conversion rounding while excluding a black/unpainted surface.
+        val tolerance = 12
+        val deadline = SystemClock.elapsedRealtime() + 5_000
+        var last = emptyList<Int>()
+        var lastMin = emptyList<Int>()
+        var lastMax = emptyList<Int>()
+        while (SystemClock.elapsedRealtime() < deadline) {
+            instrumentation.waitForIdleSync()
+            val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+            try {
+                val sums = LongArray(3)
+                val minimum = IntArray(3) { 255 }
+                val maximum = IntArray(3)
+                var count = 0
+                for (y in (bitmap.height * .40).toInt() until (bitmap.height * .46).toInt() step 2) {
+                    for (x in (bitmap.width * .47).toInt() until (bitmap.width * .53).toInt() step 2) {
+                        val pixel = bitmap.getPixel(x, y)
+                        val rgb = intArrayOf(Color.red(pixel), Color.green(pixel), Color.blue(pixel))
+                        for (channel in rgb.indices) {
+                            sums[channel] += rgb[channel]
+                            minimum[channel] = minOf(minimum[channel], rgb[channel])
+                            maximum[channel] = maxOf(maximum[channel], rgb[channel])
+                        }
+                        count++
+                    }
+                }
+                check(count > 0)
+                last = sums.map { (it / count).toInt() }
+                lastMin = minimum.toList(); lastMax = maximum.toList()
+                // Check every sampled channel, not just a mean that could hide UI ink.
+                val expected = expectedFrames.entries.firstOrNull { (_, gray) ->
+                    minimum.all { it >= gray - tolerance } && maximum.all { it <= gray + tolerance }
+                }
+                if (expected != null) {
+                    return JSONObject().put("positionMs", positionMs).put("matchedFrame", expected.key)
+                        .put("meanRgb", JSONArray(last)).put("minRgb", JSONArray(lastMin)).put("maxRgb", JSONArray(lastMax))
+                        .put("expectedRgb", JSONArray(List(3) { expected.value })).put("channelTolerance", tolerance)
+                        .put("sampleCount", count).put("hudHidden", true)
+                        .put("region", "center 47%-53% width, 40%-46% height; HUD hidden")
+                }
+            } finally { bitmap.recycle() }
+            SystemClock.sleep(50)
+        }
+        throw AssertionError("Owned grayscale video did not paint its timestamp-derived frame at $positionMs ms: " +
+            "mean=$last min=$lastMin max=$lastMax expected=$expectedFrames tolerance=$tolerance")
     }
 
     private fun generateVideo(ffmpeg: File, root: File, video: File) {

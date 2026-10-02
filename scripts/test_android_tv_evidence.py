@@ -514,6 +514,116 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
                 self.assertEqual("playerLifecycle" in manifest, invocation == "connected-suite")
             collect.assert_called_once_with(1000, 1600)
 
+    def plugin_startup_evidence(self, test_name=None):
+        return {"schemaVersion": 1, "scenario": "plugin-presentation-startup", "outcome": "failed",
+                "testName": test_name or evidence.PLUGIN_STARTUP_TESTS[0], "startedAtMs": 1100,
+                "completedAtMs": 1500, "elapsedMs": 400, "libraryReady": True, "socket": True,
+                "connected": False, "eventTypes": ["other", "screen:changed"]}
+
+    def write_plugin_startup_evidence(self, data):
+        path = self.root / "device/cache/native-acceptance-diagnostics" / f"plugin-startup-{data['testName']}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+        return path
+
+    def test_plugin_startup_keeps_each_failure_in_hashed_archive_without_changing_gradle_result(self):
+        originals = [self.plugin_startup_evidence(name) for name in evidence.PLUGIN_STARTUP_TESTS]
+        originals[1]["eventTypes"] = []
+        for data in originals:
+            self.write_plugin_startup_evidence(data)
+        private = self.root / "device/cache/native-acceptance-diagnostics/private.json"
+        private.write_text("PRIVATE_SENTINEL")
+        evidence.collect(self.root, 19, {"status": "app-process-not-observed",
+                         "gradleStartedAtMs": 1000, "gradleFinishedAtMs": 1600}, {})
+        with zipfile.ZipFile(self.root / evidence.OUTPUT / "evidence.zip") as saved:
+            manifest = json.loads(saved.read("collection-status.json"))
+            self.assertEqual(manifest["gradleExitCode"], 19)
+            self.assertEqual(manifest["pluginStartup"]["snapshotCount"], 3)
+            self.assertEqual(manifest["pluginStartup"]["status"], "captured")
+            for original in originals:
+                path = f"diagnostics/plugin-startup-{original['testName']}.json"
+                raw = saved.read(path)
+                self.assertEqual(json.loads(raw), original)
+                self.assertEqual(manifest["fileSha256"][path], hashlib.sha256(raw).hexdigest())
+            self.assertNotIn(b"PRIVATE_SENTINEL", b"".join(saved.read(name) for name in saved.namelist()))
+        self.assertEqual(private.read_text(), "PRIVATE_SENTINEL")
+
+    def test_plugin_startup_rejects_unknown_fields_private_event_types_and_invalid_types(self):
+        mutations = [
+            ("payload", {"token": "PRIVATE_SENTINEL"}), ("url", "https://private.invalid/PRIVATE_SENTINEL"),
+            ("message", "PRIVATE_SENTINEL"), ("testName", "PRIVATE_SENTINEL"), ("schemaVersion", True),
+            ("scenario", "PRIVATE_SENTINEL"), ("outcome", "passed"), ("startedAtMs", True),
+            ("completedAtMs", 1500.0), ("completedAtMs", 1000), ("completedAtMs", 1601),
+            ("elapsedMs", True), ("elapsedMs", -1), ("elapsedMs", float("nan")),
+            ("elapsedMs", 9_007_199_254_740_992), ("libraryReady", 1), ("socket", "true"),
+            ("connected", None), ("eventTypes", "screen:changed"), ("eventTypes", ["PRIVATE_SENTINEL"]),
+            ("eventTypes", ["screen:changed", "screen:changed"]), ("eventTypes", ["screen:changed", "other"]),
+            ("eventTypes", [{"type": "screen:changed", "payload": "PRIVATE_SENTINEL"}]),
+            ("eventTypes", ["other"] * (len(evidence.PLUGIN_STARTUP_EVENT_TYPES) + 1)),
+        ]
+        for field, value in mutations:
+            data = self.plugin_startup_evidence()
+            data[field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError) as rejected:
+                evidence.sanitize_plugin_startup(data, evidence.PLUGIN_STARTUP_TESTS[0], 1000, 1600)
+            state = evidence.capture_failure(rejected.exception)
+            self.assertEqual(state["reason"], "Invalid plugin startup evidence")
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(state))
+
+    def test_plugin_startup_rejects_stale_times_and_wrong_method_without_discarding_other_failures(self):
+        for start, finish in ((1101, 1600), (1, 1099), (0, 1600), (1000, 0), (True, 1600)):
+            with self.subTest(start=start, finish=finish), self.assertRaises(ValueError):
+                evidence.sanitize_plugin_startup(self.plugin_startup_evidence(), evidence.PLUGIN_STARTUP_TESTS[0], start, finish)
+        with self.assertRaises(ValueError):
+            evidence.sanitize_plugin_startup(self.plugin_startup_evidence(), evidence.PLUGIN_STARTUP_TESTS[1], 1000, 1600)
+        stale = self.plugin_startup_evidence()
+        stale.update(startedAtMs=1, completedAtMs=2)
+        self.write_plugin_startup_evidence(stale)
+        fresh = self.plugin_startup_evidence(evidence.PLUGIN_STARTUP_TESTS[1])
+        self.write_plugin_startup_evidence(fresh)
+        files, state = evidence.collect_plugin_startup(1000, 1600)
+        self.assertEqual(set(files), {f"diagnostics/plugin-startup-{fresh['testName']}.json"})
+        self.assertEqual(state["snapshotCount"], 1)
+        self.assertEqual(state["tests"][stale["testName"]]["reason"], "Stale plugin startup evidence")
+
+    def test_plugin_startup_read_rejects_oversize_duplicate_keys_private_stdout_and_symlinks(self):
+        original = self.plugin_startup_evidence()
+        path = self.write_plugin_startup_evidence(original)
+        for raw, reason in ((b" " * (evidence.PLUGIN_STARTUP_MAX_BYTES + 1), "Missing or oversized plugin startup evidence"),
+                            (b'{"schemaVersion":1,"schemaVersion":1}', "Invalid plugin startup evidence"),
+                            (b"run-as: PRIVATE_SENTINEL", "Invalid plugin startup evidence")):
+            path.write_bytes(raw)
+            files, state = evidence.collect_plugin_startup(1000, 1600)
+            self.assertFalse(files)
+            self.assertEqual(state["tests"][original["testName"]]["reason"], reason)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(state))
+        path.unlink()
+        private = self.root / "private.json"
+        private.write_text("PRIVATE_SENTINEL")
+        path.symlink_to(private)
+        files, state = evidence.collect_plugin_startup(1000, 1600)
+        self.assertFalse(files)
+        self.assertEqual(state["tests"][original["testName"]]["status"], "missing-or-unreadable")
+        path.unlink()
+        path.parent.rmdir()
+        path.parent.symlink_to(self.root, target_is_directory=True)
+        files, state = evidence.collect_plugin_startup(1000, 1600)
+        self.assertFalse(files)
+        self.assertEqual(state["tests"][original["testName"]]["status"], "missing-or-unreadable")
+
+    def test_only_connected_suite_collects_plugin_startup_and_missing_diagnostics_preserve_result(self):
+        with patch.object(evidence, "collect_plugin_startup", return_value=({}, {"status": "not-captured"})) as collect:
+            for invocation in ("connected-suite", "owned-library-journey"):
+                command = list(evidence.COMMAND)
+                if invocation != "connected-suite":
+                    command += [evidence.RUNNER_ARGUMENT + "class=" + evidence.OWNED_JOURNEY]
+                evidence.collect(self.root, 19, {"status": "app-process-not-observed",
+                                 "gradleStartedAtMs": 1000, "gradleFinishedAtMs": 1600}, {}, invocation, command)
+                manifest = json.loads((self.root / Path(evidence.OUTPUT).parent / invocation / "collection-status.json").read_text())
+                self.assertEqual(manifest["gradleExitCode"], 19)
+                self.assertEqual("pluginStartup" in manifest, invocation == "connected-suite")
+            collect.assert_called_once_with(1000, 1600)
+
     def journey_manifest(self, directory="native-go-fixture-12345678-1234-4123-8123-123456789abc"):
         root = f"/data/user/0/{evidence.PACKAGE}/files/{directory}"
         return {"kind": evidence.JOURNEY_KIND, "root": root, "dataDir": root + "/data", "cacheDir": root + "/cache",

@@ -21,7 +21,7 @@ internal object NativeNetworkFailure {
     private const val MAX_CLASS_LENGTH = 96
     internal const val TAG = "SeanimeNetworkFailure"
 
-    enum class Surface { PLAYER, MANGA_IMAGE }
+    enum class Surface { PLAYER, MANGA_IMAGE, ARTWORK }
 
     fun logDebug(context: Context, surface: Surface, error: Throwable, playerErrorCode: Int? = null) {
         if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return

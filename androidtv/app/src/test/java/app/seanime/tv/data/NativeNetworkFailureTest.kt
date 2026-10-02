@@ -229,14 +229,20 @@ class NativeNetworkFailureTest {
         ShadowLog.clear()
         try {
             context.applicationInfo.flags = original and ApplicationInfo.FLAG_DEBUGGABLE.inv()
-            NativeNetworkFailure.logDebug(context, NativeNetworkFailure.Surface.PLAYER, UnknownHostException(secret), 2001)
+            NativeNetworkFailure.Surface.values().forEach { surface ->
+                NativeNetworkFailure.logDebug(context, surface, UnknownHostException(secret))
+            }
             assertTrue(ShadowLog.getLogsForTag(NativeNetworkFailure.TAG).isEmpty())
             context.applicationInfo.flags = original or ApplicationInfo.FLAG_DEBUGGABLE
-            NativeNetworkFailure.logDebug(context, NativeNetworkFailure.Surface.MANGA_IMAGE, UnknownHostException(secret))
-            val entry = ShadowLog.getLogsForTag(NativeNetworkFailure.TAG).single()
-            assertTrue(entry.msg.startsWith("surface=MANGA_IMAGE category=platform_dns "))
-            assertNull(entry.throwable)
-            assertRedacted(entry.msg)
+            NativeNetworkFailure.Surface.values().forEach { surface ->
+                ShadowLog.clear()
+                NativeNetworkFailure.logDebug(context, surface, UnknownHostException(secret))
+                val entry = ShadowLog.getLogsForTag(NativeNetworkFailure.TAG).single()
+                assertTrue(entry.msg.startsWith("surface=${surface.name} category=platform_dns "))
+                assertTrue(entry.msg.length < 1200)
+                assertNull(entry.throwable)
+                assertRedacted(entry.msg)
+            }
         } finally { context.applicationInfo.flags = original; ShadowLog.clear() }
     }
 

@@ -28,6 +28,7 @@ import app.seanime.tv.data.MediaArtworkOrigin
 import app.seanime.tv.data.providerArtwork
 import app.seanime.tv.data.ProviderUrlPolicy
 import app.seanime.tv.data.NativeImageTransport
+import app.seanime.tv.data.NativeNetworkFailure
 import app.seanime.tv.data.SeanimeApiClient
 import coil.ImageLoader
 import coil.compose.AsyncImage
@@ -56,7 +57,11 @@ internal fun NativeArtworkProvider(api: SeanimeApiClient, transportFactory: (Sea
             .diskCache(null).bitmapFactoryMaxParallelism(2).build())
     }
     DisposableEffect(owner, transport) {
-        onDispose { owner.loader.shutdown(); transport.close() }
+        onDispose {
+            // Retire first; transport-owned calls also dispatch Coil's synchronous cancellation to IO.
+            transport.close()
+            owner.loader.shutdown()
+        }
     }
     CompositionLocalProvider(LocalArtwork provides owner, content = content)
 }
@@ -103,7 +108,10 @@ internal fun NativeArtwork(
     }, propagateMinConstraints = true) {
         if (resolved != null) AsyncImage(model = request, imageLoader = owner.loader, contentDescription = null,
             modifier = Modifier.fillMaxSize(), contentScale = contentScale,
-            onLoading = { phase = ArtworkPhase.LOADING }, onError = { phase = ArtworkPhase.FAILED },
+            onLoading = { phase = ArtworkPhase.LOADING }, onError = { result ->
+                phase = ArtworkPhase.FAILED
+                NativeNetworkFailure.logDebug(context, NativeNetworkFailure.Surface.ARTWORK, result.result.throwable)
+            },
             onSuccess = { phase = ArtworkPhase.LOADED })
         if (phase != ArtworkPhase.LOADED) ArtworkPlaceholder(phase.label)
     }

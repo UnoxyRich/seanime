@@ -19,9 +19,15 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
 import app.seanime.tv.data.SeanimeApiClient
 import app.seanime.tv.data.NativeImageTransport
+import app.seanime.tv.data.NativeNetworkFailure
 import app.seanime.tv.data.MAX_NATIVE_MEDIA_ID
+import okhttp3.Call
 import okhttp3.Dns
+import okhttp3.EventListener
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -36,10 +42,16 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import org.robolectric.shadows.ShadowLog
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.net.InetAddress
+import java.net.Proxy
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Loopback HTTP fixtures exercise the production Coil loader, OkHttp transport, Android PNG
@@ -53,6 +65,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class NativeArtworkHostTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+    private var diagnostics: FixtureDiagnostics? = null
 
     @Test fun customDetailMetadataAndRelatedCoversDecodeAtApiOriginWithoutItsCredentials() = fixture(apiHost = "api.example") { api, server, requests, show ->
         val id = MAX_NATIVE_MEDIA_ID
@@ -194,6 +207,9 @@ class NativeArtworkHostTest {
         val completed = java.util.concurrent.atomic.AtomicBoolean()
         val mainBefore = java.util.concurrent.atomic.AtomicBoolean()
         val mainAfter = java.util.concurrent.atomic.AtomicBoolean()
+        val effectStarted = AtomicBoolean()
+        val actionStarted = AtomicBoolean()
+        val actionFailure = AtomicReference("none")
         val threadNames = CopyOnWriteArrayList<String>()
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -204,17 +220,30 @@ class NativeArtworkHostTest {
         show {
             val action = rememberFeatureAction()
             LaunchedEffect(Unit) {
+                effectStarted.set(true)
                 action.run {
+                    actionStarted.set(true)
                     mainBefore.set(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
                     threadNames += "before: " + Thread.currentThread().name
-                    app.seanime.tv.data.SeanimeRepository(api).playlists()
+                    try {
+                        app.seanime.tv.data.SeanimeRepository(api).playlists()
+                    } catch (failure: Throwable) {
+                        actionFailure.set(safeFailureSummary(failure))
+                        throw failure
+                    }
                     mainAfter.set(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
                     threadNames += "after: " + Thread.currentThread().name
                     completed.set(true)
                 }
             }
         }
-        compose.waitUntil(10_000) { completed.get() }
+        try {
+            compose.waitUntil(10_000) { completed.get() }
+        } catch (failure: ComposeTimeoutException) {
+            reportTimeout("feature_action", "effectStarted=${effectStarted.get()} actionStarted=${actionStarted.get()} " +
+                "mainBefore=${mainBefore.get()} mainAfter=${mainAfter.get()} completed=${completed.get()} actionFailure=${actionFailure.get()}")
+            throw failure
+        }
         assertTrue(threadNames.toString(), mainBefore.get())
         assertTrue(threadNames.toString(), mainAfter.get())
     }
@@ -529,11 +558,91 @@ class NativeArtworkHostTest {
     private fun json(value: Any): MockResponse = MockResponse().setHeader("Content-Type", "application/json")
         .setBody(org.json.JSONObject().put("data", value).toString())
     private fun awaitImageDescription(description: String) {
-        compose.waitUntil(10_000) {
-            val node = compose.onAllNodesWithContentDescription(description, useUnmergedTree = true).fetchSemanticsNodes().singleOrNull()
-            node != null && node.config.getOrNull(SemanticsProperties.StateDescription) == null
+        var nodeCount = 0
+        var phase = "unobserved"
+        try {
+            compose.waitUntil(10_000) {
+                val nodes = compose.onAllNodesWithContentDescription(description, useUnmergedTree = true).fetchSemanticsNodes()
+                val node = nodes.singleOrNull()
+                nodeCount = nodes.size
+                phase = when {
+                    nodes.isEmpty() -> "missing"
+                    node == null -> "multiple"
+                    else -> when (node.config.getOrNull(SemanticsProperties.StateDescription)) {
+                        null -> "loaded"
+                        "Loading image" -> "loading"
+                        "Image unavailable" -> "failed"
+                        "No artwork" -> "absent"
+                        else -> "other"
+                    }
+                }
+                node != null && node.config.getOrNull(SemanticsProperties.StateDescription) == null
+            }
+        } catch (failure: ComposeTimeoutException) {
+            // Use the last observation: no extra Compose synchronization can hide this timeout.
+            reportTimeout("image_description", "nodes=$nodeCount phase=$phase")
+            throw failure
         }
         compose.waitForIdle()
+    }
+
+    private fun reportTimeout(wait: String, state: String) {
+        // Never inspect arbitrary logs, node text, request paths, headers or Throwable messages.
+        // Diagnostics are best-effort and must leave the original Compose timeout unchanged.
+        runCatching {
+            val dispatcherClass = kotlinx.coroutines.Dispatchers.Main.javaClass.name.take(96)
+                .takeIf { name -> name.isNotEmpty() && name.all { it.isLetterOrDigit() || it in "._$" } } ?: "unknown"
+            println("NativeArtworkHostTimeout wait=$wait $state mainDispatcher=$dispatcherClass ${diagnostics?.snapshot() ?: "api=unavailable"}")
+            diagnostics?.let { current ->
+                val logs = ShadowLog.getLogsForTag(NativeNetworkFailure.TAG)
+                val count = (logs.size - current.networkLogStart).coerceAtLeast(0)
+                println("NativeArtworkHostTimeout networkFailureCount=$count")
+                logs.takeLast(minOf(4, count)).forEach {
+                    println("NativeArtworkHostTimeout networkFailure=" + it.msg.take(1536))
+                }
+            }
+        }
+    }
+
+    private class FixtureDiagnostics : EventListener() {
+        val networkLogStart = ShadowLog.getLogsForTag(NativeNetworkFailure.TAG).size
+        private val calls = AtomicInteger()
+        private val dnsStarts = AtomicInteger()
+        private val requests = AtomicInteger()
+        private val responses = AtomicInteger()
+        private val bodies = AtomicInteger()
+        private val ended = AtomicInteger()
+        private val failed = AtomicInteger()
+        private val failures = ArrayDeque<String>()
+        private val proxyTypes = java.util.EnumSet.noneOf(Proxy.Type::class.java)
+
+        override fun callStart(call: Call) { calls.incrementAndGet() }
+        override fun proxySelectEnd(call: Call, url: HttpUrl, proxies: List<Proxy>) {
+            synchronized(proxyTypes) { proxies.forEach { proxyTypes.add(it.type()) } }
+        }
+        override fun dnsStart(call: Call, domainName: String) { dnsStarts.incrementAndGet() }
+        override fun requestHeadersEnd(call: Call, request: Request) { requests.incrementAndGet() }
+        override fun responseHeadersEnd(call: Call, response: Response) { responses.incrementAndGet() }
+        override fun responseBodyEnd(call: Call, byteCount: Long) { bodies.incrementAndGet() }
+        override fun callEnd(call: Call) { ended.incrementAndGet() }
+        override fun callFailed(call: Call, ioe: IOException) {
+            failed.incrementAndGet()
+            synchronized(failures) {
+                if (failures.size == 4) failures.removeFirst()
+                failures.addLast(safeFailureSummary(ioe))
+            }
+        }
+
+        fun snapshot(): String = "apiCalls=${calls.get()} apiDnsStarts=${dnsStarts.get()} " +
+            synchronized(proxyTypes) { "apiProxyTypes=${proxyTypes.joinToString("+") { it.name }.ifEmpty { "none" }} " } +
+            "apiRequests=${requests.get()} apiResponses=${responses.get()} " +
+            "apiBodies=${bodies.get()} apiEnded=${ended.get()} apiFailed=${failed.get()} " +
+            synchronized(failures) { "apiFailures=${failures.joinToString(";").ifEmpty { "none" }}" }
+    }
+
+    private companion object {
+        fun safeFailureSummary(failure: Throwable): String = runCatching { NativeNetworkFailure.summary(failure) }
+            .getOrDefault("category=diagnostic_unavailable").take(1536)
     }
     private fun awaitDescriptionPhase(description: String, phase: String) {
         compose.waitUntil(10_000) {
@@ -604,7 +713,10 @@ class NativeArtworkHostTest {
         MockWebServer().use { server ->
             server.start(InetAddress.getByName("127.0.0.1"), 0)
             val serverUrl = server.url("/").newBuilder().apply { apiHost?.let(::host) }.build().toString()
+            val fixtureDiagnostics = FixtureDiagnostics()
+            diagnostics = fixtureDiagnostics
             val apiHttp = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
+                .eventListener(fixtureDiagnostics)
                 .dns(object : Dns { override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1")) }).build()
             SeanimeApiClient(serverUrl, "fixture-native-token", apiHttp).use { api ->
                 val requests = CopyOnWriteArrayList<RecordedRequest>()
@@ -615,7 +727,7 @@ class NativeArtworkHostTest {
                             override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1"))
                         }) }, content = content) }
                     } }
-                } finally { compose.runOnIdle { showing = false }; compose.waitForIdle() }
+                } finally { compose.runOnIdle { showing = false }; compose.waitForIdle(); diagnostics = null }
             }
         }
     }
