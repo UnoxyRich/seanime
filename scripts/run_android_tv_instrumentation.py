@@ -73,6 +73,13 @@ OWNED_INSTRUMENTATION_TERMINATE_GRACE_SECONDS = 15
 OWNED_INSTRUMENTATION_KILL_GRACE_SECONDS = 5
 INSTRUMENTATION_TIMEOUT_EXIT_CODE = 124
 SCENARIO_CLOCK_MAX_BYTES = 256 * 1024
+SCENARIO_CLOCK_OPERATIONS = (
+    "LAUNCH", "WAIT_NAVIGATION", "VERIFY_POST_LAUNCH", "GET_ACTIVITY_CLIENT", "OPEN_MANAGE", "WAIT_LIBRARY_READY",
+    "WAIT_FIRST_FILE", "SCROLL_FIRST_FILE", "CLICK_FIRST_FILE", "SCROLL_SECOND_FILE", "CLICK_SECOND_FILE",
+    "SCROLL_BULK_ACTIONS", "OPEN_BULK", "WAIT_BULK_FOCUS", "SCROLL_BULK_IGNORE", "CHOOSE_BULK_IGNORE",
+    "WAIT_BULK_CONFIRMATION", "VERIFY_PRE_APPLY", "FOCUS_BULK_APPLY", "ASSERT_BULK_APPLY_FOCUS", "APPLY_BULK_IGNORE",
+    "WAIT_BULK_CLOSED", "WAIT_LIBRARY_AFTER_BULK", "READ_BULK_RESULT", "CAPTURE_BULK_RESULT", "CLOSE",
+)
 SCENARIO_FAILURE_TYPES = frozenset(("AssertionError", "IllegalStateException", "IllegalArgumentException", "RuntimeException",
                                    "TimeoutException", "ComposeTimeoutException", "InterruptedException", "ExecutionException"))
 NO_SCREENSHOTS_RECEIPT = b"seanime-native-screenshots-not-created\n"
@@ -1341,8 +1348,10 @@ def sanitize_scenario_clock(raw, started_at_ms, finished_at_ms):
     if not started_at_ms <= timestamp <= finished_at_ms:
         raise ValueError("Stale scenario clock evidence")
     events, previous_operation, active, snapshot, role, frame_count = [], -1, None, None, None, 0
-    snapshot_counts, elapsed_times = {"LAUNCH": 0, "CLOSE": 0}, {"LAUNCH": 0, "CLOSE": 0}
-    roles = ("MAIN", "INSTRUMENTATION", "LAUNCH")
+    snapshot_counts = dict.fromkeys(SCENARIO_CLOCK_OPERATIONS, 0)
+    elapsed_times = dict.fromkeys(SCENARIO_CLOCK_OPERATIONS, 0)
+    operation_pattern = "(?:" + "|".join(SCENARIO_CLOCK_OPERATIONS) + ")"
+    roles = ()
     states = ("NEW", "RUNNABLE", "BLOCKED", "WAITING", "TIMED_WAITING", "TERMINATED")
     prefixes = ("app.seanime.tv.", "android.", "androidx.", "java.", "javax.", "kotlin.", "kotlinx.",
                 "org.junit.", "dalvik.", "com.android.internal.", "com.google.common.", "sun.")
@@ -1351,7 +1360,7 @@ def sanitize_scenario_clock(raw, started_at_ms, finished_at_ms):
             continue
         match = re.fullmatch(r"ROLE (MAIN|INSTRUMENTATION|LAUNCH) state=([A-Z_]+)", line)
         if match:
-            require(snapshot is not None and len(snapshot["threads"]) < 3
+            require(snapshot is not None and len(snapshot["threads"]) < len(roles)
                     and match[1] == roles[len(snapshot["threads"])] and match[2] in states)
             role = {"role": match[1], "state": match[2], "frames": []}
             snapshot["threads"].append(role)
@@ -1365,17 +1374,18 @@ def sanitize_scenario_clock(raw, started_at_ms, finished_at_ms):
                 role["frames"].append({"className": match[1], "methodName": match[2], "lineNumber": int(match[3])})
             continue
         if snapshot is not None:
-            require(len(snapshot["threads"]) == 3)
+            require(len(snapshot["threads"]) == len(roles))
         snapshot, role = None, None
-        match = re.fullmatch(r"START (LAUNCH|CLOSE)", line)
+        match = re.fullmatch(r"START (" + operation_pattern + r")", line)
         if match:
-            operation = ("LAUNCH", "CLOSE").index(match[1])
+            operation = SCENARIO_CLOCK_OPERATIONS.index(match[1])
             require(active is None and operation > previous_operation)
             active, previous_operation = match[1], operation
             events.append({"kind": "start", "operation": active})
             continue
-        match = re.fullmatch(r"(SNAPSHOT|DONE|FAILED ([A-Za-z_$][A-Za-z0-9_$]{0,127})) (LAUNCH|CLOSE) elapsedMs=([0-9]{1,7})", line)
-        unavailable = re.fullmatch(r"SNAPSHOT_UNAVAILABLE (LAUNCH|CLOSE) ([A-Za-z_$][A-Za-z0-9_$]{0,127})", line)
+        match = re.fullmatch(r"(SNAPSHOT|DONE|FAILED ([A-Za-z_$][A-Za-z0-9_$]{0,127})) (" + operation_pattern
+                             + r") elapsedMs=([0-9]{1,7})", line)
+        unavailable = re.fullmatch(r"SNAPSHOT_UNAVAILABLE (" + operation_pattern + r") ([A-Za-z_$][A-Za-z0-9_$]{0,127})", line)
         require(match is not None or unavailable is not None)
         operation = match[3] if match else unavailable[1]
         require(operation == active)
@@ -1394,10 +1404,11 @@ def sanitize_scenario_clock(raw, started_at_ms, finished_at_ms):
             if kind == "snapshot":
                 event["threads"] = []
                 snapshot = event
+                roles = ("MAIN", "INSTRUMENTATION", "LAUNCH") if operation in ("LAUNCH", "CLOSE") else ("MAIN", "INSTRUMENTATION")
         else:
             active = None
         events.append(event)
-    require(snapshot is None or len(snapshot["threads"]) == 3)
+    require(snapshot is None or len(snapshot["threads"]) == len(roles))
     return {"schemaVersion": 1, "scenario": "native-scenario-clock", "startedAtMs": timestamp, "events": events}
 
 

@@ -1438,6 +1438,109 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
         with self.assertRaises(ValueError):
             evidence.sanitize_scenario_clock(incomplete, 1000, 100000)
 
+    def postlaunch_scenario_clock_evidence(self):
+        roles = ("ROLE MAIN state=RUNNABLE\n  android.os.Looper.loop:100\n"
+                 "ROLE INSTRUMENTATION state=WAITING\n  androidx.compose.ui.test.Test.waitUntil:20\n"
+                 "  private.PRIVATE_SENTINEL.secret:10\n")
+        return ("SCHEMA native-scenario-clock-v1 startedAtMs=1100\n"
+                "START LAUNCH\nDONE LAUNCH elapsedMs=933\nSTART WAIT_NAVIGATION\n"
+                "SNAPSHOT WAIT_NAVIGATION elapsedMs=15000\n" + roles
+                + "SNAPSHOT WAIT_NAVIGATION elapsedMs=30000\n" + roles).encode()
+
+    def test_scenario_clock_keeps_hung_postlaunch_stage_with_exactly_two_roles(self):
+        clean = evidence.sanitize_scenario_clock(self.postlaunch_scenario_clock_evidence(), 1000, 100000)
+        self.assertEqual([(event["kind"], event["operation"]) for event in clean["events"]], [
+            ("start", "LAUNCH"), ("done", "LAUNCH"), ("start", "WAIT_NAVIGATION"),
+            ("snapshot", "WAIT_NAVIGATION"), ("snapshot", "WAIT_NAVIGATION")])
+        for event in clean["events"][3:]:
+            self.assertEqual([thread["role"] for thread in event["threads"]], ["MAIN", "INSTRUMENTATION"])
+            self.assertEqual(len(event["threads"][1]["frames"]), 1)
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+
+    def test_scenario_clock_accepts_all_fixed_action_stages_and_lifecycle_role_counts(self):
+        lines = ["SCHEMA native-scenario-clock-v1 startedAtMs=1100"]
+        for operation in evidence.SCENARIO_CLOCK_OPERATIONS:
+            lines += ["START " + operation, "SNAPSHOT " + operation + " elapsedMs=15000",
+                      "ROLE MAIN state=RUNNABLE", "ROLE INSTRUMENTATION state=WAITING"]
+            if operation in ("LAUNCH", "CLOSE"):
+                lines.append("ROLE LAUNCH state=TIMED_WAITING")
+            lines.append("DONE " + operation + " elapsedMs=16000")
+        clean = evidence.sanitize_scenario_clock(("\n".join(lines) + "\n").encode(), 1000, 1_000_000)
+        starts = [event["operation"] for event in clean["events"] if event["kind"] == "start"]
+        self.assertEqual(starts, list(evidence.SCENARIO_CLOCK_OPERATIONS))
+        self.assertEqual(len(starts), 26)
+        for event in clean["events"]:
+            if event["kind"] == "snapshot":
+                self.assertEqual(len(event["threads"]), 3 if event["operation"] in ("LAUNCH", "CLOSE") else 2)
+        skipped = ("SCHEMA native-scenario-clock-v1 startedAtMs=1100\nSTART LAUNCH\nDONE LAUNCH elapsedMs=1\n"
+                   "START OPEN_MANAGE\nFAILED IllegalStateException OPEN_MANAGE elapsedMs=2\n"
+                   "START CLOSE\nDONE CLOSE elapsedMs=3\n").encode()
+        self.assertEqual(evidence.sanitize_scenario_clock(skipped, 1000, 100000)["events"][-1]["operation"], "CLOSE")
+
+    def test_scenario_clock_rejects_action_role_mismatch_and_terminal_snapshot_reordering(self):
+        prefix = "SCHEMA native-scenario-clock-v1 startedAtMs=1100\nSTART LAUNCH\nDONE LAUNCH elapsedMs=1\n"
+        start = "START WAIT_NAVIGATION\n"
+        snapshot = "SNAPSHOT WAIT_NAVIGATION elapsedMs=15000\nROLE MAIN state=BLOCKED\nROLE INSTRUMENTATION state=WAITING\n"
+        done = "DONE WAIT_NAVIGATION elapsedMs=30000\n"
+        invalid = (
+            start + snapshot + "ROLE LAUNCH state=WAITING\n",
+            start + "SNAPSHOT WAIT_NAVIGATION elapsedMs=15000\nROLE MAIN state=BLOCKED\n",
+            start + "SNAPSHOT WAIT_NAVIGATION elapsedMs=15000\nROLE MAIN state=BLOCKED\n" + done,
+            start + snapshot.replace("ROLE MAIN state=BLOCKED", "ROLE INSTRUMENTATION state=BLOCKED"),
+            start + done + snapshot,
+            start + "FAILED IllegalStateException WAIT_NAVIGATION elapsedMs=30000\n" + snapshot,
+            start + done + "SNAPSHOT_UNAVAILABLE WAIT_NAVIGATION IllegalStateException\n",
+            start + done + "START VERIFY_POST_LAUNCH\n" + snapshot,
+            start + done + done,
+            start + done + start,
+            "START OPEN_MANAGE\nDONE OPEN_MANAGE elapsedMs=1\n" + start,
+            "START PRIVATE_SENTINEL\n",
+            start + "DONE OPEN_MANAGE elapsedMs=1\n",
+            start + "START VERIFY_POST_LAUNCH\n",
+            start + snapshot * 3,
+        )
+        for index, body in enumerate(invalid):
+            with self.subTest(index=index), self.assertRaises(ValueError) as rejected:
+                evidence.sanitize_scenario_clock((prefix + body).encode(), 1000, 100000)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(evidence.capture_failure(rejected.exception)))
+        for operation in ("LAUNCH", "CLOSE"):
+            raw = ("SCHEMA native-scenario-clock-v1 startedAtMs=1100\nSTART " + operation + "\n"
+                   "SNAPSHOT " + operation + " elapsedMs=15000\nROLE MAIN state=BLOCKED\nROLE INSTRUMENTATION state=WAITING\n")
+            with self.subTest(operation=operation), self.assertRaises(ValueError):
+                evidence.sanitize_scenario_clock(raw.encode(), 1000, 100000)
+
+    def test_scenario_clock_action_frames_remain_bounded_at_96_per_role(self):
+        prefix = ("SCHEMA native-scenario-clock-v1 startedAtMs=1100\nSTART WAIT_NAVIGATION\n"
+                  "SNAPSHOT WAIT_NAVIGATION elapsedMs=15000\nROLE MAIN state=RUNNABLE\n")
+        frame = "  android.os.Looper.loop:100\n"
+        raw = (prefix + frame * 96 + "ROLE INSTRUMENTATION state=WAITING\n" + frame * 96).encode()
+        clean = evidence.sanitize_scenario_clock(raw, 1000, 100000)
+        self.assertEqual([len(thread["frames"]) for thread in clean["events"][-1]["threads"]], [96, 96])
+        with self.assertRaises(ValueError):
+            evidence.sanitize_scenario_clock(raw + frame.encode(), 1000, 100000)
+
+    def test_management_scenario_clock_collection_retains_postlaunch_hang_without_raw_payload(self):
+        invocation = "owned-library-management"
+        fixture = self.owned_manifest(invocation)
+        directory = fixture["root"].rsplit("/", 1)[1]
+        root = self.root / "device/files" / directory
+        root.mkdir(parents=True)
+        (root / "fixture.json").write_text(json.dumps(fixture))
+        (root / "scenario-thread-snapshots.txt").write_bytes(self.postlaunch_scenario_clock_evidence())
+        evidence.collect(self.root, 124, {"status": "app-process-not-observed",
+                         "gradleStartedAtMs": 1000, "gradleFinishedAtMs": 100000}, {}, invocation, self.owned_command(invocation))
+        with zipfile.ZipFile(self.root / Path(evidence.OUTPUT).parent / invocation / "evidence.zip") as saved:
+            state = json.loads(saved.read("collection-status.json"))
+            self.assertEqual(state["gradleExitCode"], 124)
+            self.assertEqual(state["scenarioClock"]["status"], "captured")
+            self.assertEqual(state["scenarioClock"]["snapshotCount"], 2)
+            path = "diagnostics/owned-library-management-scenario-clock.json"
+            clean = json.loads(saved.read(path))
+            self.assertEqual(clean["events"][-1]["operation"], "WAIT_NAVIGATION")
+            self.assertEqual(state["fileSha256"][path], hashlib.sha256(saved.read(path)).hexdigest())
+            self.assertFalse(any(name.endswith(".txt") for name in saved.namelist()))
+            self.assertNotIn(b"PRIVATE_SENTINEL", b"".join(saved.read(name) for name in saved.namelist()))
+
     def test_scenario_clock_requires_fresh_invocation_and_bounded_regular_owned_file(self):
         directory, path = self.write_scenario_clock_evidence(self.scenario_clock_evidence())
         for start, finish in ((1101, 100000), (1, 1099), (0, 100000), (True, 100000), (1000, 2000)):

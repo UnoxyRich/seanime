@@ -14,6 +14,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
+import app.seanime.tv.NativeScenarioClockDriver.Operation
 import app.seanime.tv.data.SeanimeApiClient
 import app.seanime.tv.data.SeanimeRepository
 import app.seanime.tv.gomobile.mobile.Mobile
@@ -179,30 +180,33 @@ class AndroidIsolatedLibraryManagementTest {
             )
             scenario = owner
             val main = clock.awaitLaunch(owner)
-            compose.waitUntil(30_000) { compose.onAllNodesWithTag("nav-LIBRARY").fetchSemanticsNodes().isNotEmpty() }
-            verifyIsolation()
+            clock.observe(Operation.WAIT_NAVIGATION) { compose.waitUntil(30_000) { compose.onAllNodesWithTag("nav-LIBRARY").fetchSemanticsNodes().isNotEmpty() } }
+            clock.observe(Operation.VERIFY_POST_LAUNCH) { verifyIsolation() }
             var hostClient: SeanimeApiClient? = null
-            main.onActivity { activity -> hostClient = activity.javaClass.getDeclaredField("api").apply { isAccessible = true }.get(activity) as SeanimeApiClient }
+            clock.observe(Operation.GET_ACTIVITY_CLIENT) { main.onActivity { activity -> hostClient = activity.javaClass.getDeclaredField("api").apply { isAccessible = true }.get(activity) as SeanimeApiClient } }
             assertFalse("MainActivity must use a Go-issued client proof", requireNotNull(hostClient).snapshotSession().identityProof.isNullOrBlank())
-            compose.onNodeWithText("Manage").performTvClick()
-            awaitLibraryReady()
-            awaitTag("library-file-select-${first.absolutePath}")
-            scrollMain("library-file-select-${first.absolutePath}").performTvClick()
-            scrollMain("library-file-select-${second.absolutePath}").performTvClick()
-            scrollMain("library-selected-actions").performTvClick()
-            awaitFocused("library-bulk-match")
-            compose.onNodeWithTag("library-bulk-actions").performScrollToNode(hasTestTag("library-bulk-ignore"))
-            compose.onNodeWithTag("library-bulk-ignore").performTvClick()
-            awaitFocused("library-bulk-confirm-cancel")
-            verifyIsolation()
-            remote(KeyEvent.KEYCODE_DPAD_RIGHT)
-            compose.onNodeWithTag("library-bulk-apply").assertIsFocused()
-            remote(KeyEvent.KEYCODE_DPAD_CENTER)
-            awaitClosed("library-bulk-dialog")
-            awaitLibraryReady()
-            val ignored = readIndex("native-bulk-ignore")
+            clock.observe(Operation.OPEN_MANAGE) { compose.onNodeWithText("Manage").performTvClick() }
+            clock.observe(Operation.WAIT_LIBRARY_READY) { awaitLibraryReady() }
+            clock.observe(Operation.WAIT_FIRST_FILE) { awaitTag("library-file-select-${first.absolutePath}") }
+            val firstSelect = clock.observe(Operation.SCROLL_FIRST_FILE) { scrollMain("library-file-select-${first.absolutePath}") }
+            clock.observe(Operation.CLICK_FIRST_FILE) { firstSelect.performTvClick() }
+            val secondSelect = clock.observe(Operation.SCROLL_SECOND_FILE) { scrollMain("library-file-select-${second.absolutePath}") }
+            clock.observe(Operation.CLICK_SECOND_FILE) { secondSelect.performTvClick() }
+            val bulkActions = clock.observe(Operation.SCROLL_BULK_ACTIONS) { scrollMain("library-selected-actions") }
+            clock.observe(Operation.OPEN_BULK) { bulkActions.performTvClick() }
+            clock.observe(Operation.WAIT_BULK_FOCUS) { awaitFocused("library-bulk-match") }
+            clock.observe(Operation.SCROLL_BULK_IGNORE) { compose.onNodeWithTag("library-bulk-actions").performScrollToNode(hasTestTag("library-bulk-ignore")) }
+            clock.observe(Operation.CHOOSE_BULK_IGNORE) { compose.onNodeWithTag("library-bulk-ignore").performTvClick() }
+            clock.observe(Operation.WAIT_BULK_CONFIRMATION) { awaitFocused("library-bulk-confirm-cancel") }
+            clock.observe(Operation.VERIFY_PRE_APPLY) { verifyIsolation() }
+            clock.observe(Operation.FOCUS_BULK_APPLY) { remote(KeyEvent.KEYCODE_DPAD_RIGHT) }
+            clock.observe(Operation.ASSERT_BULK_APPLY_FOCUS) { compose.onNodeWithTag("library-bulk-apply").assertIsFocused() }
+            clock.observe(Operation.APPLY_BULK_IGNORE) { remote(KeyEvent.KEYCODE_DPAD_CENTER) }
+            clock.observe(Operation.WAIT_BULK_CLOSED) { awaitClosed("library-bulk-dialog") }
+            clock.observe(Operation.WAIT_LIBRARY_AFTER_BULK) { awaitLibraryReady() }
+            val ignored = clock.observe(Operation.READ_BULK_RESULT) { readIndex("native-bulk-ignore") }
             assertEquals(2, ignored.size); assertTrue(ignored.all { it.getBoolean("ignored") && !it.getBoolean("locked") })
-            NativeScreenshotEvidence.capture("isolated-go-library-bulk-ignore")
+            clock.observe(Operation.CAPTURE_BULK_RESULT) { NativeScreenshotEvidence.capture("isolated-go-library-bulk-ignore") }
             checkpoint("native-bulk-ignore-and-signed-readback-verified")
 
             scrollMain("library-file-rename-${first.absolutePath}").performTvClick()

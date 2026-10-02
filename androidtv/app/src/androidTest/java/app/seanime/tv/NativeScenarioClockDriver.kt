@@ -19,7 +19,16 @@ internal class NativeScenarioClockDriver(
     private val compose: ComposeTestRule,
     private val output: File,
 ) : Closeable {
-    private enum class Operation { LAUNCH, CLOSE }
+    enum class Operation {
+        LAUNCH,
+        WAIT_NAVIGATION, VERIFY_POST_LAUNCH, GET_ACTIVITY_CLIENT, OPEN_MANAGE,
+        WAIT_LIBRARY_READY, WAIT_FIRST_FILE, SCROLL_FIRST_FILE, CLICK_FIRST_FILE,
+        SCROLL_SECOND_FILE, CLICK_SECOND_FILE, SCROLL_BULK_ACTIONS, OPEN_BULK,
+        WAIT_BULK_FOCUS, SCROLL_BULK_IGNORE, CHOOSE_BULK_IGNORE, WAIT_BULK_CONFIRMATION,
+        VERIFY_PRE_APPLY, FOCUS_BULK_APPLY, ASSERT_BULK_APPLY_FOCUS, APPLY_BULK_IGNORE,
+        WAIT_BULK_CLOSED, WAIT_LIBRARY_AFTER_BULK, READ_BULK_RESULT, CAPTURE_BULK_RESULT,
+        CLOSE,
+    }
     private data class Active(val operation: Operation, val startedAt: Long)
     private val mainThread = Looper.getMainLooper().thread
     private val instrumentationThread = Thread.currentThread()
@@ -47,10 +56,18 @@ internal class NativeScenarioClockDriver(
         }
     }
 
-    private fun <T> operation(kind: Operation, worker: Thread, block: () -> T): T {
+    /** Observes the original UI call without advancing clocks or changing its execution thread. */
+    fun <T> observe(stage: Operation, block: () -> T): T {
+        require(stage != Operation.LAUNCH && stage != Operation.CLOSE)
+        return operation(stage, null, block)
+    }
+
+    private fun <T> operation(kind: Operation, worker: Thread?, block: () -> T): T {
         val step = Active(kind, SystemClock.uptimeMillis())
-        check(active.compareAndSet(null, step))
-        emit("START $kind")
+        synchronized(outputLock) {
+            check(active.compareAndSet(null, step))
+            emit("START $kind")
+        }
         val snapshots = listOf(15L, 30L).map { seconds ->
             watchdog.schedule({ snapshot(step, worker) }, seconds, TimeUnit.SECONDS)
         }
@@ -61,20 +78,23 @@ internal class NativeScenarioClockDriver(
             outcome = "FAILED ${failure.javaClass.simpleName}"
             throw failure
         } finally {
-            active.compareAndSet(step, null)
             snapshots.forEach { it.cancel(false) }
-            emit("$outcome $kind elapsedMs=${SystemClock.uptimeMillis() - step.startedAt}")
+            synchronized(outputLock) {
+                active.compareAndSet(step, null)
+                emit("$outcome $kind elapsedMs=${SystemClock.uptimeMillis() - step.startedAt}")
+            }
         }
     }
 
-    private fun snapshot(step: Active, worker: Thread) {
+    private fun snapshot(step: Active, worker: Thread?) {
         if (active.get() !== step) return
         val message = runCatching {
             buildString {
                 appendLine("SNAPSHOT ${step.operation} elapsedMs=${SystemClock.uptimeMillis() - step.startedAt}")
                 // Only these exact thread references are inspected. Never enumerate threads,
                 // print thread names, or include exception messages / request data.
-                listOf("MAIN" to mainThread, "INSTRUMENTATION" to instrumentationThread, "LAUNCH" to worker)
+                (listOf("MAIN" to mainThread, "INSTRUMENTATION" to instrumentationThread) +
+                    listOfNotNull(worker?.let { "LAUNCH" to it }))
                     .forEach { (role, thread) ->
                         appendLine("ROLE $role state=${thread.state}")
                         thread.stackTrace.take(96).forEach { frame ->
@@ -83,7 +103,9 @@ internal class NativeScenarioClockDriver(
                     }
             }
         }.getOrElse { "SNAPSHOT_UNAVAILABLE ${step.operation} ${it.javaClass.simpleName}" }
-        if (active.get() === step) emit(message)
+        synchronized(outputLock) {
+            if (active.get() === step) emit(message)
+        }
     }
 
     private fun emit(message: String) {
@@ -95,7 +117,7 @@ internal class NativeScenarioClockDriver(
     }
 
     override fun close() {
-        active.set(null)
+        synchronized(outputLock) { active.set(null) }
         watchdog.shutdownNow()
     }
 }
