@@ -64,6 +64,17 @@ OWNED_JOURNEY_VIDEO_SECONDS = 120
 OWNED_JOURNEY_VIDEO_BIT_RATE = 1_000_000
 VIDEO_MAX_BYTES = 32 * 1024 * 1024
 APP_WAIT_SECONDS = 180
+# Retained R33/R36-R39 successful isolated invocations took 58-123 seconds;
+# allow 15 minutes for slower builds/devices. Ordinary suites took 686-891
+# seconds and deliberately do not inherit this isolated-fixture deadline.
+OWNED_INSTRUMENTATION_SECONDS = 15 * 60
+OWNED_INSTRUMENTATION_EXIT_GRACE_SECONDS = 60
+OWNED_INSTRUMENTATION_TERMINATE_GRACE_SECONDS = 15
+OWNED_INSTRUMENTATION_KILL_GRACE_SECONDS = 5
+INSTRUMENTATION_TIMEOUT_EXIT_CODE = 124
+SCENARIO_CLOCK_MAX_BYTES = 256 * 1024
+SCENARIO_FAILURE_TYPES = frozenset(("AssertionError", "IllegalStateException", "IllegalArgumentException", "RuntimeException",
+                                   "TimeoutException", "ComposeTimeoutException", "InterruptedException", "ExecutionException"))
 NO_SCREENSHOTS_RECEIPT = b"seanime-native-screenshots-not-created\n"
 PLAYER_LIFECYCLE_PATH = "cache/native-acceptance-diagnostics/player-lifecycle-recreation.json"
 PLAYER_LIFECYCLE_MAX_BYTES = 65_536
@@ -316,6 +327,7 @@ def capture_failure(error):
         "Missing or oversized native search hardware input evidence",
         "Invalid native settings preservation evidence", "Stale native settings preservation evidence",
         "Missing or oversized native settings preservation evidence",
+        "Invalid scenario clock evidence", "Stale scenario clock evidence", "Missing or oversized scenario clock evidence",
     }
     reason = "Unexpected collector failure"
     if type(error) is ValueError and str(error) in safe_reasons:
@@ -904,6 +916,74 @@ def recording_profile(invocation, command):
             "coverage": f"First app process observed during {scope}; bounded excerpt only, without a complete-flow or real-service acceptance claim."}
 
 
+def run_instrumentation(root, invocation, command, supervision):
+    """Bound exact owned fixtures while retaining evidence and their failure outcome."""
+    if owned_fixture_profile(invocation, command) is None:
+        return subprocess.run(command, cwd=root / "androidtv").returncode
+    # Capture the explicit emulator selection before starting this client; never
+    # fall back to adb's default device when handling a later timeout.
+    adb = adb_command()
+    supervision.update(status="starting", deadlineExceeded=False, timeoutSeconds=OWNED_INSTRUMENTATION_SECONDS,
+                       exitGraceSeconds=OWNED_INSTRUMENTATION_EXIT_GRACE_SECONDS,
+                       terminateGraceSeconds=OWNED_INSTRUMENTATION_TERMINATE_GRACE_SECONDS,
+                       killGraceSeconds=OWNED_INSTRUMENTATION_KILL_GRACE_SECONDS)
+    try:
+        process = subprocess.Popen(command, cwd=root / "androidtv")
+    except OSError as error:
+        supervision.update(status="start-failed", errorType=type(error).__name__)
+        raise
+    try:
+        status = process.wait(timeout=OWNED_INSTRUMENTATION_SECONDS)
+        supervision.update(status="completed", processExitCode=status)
+        return status
+    except subprocess.TimeoutExpired:
+        supervision.update(status="timed-out", deadlineExceeded=True)
+    print("::warning::Owned-fixture instrumentation exceeded its deadline; preserving available evidence", flush=True)
+    # Stop only this app on the selected disposable emulator. Leave its data,
+    # test package, other apps, and Gradle daemons untouched.
+    try:
+        stopped = subprocess.run(adb + ["shell", "am", "force-stop", PACKAGE],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        supervision["targetForceStop"] = {"status": "completed" if stopped.returncode == 0 else "failed",
+                                          "adbExitCode": stopped.returncode}
+    except subprocess.TimeoutExpired:
+        supervision["targetForceStop"] = {"status": "timed-out"}
+    except OSError as error:
+        supervision["targetForceStop"] = {"status": "failed", "errorType": type(error).__name__}
+
+    def exited(timeout, phase):
+        try:
+            supervision["processExitCode"] = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return False
+        except OSError as error:
+            supervision["waitErrorType"] = type(error).__name__
+            return False
+        supervision["clientExit"] = phase
+        return True
+
+    if not exited(OWNED_INSTRUMENTATION_EXIT_GRACE_SECONDS, "after-force-stop"):
+        # Signal only the Popen child we started, never a PID scan, process
+        # group, emulator, or unrelated Gradle process. Avoid Popen's context
+        # manager: its final implicit wait would defeat these bounded waits.
+        for action, grace in (("terminate", OWNED_INSTRUMENTATION_TERMINATE_GRACE_SECONDS),
+                              ("kill", OWNED_INSTRUMENTATION_KILL_GRACE_SECONDS)):
+            try:
+                getattr(process, action)()
+                supervision[action + "Status"] = "requested"
+            except ProcessLookupError:
+                supervision[action + "Status"] = "already-exited"
+            except OSError as error:
+                supervision[action + "Status"] = "failed"
+                supervision[action + "ErrorType"] = type(error).__name__
+            if exited(grace, "after-" + action):
+                break
+        else:
+            supervision["clientExit"] = "not-observed-within-cleanup-budget"
+    # Once the deadline is breached, even a later zero exit is not a pass.
+    return INSTRUMENTATION_TIMEOUT_EXIT_CODE
+
+
 def sanitize_video_paint(paint):
     if (not isinstance(paint, dict) or type(paint.get("positionMs")) is not int or not 0 <= paint["positionMs"] <= 60_000
             or type(paint.get("channelTolerance")) is not int or paint["channelTolerance"] != 25
@@ -1119,7 +1199,8 @@ def sanitize_owned_manifest(data, directory, invocation):
                    "native-rename-index-and-owned-bytes-verified", "owned-library-workflow-verified"}
         verified = {"generated-owned-video-copies", "existing-index-import-api", "main-native-library-route",
                     "multi-file-ignore", "native-rename", "explorer-tree", "native-delete", "signed-go-index-readback"}
-        booleans = ("originalPreserved", "retainedCopyPreserved", "recoveryAbsent", "rootCanonical", "appFilesAliasObserved")
+        booleans = ("originalPreserved", "retainedCopyPreserved", "recoveryAbsent", "rootCanonical", "appFilesAliasObserved",
+                    "scenarioCleanupCompleted")
     else:
         stages |= {"isolated-server-ready", "generating-owned-h264", "signed-go-range-and-library-boundary-verified",
                    "signed-go-native-frame-pause-seek-verified", "raw-media-route-verified"}
@@ -1140,7 +1221,7 @@ def sanitize_owned_manifest(data, directory, invocation):
             raise ValueError("External resolution is failure-only evidence")
         clean["externalResolution"] = sanitize_external_resolution(data["externalResolution"])
     for key, allowed in (("hostStatusAfterRun", {"stopped", "starting", "ready", "running", "stopping", "error"}),
-                         ("failedAt", stages)):
+                         ("failedAt", stages | ({"scenario-cleanup"} if management else set()))):
         if key in data:
             if type(data[key]) is not str or data[key] not in allowed:
                 raise ValueError("Invalid observation enum")
@@ -1158,6 +1239,12 @@ def sanitize_owned_manifest(data, directory, invocation):
             raise ValueError("Invalid verified observation")
         clean["verified"] = values
     if management:
+        if "scenarioCleanupFailureType" in data:
+            failure = data["scenarioCleanupFailureType"]
+            if (data["outcome"] != "failed" or type(failure) is not str
+                    or re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]{0,127}", failure) is None):
+                raise ValueError("Invalid observation enum")
+            clean["scenarioCleanupFailureType"] = failure if failure in SCENARIO_FAILURE_TYPES else "other"
         owned = ["library/Owned editable copy.mp4", "library/Owned retained copy.mp4", "library/Renamed owned copy.mp4"]
         expected = [root + "/" + path for path in owned]
         copies = data.get("ownedCopyPaths")
@@ -1237,6 +1324,102 @@ def collect_owned_manifest(invocation):
     return {f"fixtures/{invocation}.json": json_bytes(clean)}, {"status": "captured", "fixtureRoot": match.group(1), "outcome": clean["outcome"]}
 
 
+def sanitize_scenario_clock(raw, started_at_ms, finished_at_ms):
+    """Parse a fixed watchdog grammar and retain only approved source frames."""
+    def require(condition):
+        if not condition:
+            raise ValueError("Invalid scenario clock evidence")
+
+    require(type(started_at_ms) is int and type(finished_at_ms) is int and 0 < started_at_ms <= finished_at_ms)
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        raise ValueError("Invalid scenario clock evidence") from None
+    header = re.fullmatch(r"SCHEMA native-scenario-clock-v1 startedAtMs=([1-9][0-9]{0,15})", lines[0]) if lines else None
+    require(header is not None)
+    timestamp = int(header[1])
+    if not started_at_ms <= timestamp <= finished_at_ms:
+        raise ValueError("Stale scenario clock evidence")
+    events, previous_operation, active, snapshot, role, frame_count = [], -1, None, None, None, 0
+    snapshot_counts, elapsed_times = {"LAUNCH": 0, "CLOSE": 0}, {"LAUNCH": 0, "CLOSE": 0}
+    roles = ("MAIN", "INSTRUMENTATION", "LAUNCH")
+    states = ("NEW", "RUNNABLE", "BLOCKED", "WAITING", "TIMED_WAITING", "TERMINATED")
+    prefixes = ("app.seanime.tv.", "android.", "androidx.", "java.", "javax.", "kotlin.", "kotlinx.",
+                "org.junit.", "dalvik.", "com.android.internal.", "com.google.common.", "sun.")
+    for line in lines[1:]:
+        if not line:
+            continue
+        match = re.fullmatch(r"ROLE (MAIN|INSTRUMENTATION|LAUNCH) state=([A-Z_]+)", line)
+        if match:
+            require(snapshot is not None and len(snapshot["threads"]) < 3
+                    and match[1] == roles[len(snapshot["threads"])] and match[2] in states)
+            role = {"role": match[1], "state": match[2], "frames": []}
+            snapshot["threads"].append(role)
+            frame_count = 0
+            continue
+        match = re.fullmatch(r"  ([A-Za-z0-9_.$]{1,192})\.([A-Za-z0-9_$<>-]{1,128}):(-?[0-9]{1,7})", line)
+        if match:
+            require(snapshot is not None and role is not None and frame_count < 96 and -2 <= int(match[3]) <= 1_000_000)
+            frame_count += 1
+            if match[1].startswith(prefixes):
+                role["frames"].append({"className": match[1], "methodName": match[2], "lineNumber": int(match[3])})
+            continue
+        if snapshot is not None:
+            require(len(snapshot["threads"]) == 3)
+        snapshot, role = None, None
+        match = re.fullmatch(r"START (LAUNCH|CLOSE)", line)
+        if match:
+            operation = ("LAUNCH", "CLOSE").index(match[1])
+            require(active is None and operation > previous_operation)
+            active, previous_operation = match[1], operation
+            events.append({"kind": "start", "operation": active})
+            continue
+        match = re.fullmatch(r"(SNAPSHOT|DONE|FAILED ([A-Za-z_$][A-Za-z0-9_$]{0,127})) (LAUNCH|CLOSE) elapsedMs=([0-9]{1,7})", line)
+        unavailable = re.fullmatch(r"SNAPSHOT_UNAVAILABLE (LAUNCH|CLOSE) ([A-Za-z_$][A-Za-z0-9_$]{0,127})", line)
+        require(match is not None or unavailable is not None)
+        operation = match[3] if match else unavailable[1]
+        require(operation == active)
+        kind = match[1].split(" ", 1)[0].lower() if match else "snapshot-unavailable"
+        event = {"kind": kind, "operation": operation}
+        if match:
+            elapsed = int(match[4])
+            require(elapsed_times[operation] <= elapsed <= min(1_000_000, finished_at_ms - timestamp))
+            elapsed_times[operation] = event["elapsedMs"] = elapsed
+        failure = match[2] if match else unavailable[2]
+        if failure:
+            event["failureType"] = failure if failure in SCENARIO_FAILURE_TYPES else "other"
+        if kind.startswith("snapshot"):
+            snapshot_counts[operation] += 1
+            require(snapshot_counts[operation] <= 2)
+            if kind == "snapshot":
+                event["threads"] = []
+                snapshot = event
+        else:
+            active = None
+        events.append(event)
+    require(snapshot is None or len(snapshot["threads"]) == 3)
+    return {"schemaVersion": 1, "scenario": "native-scenario-clock", "startedAtMs": timestamp, "events": events}
+
+
+def collect_scenario_clock(directory, started_at_ms, finished_at_ms):
+    if type(directory) is not str or re.fullmatch(FIXTURE_DIRECTORY, directory) is None:
+        raise ValueError("Unexpected owned fixture path")
+    root = "files/" + directory
+    path = root + "/scenario-thread-snapshots.txt"
+    script = (f'[ ! -L files ] && [ ! -L {root} ] && [ ! -L {path} ] && [ -f {path} ] || exit 2; '
+              f'exec head -c {SCENARIO_CLOCK_MAX_BYTES + 1} {path}')
+    result = subprocess.run(exec_out_run_as("sh", "-c", script), stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, timeout=10)
+    if result.returncode != 0 or not result.stdout:
+        return {}, {"status": "missing-or-unreadable"}
+    if len(result.stdout) > SCENARIO_CLOCK_MAX_BYTES:
+        raise ValueError("Missing or oversized scenario clock evidence")
+    clean = sanitize_scenario_clock(result.stdout, started_at_ms, finished_at_ms)
+    return {"diagnostics/owned-library-management-scenario-clock.json": json_bytes(clean)}, {
+        "status": "captured", "snapshotCount": sum(event["kind"] == "snapshot" for event in clean["events"]),
+        "note": "Bounded scenario watchdog observations; absent snapshots are normal for fast operations. JUnit and the instrumentation deadline determine outcome."}
+
+
 def record_startup(stop, state, video, profile=None):
     profile = profile or recording_profile("connected-suite", COMMAND)
     state.update(profile)
@@ -1290,9 +1473,11 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
     output = root / Path(OUTPUT).parent / invocation
     output.mkdir(parents=True, exist_ok=True)
     manifest = {"schemaVersion": 1, "invocation": invocation, "gradleExitCode": status, "command": command or COMMAND,
-                "recording": {key: value for key, value in recording.items() if key != "installedApks"},
+                "recording": {key: value for key, value in recording.items() if key not in ("installedApks", "instrumentationCommand")},
                 "evidenceKind": "instrumentation-fixtures",
                 "realServiceAcceptance": "not-established"}
+    if recording.get("instrumentationCommand"):
+        manifest["instrumentationCommand"] = recording["instrumentationCommand"]
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, timeout=5)
     manifest["sourceCommit"] = head.stdout.strip() if re.fullmatch(r"[0-9a-f]{40}\n?", head.stdout) else None
     for name in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
@@ -1358,6 +1543,16 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
                 manifest[key] = capture_failure(error)
         if manifest[key]["status"] != "captured":
             print("::warning::Owned fixture manifest is missing, ambiguous or invalid; evidence is incomplete", flush=True)
+        if invocation == "owned-library-management":
+            if manifest[key]["status"] != "captured":
+                manifest["scenarioClock"] = {"status": "missing-or-unreadable", "reason": "owned-fixture-manifest-unavailable"}
+            else:
+                try:
+                    snapshots, manifest["scenarioClock"] = collect_scenario_clock(
+                        manifest[key]["fixtureRoot"], recording.get("gradleStartedAtMs", 0), recording.get("gradleFinishedAtMs", 0))
+                    files.update(snapshots)
+                except Exception as error:
+                    manifest["scenarioClock"] = capture_failure(error)
     hashes = {}
     for relative in APK_PATHS:
         path = root / relative
@@ -1422,7 +1617,8 @@ def main(root, invocation="connected-suite", test_class=None, runner_flags=()):
     worker.start()
     recording["gradleStartedAtMs"] = int(time.time() * 1000)
     try:
-        status = subprocess.run(command, cwd=root / "androidtv").returncode
+        recording["instrumentationCommand"] = {}
+        status = run_instrumentation(root, invocation, command, recording["instrumentationCommand"])
         if status < 0:
             status = 128 - status
     except OSError:
@@ -1442,9 +1638,12 @@ def main(root, invocation="connected-suite", test_class=None, runner_flags=()):
         try:
             output.mkdir(parents=True, exist_ok=True)
             (output / "evidence.zip").unlink(missing_ok=True)
-            (output / "collection-status.json").write_bytes(json_bytes({
+            failed_collection = {
                 "status": "collection-failed", "invocation": invocation,
-                "gradleExitCode": status, "errorType": type(error).__name__}))
+                "gradleExitCode": status, "errorType": type(error).__name__}
+            if recording.get("instrumentationCommand"):
+                failed_collection["instrumentationCommand"] = recording["instrumentationCommand"]
+            (output / "collection-status.json").write_bytes(json_bytes(failed_collection))
         except OSError:
             print("::warning::Android TV evidence status could not be saved", flush=True)
     finally:

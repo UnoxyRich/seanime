@@ -48,6 +48,36 @@ def archive(entries):
     return stream
 
 
+class FakeInstrumentationClient:
+    """A deterministic wait clock: None consumes its budget and times out."""
+    def __init__(self, outcomes, terminate_error=None, kill_error=None):
+        self.outcomes = iter(outcomes)
+        self.terminate_error = terminate_error
+        self.kill_error = kill_error
+        self.events = []
+        self.elapsed = 0
+
+    def wait(self, timeout):
+        self.events.append(("wait", timeout))
+        outcome = next(self.outcomes)
+        if outcome is None:
+            self.elapsed += timeout
+            raise subprocess.TimeoutExpired("PRIVATE_SENTINEL", timeout, output=b"PRIVATE_SENTINEL")
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    def terminate(self):
+        self.events.append(("terminate",))
+        if self.terminate_error:
+            raise self.terminate_error
+
+    def kill(self):
+        self.events.append(("kill",))
+        if self.kill_error:
+            raise self.kill_error
+
+
 class EvidenceTest(unittest.TestCase):
     def setUp(self):
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
@@ -1341,6 +1371,284 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
         files, state = evidence.collect_journey_manifest()
         self.assertFalse(files)
         self.assertEqual(state["status"], "missing-or-unreadable")
+
+    def scenario_clock_evidence(self, started_at_ms=1100):
+        roles = ("ROLE MAIN state=BLOCKED\n  android.os.Looper.loop:100\n"
+                 "  private.PRIVATE_SENTINEL.secret:10\n"
+                 "ROLE INSTRUMENTATION state=WAITING\n  androidx.test.runner.Monitor.waitForIdle:-2\n"
+                 "ROLE LAUNCH state=TIMED_WAITING\n  app.seanime.tv.Test$Worker.<init>:-1\n")
+        return (f"SCHEMA native-scenario-clock-v1 startedAtMs={started_at_ms}\nSTART LAUNCH\n"
+                + "SNAPSHOT LAUNCH elapsedMs=15000\n" + roles + "\n"
+                + "SNAPSHOT LAUNCH elapsedMs=30000\n" + roles
+                + "DONE LAUNCH elapsedMs=31000\nSTART CLOSE\nDONE CLOSE elapsedMs=20\n").encode()
+
+    def write_scenario_clock_evidence(self, raw):
+        directory = "native-go-fixture-12345678-1234-4123-8123-123456789abc"
+        path = self.root / "device/files" / directory / "scenario-thread-snapshots.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        return directory, path
+
+    def test_scenario_clock_keeps_bounded_frames_and_fast_markers_without_raw_thread_names(self):
+        directory, path = self.write_scenario_clock_evidence(self.scenario_clock_evidence())
+        files, state = evidence.collect_scenario_clock(directory, 1000, 100000)
+        self.assertEqual(state["snapshotCount"], 2)
+        raw = files["diagnostics/owned-library-management-scenario-clock.json"]
+        self.assertNotIn(b"PRIVATE_SENTINEL", raw)
+        clean = json.loads(raw)
+        snapshots = [event for event in clean["events"] if event["kind"] == "snapshot"]
+        self.assertEqual([role["role"] for role in snapshots[0]["threads"]], ["MAIN", "INSTRUMENTATION", "LAUNCH"])
+        self.assertEqual(snapshots[0]["threads"][2]["frames"][0]["lineNumber"], -1)
+        self.assertEqual(len(snapshots[0]["threads"][0]["frames"]), 1)
+        path.write_bytes(b"SCHEMA native-scenario-clock-v1 startedAtMs=1100\nSTART LAUNCH\nDONE LAUNCH elapsedMs=10\n")
+        _, state = evidence.collect_scenario_clock(directory, 1000, 100000)
+        self.assertEqual(state["status"], "captured")
+        self.assertEqual(state["snapshotCount"], 0)
+
+    def test_scenario_clock_keeps_incomplete_operation_and_safe_failure_enums(self):
+        for ending in ("START LAUNCH\n", "START LAUNCH\nSNAPSHOT_UNAVAILABLE LAUNCH PRIVATE_SENTINEL\n",
+                       "START LAUNCH\nFAILED ComposeTimeoutException LAUNCH elapsedMs=45000\n"):
+            raw = ("SCHEMA native-scenario-clock-v1 startedAtMs=1100\n" + ending).encode()
+            clean = evidence.sanitize_scenario_clock(raw, 1000, 100000)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+            self.assertEqual(clean["events"][0]["kind"], "start")
+
+    def test_scenario_clock_rejects_unknown_grammar_order_states_and_frame_budgets(self):
+        valid = self.scenario_clock_evidence()
+        replacements = (
+            (b"SCHEMA native-scenario-clock-v1", b"SCHEMA PRIVATE_SENTINEL"),
+            (b"START LAUNCH", b"START LAUNCH\nSTART LAUNCH"),
+            (b"SNAPSHOT LAUNCH", b"SNAPSHOT CLOSE"),
+            (b"ROLE MAIN", b"ROLE PRIVATE_SENTINEL"),
+            (b"state=BLOCKED", b"state=PRIVATE_SENTINEL"),
+            (b"ROLE MAIN state=BLOCKED", b"ROLE INSTRUMENTATION state=BLOCKED"),
+            (b"  android.os.Looper.loop:100", b"  android.os.Looper.loop:100\n" * 97),
+            (b"  android.os.Looper.loop:100", b"  android.os.Looper.loop:-3"),
+            (b"  android.os.Looper.loop:100", b"  android.os.Looper.loop:1000001"),
+            (b"elapsedMs=30000", b"elapsedMs=14999"),
+            (b"DONE LAUNCH elapsedMs=31000", b"SNAPSHOT_UNAVAILABLE LAUNCH AssertionError"),
+            (b"DONE LAUNCH elapsedMs=31000", b"DONE LAUNCH elapsedMs=1000001"),
+            (b"DONE LAUNCH elapsedMs=31000", b"FAILED https://PRIVATE_SENTINEL LAUNCH elapsedMs=31000"),
+        )
+        for old, new in replacements:
+            with self.subTest(old=old, new=new[:50]), self.assertRaises(ValueError) as rejected:
+                evidence.sanitize_scenario_clock(valid.replace(old, new, 1), 1000, 100000)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(evidence.capture_failure(rejected.exception)))
+        incomplete = b"SCHEMA native-scenario-clock-v1 startedAtMs=1100\nSTART LAUNCH\nSNAPSHOT LAUNCH elapsedMs=15000\nROLE MAIN state=BLOCKED\n"
+        with self.assertRaises(ValueError):
+            evidence.sanitize_scenario_clock(incomplete, 1000, 100000)
+
+    def test_scenario_clock_requires_fresh_invocation_and_bounded_regular_owned_file(self):
+        directory, path = self.write_scenario_clock_evidence(self.scenario_clock_evidence())
+        for start, finish in ((1101, 100000), (1, 1099), (0, 100000), (True, 100000), (1000, 2000)):
+            with self.subTest(start=start, finish=finish), self.assertRaises(ValueError):
+                evidence.collect_scenario_clock(directory, start, finish)
+        for invalid in ("../private", "native-go-fixture-PRIVATE_SENTINEL", directory + "/../other"):
+            with self.subTest(directory=invalid), patch.object(evidence.subprocess, "run") as run, self.assertRaises(ValueError):
+                evidence.collect_scenario_clock(invalid, 1000, 100000)
+            run.assert_not_called()
+        path.write_bytes(b" " * (evidence.SCENARIO_CLOCK_MAX_BYTES + 1))
+        with self.assertRaisesRegex(ValueError, "Missing or oversized scenario clock evidence"):
+            evidence.collect_scenario_clock(directory, 1000, 100000)
+        path.write_bytes(self.scenario_clock_evidence())
+        for target in (path, path.parent, path.parent.parent):
+            alternate = target.with_name(target.name + "-target")
+            target.rename(alternate)
+            target.symlink_to(alternate, target_is_directory=alternate.is_dir())
+            try:
+                files, state = evidence.collect_scenario_clock(directory, 1000, 100000)
+                self.assertEqual(files, {})
+                self.assertEqual(state["status"], "missing-or-unreadable")
+            finally:
+                target.unlink()
+                alternate.rename(target)
+
+    def test_management_cleanup_evidence_uses_only_fixed_fields_and_safe_failure_types(self):
+        data = self.owned_manifest("owned-library-management")
+        directory = data["root"].rsplit("/", 1)[1]
+        for failure in ("ComposeTimeoutException", "RuntimeException", "PRIVATE_SENTINEL"):
+            data.update(outcome="failed", failedAt="scenario-cleanup", scenarioCleanupCompleted=False,
+                        scenarioCleanupFailureType=failure)
+            clean = evidence.sanitize_owned_manifest(data, directory, "owned-library-management")
+            self.assertEqual(clean["failedAt"], "scenario-cleanup")
+            self.assertIs(clean["scenarioCleanupCompleted"], False)
+            self.assertEqual(clean["scenarioCleanupFailureType"], "other" if failure == "PRIVATE_SENTINEL" else failure)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+        for changes in ({"scenarioCleanupCompleted": 1}, {"scenarioCleanupFailureType": "PRIVATE_SENTINEL/path"},
+                        {"outcome": "passed"}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                evidence.sanitize_owned_manifest({**data, **changes}, directory, "owned-library-management")
+
+    def test_owned_supervision_preserves_completed_exit_status_without_cleanup(self):
+        for invocation in evidence.OWNED_FIXTURES:
+            command = self.owned_command(invocation)
+            for status in (0, 19, -9):
+                client = FakeInstrumentationClient([status])
+                supervision = {}
+                with self.subTest(invocation=invocation, status=status), patch.object(
+                        evidence.subprocess, "Popen", return_value=client) as start, patch.object(
+                        evidence.subprocess, "run") as run:
+                    self.assertEqual(evidence.run_instrumentation(self.root, invocation, command, supervision), status)
+                start.assert_called_once_with(command, cwd=self.root / "androidtv")
+                run.assert_not_called()
+                self.assertEqual(client.events, [("wait", 900)])
+                self.assertEqual(supervision["status"], "completed")
+                self.assertEqual(supervision["processExitCode"], status)
+                self.assertIs(supervision["deadlineExceeded"], False)
+
+    def test_owned_deadline_force_stops_only_selected_app_and_late_zero_exit_is_failure(self):
+        invocation = "owned-library-management"
+        command = self.owned_command(invocation)
+        client, supervision = FakeInstrumentationClient([None, 0]), {}
+        with patch.object(evidence.subprocess, "Popen", return_value=client), patch.object(
+                evidence.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            self.assertEqual(evidence.run_instrumentation(self.root, invocation, command, supervision), 124)
+        run.assert_called_once_with(["adb", "-s", "emulator-5554", "shell", "am", "force-stop", "app.seanime.tv"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        self.assertEqual(client.events, [("wait", 900), ("wait", 60)])
+        self.assertEqual(client.elapsed, 900)
+        self.assertEqual(supervision["status"], "timed-out")
+        self.assertEqual(supervision["processExitCode"], 0)
+        self.assertEqual(supervision["clientExit"], "after-force-stop")
+        self.assertIs(supervision["deadlineExceeded"], True)
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(supervision))
+
+    def test_owned_deadline_cleanup_waits_are_bounded_and_signal_only_the_started_client(self):
+        variants = (
+            ([None, None, -15], None, None, "after-terminate", 960, [("terminate",)]),
+            ([None, None, None, -9], None, None, "after-kill", 975, [("terminate",), ("kill",)]),
+            ([None, None, None, None], None, None, "not-observed-within-cleanup-budget", 980, [("terminate",), ("kill",)]),
+            ([None, None, 0], ProcessLookupError("PRIVATE_SENTINEL"), None, "after-terminate", 960, [("terminate",)]),
+            ([None, None, None, -9], OSError("PRIVATE_SENTINEL"), None, "after-kill", 975, [("terminate",), ("kill",)]),
+            ([None, None, None, None], OSError("PRIVATE_SENTINEL"), OSError("PRIVATE_SENTINEL"),
+             "not-observed-within-cleanup-budget", 980, [("terminate",), ("kill",)]),
+        )
+        for outcomes, terminate_error, kill_error, result, elapsed, signals in variants:
+            client = FakeInstrumentationClient(outcomes, terminate_error, kill_error)
+            supervision = {}
+            with self.subTest(result=result, terminate_error=type(terminate_error).__name__), patch.object(
+                    evidence.subprocess, "Popen", return_value=client), patch.object(
+                    evidence.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+                self.assertEqual(evidence.run_instrumentation(
+                    self.root, "owned-library-management", self.owned_command("owned-library-management"), supervision), 124)
+            self.assertEqual(supervision["clientExit"], result)
+            self.assertEqual(client.elapsed, elapsed)
+            self.assertEqual([event for event in client.events if event[0] != "wait"], signals)
+            waits = [event[1] for event in client.events if event[0] == "wait"]
+            self.assertEqual(waits, [900, 60, 15, 5][:len(waits)])
+            run.assert_called_once()
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(supervision))
+
+    def test_owned_timeout_survives_force_stop_failures_and_wait_errors_without_raw_output(self):
+        failures = (subprocess.CompletedProcess([], 7), OSError("PRIVATE_SENTINEL"),
+                    subprocess.TimeoutExpired("PRIVATE_SENTINEL", 10, output=b"PRIVATE_SENTINEL"))
+        for failure in failures:
+            client = FakeInstrumentationClient([None, OSError("PRIVATE_SENTINEL"), -15])
+            supervision = {}
+            with self.subTest(failure=type(failure).__name__), patch.object(
+                    evidence.subprocess, "Popen", return_value=client), patch.object(evidence.subprocess, "run") as run:
+                if isinstance(failure, Exception):
+                    run.side_effect = failure
+                else:
+                    run.return_value = failure
+                self.assertEqual(evidence.run_instrumentation(
+                    self.root, "owned-library-management", self.owned_command("owned-library-management"), supervision), 124)
+            self.assertIn(supervision["targetForceStop"]["status"], ("failed", "timed-out"))
+            self.assertEqual(supervision["clientExit"], "after-terminate")
+            self.assertEqual(supervision["waitErrorType"], "OSError")
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(supervision))
+
+    def test_owned_supervision_requires_explicit_emulator_and_retains_safe_start_failure(self):
+        command = self.owned_command("owned-library-management")
+        with patch.dict(os.environ, {"ANDROID_SERIAL": "personal-device"}), patch.object(
+                evidence.subprocess, "Popen") as start, self.assertRaises(ValueError):
+            evidence.run_instrumentation(self.root, "owned-library-management", command, {})
+        start.assert_not_called()
+        supervision = {}
+        with patch.object(evidence.subprocess, "Popen", side_effect=OSError("PRIVATE_SENTINEL")), patch.object(
+                evidence.subprocess, "run") as run, self.assertRaises(OSError):
+            evidence.run_instrumentation(self.root, "owned-library-management", command, supervision)
+        run.assert_not_called()
+        self.assertEqual(supervision["status"], "start-failed")
+        self.assertIs(supervision["deadlineExceeded"], False)
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(supervision))
+
+    def test_supervision_does_not_apply_owned_deadline_to_ordinary_or_unmatched_invocations(self):
+        for invocation, command in (("connected-suite", evidence.COMMAND),
+                                    ("focused-keyboard", evidence.COMMAND + [evidence.RUNNER_ARGUMENT + "class=" + evidence.NATIVE_SEARCH_HARDWARE_INPUT_TEST]),
+                                    ("other-owned-name", self.owned_command("owned-library-management"))):
+            supervision = {}
+            with self.subTest(invocation=invocation), patch.object(evidence.subprocess, "Popen") as start, patch.object(
+                    evidence.subprocess, "run", return_value=subprocess.CompletedProcess(command, 23)) as run:
+                self.assertEqual(evidence.run_instrumentation(self.root, invocation, command, supervision), 23)
+            start.assert_not_called()
+            run.assert_called_once_with(command, cwd=self.root / "androidtv")
+            self.assertEqual(supervision, {})
+
+    def test_owned_timeout_main_preserves_xml_fixture_evidence_and_failure_when_collection_fails(self):
+        invocation = "owned-library-management"
+        spec = evidence.OWNED_FIXTURES[invocation]
+        original_popen, original_run, original_collect = subprocess.Popen, subprocess.run, evidence.collect
+        for collection_fails in (False, True):
+            client = FakeInstrumentationClient([None, 0])
+            events = []
+            def start(command, **kwargs):
+                if command[0] == "./gradlew":
+                    self.write_pair()
+                    data = self.owned_manifest(invocation)
+                    fixture = self.root / "device/files" / data["root"].rsplit("/", 1)[1] / "fixture.json"
+                    fixture.parent.mkdir(parents=True, exist_ok=True)
+                    fixture.write_text(json.dumps(data))
+                    (fixture.parent / "scenario-thread-snapshots.txt").write_bytes(self.scenario_clock_evidence(1_700_000_000_000))
+                    report = self.root / "androidtv/app/build/outputs/androidTest-results/connected/debug/TEST-fixture.xml"
+                    report.parent.mkdir(parents=True, exist_ok=True)
+                    classname, method = spec["selector"].split("#")
+                    report.write_text(f'<testsuite><testcase classname="{classname}" name="{method}" time="1"/></testsuite>')
+                    return client
+                return original_popen(command, **kwargs)
+            def run(command, **kwargs):
+                if command[3:] == ["shell", "am", "force-stop", evidence.PACKAGE]:
+                    events.append("force-stop")
+                    return subprocess.CompletedProcess(command, 0)
+                return original_run(command, **kwargs)
+            def collect(*args, **kwargs):
+                events.append("collect")
+                if collection_fails:
+                    raise OSError("PRIVATE_SENTINEL")
+                return original_collect(*args, **kwargs)
+            with self.subTest(collection_fails=collection_fails), patch.object(
+                    evidence.subprocess, "Popen", side_effect=start), patch.object(
+                    evidence.subprocess, "run", side_effect=run), patch.object(
+                    evidence, "collect", side_effect=collect), patch.object(
+                    evidence.threading, "Thread") as worker, patch.object(
+                    evidence.time, "time", side_effect=lambda: 1_700_000_000.0 + client.elapsed):
+                worker.return_value.is_alive.return_value = False
+                self.assertEqual(evidence.main(self.root, invocation, spec["selector"],
+                                              [spec["flag"], "freshInstrumentationProcess"]), 124)
+            self.assertEqual(events, ["force-stop", "collect", "force-stop"])
+            output = self.root / Path(evidence.OUTPUT).parent / invocation
+            state = json.loads((output / "collection-status.json").read_text())
+            self.assertEqual(state["gradleExitCode"], 124)
+            self.assertEqual(state["instrumentationCommand"]["status"], "timed-out")
+            self.assertEqual(state["instrumentationCommand"]["processExitCode"], 0)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(state))
+            if collection_fails:
+                self.assertEqual(state["status"], "collection-failed")
+                self.assertFalse((output / "evidence.zip").exists())
+            else:
+                self.assertEqual(state["junit"]["tests"], 1)
+                self.assertEqual(state[spec["statusKey"]]["status"], "captured")
+                self.assertEqual(state["scenarioClock"]["status"], "captured")
+                with zipfile.ZipFile(output / "evidence.zip") as saved:
+                    self.assertIn("junit-summary.xml", saved.namelist())
+                    self.assertIn(f"fixtures/{invocation}.json", saved.namelist())
+                    self.assertIn(f"screenshots/{SCENARIO}.png", saved.namelist())
+                    self.assertIn("diagnostics/owned-library-management-scenario-clock.json", saved.namelist())
+                    self.assertFalse(any(name.endswith(".txt") for name in saved.namelist()))
+                    for name, digest in state["fileSha256"].items():
+                        self.assertEqual(hashlib.sha256(saved.read(name)).hexdigest(), digest)
+                    self.assertNotIn(b"PRIVATE_SENTINEL", b"".join(saved.read(name) for name in saved.namelist()))
+                self.assertEqual(evidence.check_acceptance(self.root, invocation, spec["selector"]), 1)
 
     def test_gradle_exit_status_survives_missing_adb_evidence(self):
         with patch.dict(os.environ, {"FAKE_ADB_FAILURE": "1"}):

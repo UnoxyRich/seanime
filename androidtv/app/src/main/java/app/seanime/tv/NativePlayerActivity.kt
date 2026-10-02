@@ -54,6 +54,7 @@ import androidx.media3.datasource.DefaultDataSource
 import app.seanime.tv.data.ProviderUrlPolicy
 import app.seanime.tv.data.ProviderMediaContext
 import app.seanime.tv.data.NativeNetworkFailure
+import app.seanime.tv.data.NativePlayerHttpClients
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.analytics.AnalyticsListener
@@ -135,7 +136,7 @@ class NativePlayerActivity : ComponentActivity() {
     @Volatile private var playbackRecoveryDismissed = false
     private val checkpointExecutor = Executors.newSingleThreadExecutor { task -> Thread(task, "Seanime TV playback checkpoint") }
     private val subtitleCacheFiles = mutableListOf<File>()
-    private val mediaHttpClients = mutableListOf<OkHttpClient>()
+    private var mediaHttpClients: NativePlayerHttpClients? = null
     private data class MediaAuthority(val context: ProviderMediaContext, val inlineSubtitles: Set<String>)
     private class MediaHeaders(val interceptor: PlaybackHeaderInterceptor)
     private val progressHandler = Handler(Looper.getMainLooper())
@@ -273,29 +274,38 @@ class NativePlayerActivity : ComponentActivity() {
                 return
             }
         }
-        fun httpClient(provider: Boolean): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
-            .followRedirects(true).followSslRedirects(false)
-            .addNetworkInterceptor { chain -> requireNotNull(chain.request().tag(MediaHeaders::class.java)).interceptor.intercept(chain) }
-            .apply { if (provider) ProviderUrlPolicy.secureClient(this) }
-            .build().also { mediaHttpClients.add(it) }
-        val trustedHttp = httpClient(false)
-        val providerHttp = httpClient(true)
-        val nativeAss = NativeAssSession(this, { item ->
-            // This tag belongs to the MediaItem, not the mutable currently selected episode.
-            val authority = item.localConfiguration?.tag as? MediaAuthority
-                ?: MediaAuthority(ProviderMediaContext(true), emptySet())
-            val calls = Call.Factory { request ->
-                val initial = request.url.toString()
-                authority.context.requireMediaUri(initial, authority.inlineSubtitles)
-                val client = if (authority.context.requiresPublicUrl(initial)) providerHttp else trustedHttp
-                val headers = MediaHeaders(PlaybackHeaderInterceptor { target -> authority.context.headersFor(initial, target) })
-                client.newCall(request.newBuilder().tag(MediaHeaders::class.java, headers).build())
-            }
-            val httpFactory = OkHttpDataSource.Factory(calls).setUserAgent("Seanime TV/0.1.0")
-            val delegates = DefaultDataSource.Factory(this, httpFactory)
-            DataSource.Factory { ProviderMediaDataSource(delegates.createDataSource(), authority.context, authority.inlineSubtitles) }
-        }, activePlayerView?.subtitleView)
+        val httpClients = NativePlayerHttpClients()
+        mediaHttpClients = httpClients
+        fun httpClient(provider: Boolean): OkHttpClient = httpClients.createClient {
+            connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
+            followRedirects(true).followSslRedirects(false)
+            addNetworkInterceptor { chain -> requireNotNull(chain.request().tag(MediaHeaders::class.java)).interceptor.intercept(chain) }
+            if (provider) ProviderUrlPolicy.secureClient(this)
+        }
+        val nativeAss = try {
+            val trustedHttp = httpClient(false)
+            val providerHttp = httpClient(true)
+            NativeAssSession(this, { item ->
+                // This tag belongs to the MediaItem, not the mutable currently selected episode.
+                val authority = item.localConfiguration?.tag as? MediaAuthority
+                    ?: MediaAuthority(ProviderMediaContext(true), emptySet())
+                val calls = Call.Factory { request ->
+                    val initial = request.url.toString()
+                    authority.context.requireMediaUri(initial, authority.inlineSubtitles)
+                    val client = if (authority.context.requiresPublicUrl(initial)) providerHttp else trustedHttp
+                    val headers = MediaHeaders(PlaybackHeaderInterceptor { target -> authority.context.headersFor(initial, target) })
+                    client.newCall(request.newBuilder().tag(MediaHeaders::class.java, headers).build())
+                }
+                val httpFactory = OkHttpDataSource.Factory(calls).setUserAgent("Seanime TV/0.1.0")
+                val delegates = DefaultDataSource.Factory(this, httpFactory)
+                DataSource.Factory { ProviderMediaDataSource(delegates.createDataSource(), authority.context, authority.inlineSubtitles) }
+            }, activePlayerView?.subtitleView)
+        } catch (error: Throwable) {
+            // Construction can fail before player is assigned, so onStop alone cannot own cleanup.
+            mediaHttpClients = null
+            httpClients.close()
+            throw error
+        }
         assSession = nativeAss
         val exoPlayer = nativeAss.player
         player = exoPlayer
@@ -1166,7 +1176,9 @@ class NativePlayerActivity : ComponentActivity() {
     }
 
     private fun releasePlayer() {
-        val current = player ?: return
+        val httpClients = mediaHttpClients
+        mediaHttpClients = null
+        val current = player ?: run { httpClients?.close(); return }
         progressHandler.removeCallbacksAndMessages(null)
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         rememberPlaybackState()
@@ -1179,10 +1191,12 @@ class NativePlayerActivity : ComponentActivity() {
         showPlaybackError(null)
         activePlayerView?.player = null
         eventSubtitles?.pause()
-        assSession?.release() ?: current.release()
-        assSession = null
-        mediaHttpClients.forEach { client -> client.dispatcher.cancelAll(); client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown() }
-        mediaHttpClients.clear()
+        try {
+            assSession?.release() ?: current.release()
+        } finally {
+            assSession = null
+            httpClients?.close()
+        }
         subtitleCacheFiles.forEach { it.delete() }
         subtitleCacheFiles.clear()
         nativePlayerVisible = false

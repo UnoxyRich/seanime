@@ -101,7 +101,9 @@ class AndroidIsolatedLibraryManagementTest {
         checkpoint("created")
         val client = SeanimeApiClient()
         val repo = SeanimeRepository(client)
-        var scenario: ActivityScenario<MainActivity>? = null
+        var scenario: OwnedAsyncTestResource<ActivityScenario<MainActivity>>? = null
+        var scenarioClock: NativeScenarioClockDriver? = null
+        var workflowFailure: Throwable? = null
         var started = false
         var originalHash: String? = null
         fun verifyIsolation() {
@@ -169,8 +171,14 @@ class AndroidIsolatedLibraryManagementTest {
             assertEquals(setOf(first.absolutePath, second.absolutePath), readIndex("imported").map { it.getString("path") }.toSet())
             checkpoint("existing-import-endpoint-verified")
 
-            val main = ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java))
-            scenario = main
+            val clock = NativeScenarioClockDriver(compose, File(root, "scenario-thread-snapshots.txt"))
+            scenarioClock = clock
+            val owner = OwnedAsyncTestResource(
+                create = { ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)) },
+                dispose = { it.close() },
+            )
+            scenario = owner
+            val main = clock.awaitLaunch(owner)
             compose.waitUntil(30_000) { compose.onAllNodesWithTag("nav-LIBRARY").fetchSemanticsNodes().isNotEmpty() }
             verifyIsolation()
             var hostClient: SeanimeApiClient? = null
@@ -263,16 +271,29 @@ class AndroidIsolatedLibraryManagementTest {
             NativeScreenshotEvidence.capture("isolated-go-library-delete-verified")
             checkpoint("owned-library-workflow-verified")
         } catch (failure: Throwable) {
+            workflowFailure = failure
             manifest.put("outcome", "failed").put("failedAt", manifest.optString("stage")).put("failureType", failure.javaClass.simpleName)
                 .put("failure", failure.message.orEmpty().take(1000))
             checkpoint(manifest.optString("stage") + "-terminal")
             throw failure
         } finally {
-            runCatching { scenario?.close() }
+            // Framework launch/idle waits can ignore interruption. The owner closes a
+            // late launch result, but the runner must still force-stop before restoration.
+            val cleanupFailure = runCatching {
+                scenario?.let { checkNotNull(scenarioClock).awaitClose(it) }
+            }.exceptionOrNull()
+            scenarioClock?.close()
+            manifest.put("scenarioCleanupCompleted", scenario?.cleanupCompleted ?: true)
+            if (cleanupFailure != null) {
+                workflowFailure?.addSuppressed(cleanupFailure)
+                manifest.put("outcome", "failed").put("scenarioCleanupFailureType", cleanupFailure.javaClass.simpleName)
+                if (workflowFailure == null) manifest.put("failedAt", "scenario-cleanup")
+            }
             client.close()
             if (started) Mobile.stopServer()
             manifest.put("hostStatusAfterRun", Mobile.serverStatus())
             checkpoint("stopped-awaiting-force-stop-and-reviewed-cleanup")
+            if (workflowFailure == null && cleanupFailure != null) throw cleanupFailure
         }
     }
 
