@@ -10,11 +10,15 @@ import android.view.WindowManager
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.lifecycle.Lifecycle
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -24,6 +28,7 @@ import app.seanime.tv.platform.NativePlatformActions
 import app.seanime.tv.platform.NativePlaybackBus
 import app.seanime.tv.platform.BundledEnglishProviders
 import app.seanime.tv.ui.TvFeature
+import app.seanime.tv.ui.awaitTvWindowFocus
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -31,6 +36,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
+import org.json.JSONArray
+import java.io.File
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -166,6 +173,17 @@ class AndroidTvStartupTest {
     @Test
     fun remoteLetterKeysEnterNativeSearchWithoutStealingCursorFocus() {
         val scenario = ActivityScenario.launch(MainActivity::class.java)
+        val inputTrace = SearchInputTrace()
+        var injectedKeys = 0
+        fun record(stage: String) = inputTrace.record(stage, injectedKeys,
+            compose.onAllNodesWithTag("anime-search-field").fetchSemanticsNodes())
+        fun awaitInputWindow(stage: String) {
+            record(stage)
+            awaitFocus("anime-search-field")
+            compose.onNodeWithTag("anime-search-field").awaitTvWindowFocus()
+                .assertIsDisplayed().assertIsFocused()
+            record(stage) // Replace this stage with the final pre-key observation.
+        }
         try {
             awaitNativeReady()
             awaitFocus("nav-LIBRARY")
@@ -174,11 +192,30 @@ class AndroidTvStartupTest {
             openSearchFromFocusedToolbar()
             assertEquals("A new Library search should start empty", "",
                 compose.onNodeWithTag("anime-search-field").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
-            key(KeyEvent.KEYCODE_A)
-            key(KeyEvent.KEYCODE_B)
+            // Semantic focus can precede Android's dialog-window input ownership.
+            // Send each real letter once; never replace text or retry typing.
+            awaitInputWindow("before-a")
+            injectedKeys++; key(KeyEvent.KEYCODE_A)
+            record("after-a")
+            awaitInputWindow("before-b")
+            injectedKeys++; key(KeyEvent.KEYCODE_B)
+            record("after-b")
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithTag("anime-search-field").fetchSemanticsNodes().singleOrNull()
+                    ?.config?.getOrNull(SemanticsProperties.EditableText)?.text == "ab"
+            }
+            record("text-delivered")
             compose.onNodeWithTag("anime-search-field").assertTextContains("ab")
-            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            injectedKeys++; key(KeyEvent.KEYCODE_DPAD_LEFT)
+            compose.onNodeWithTag("anime-search-field").awaitTvWindowFocus()
+            record("after-left")
             compose.onNodeWithTag("anime-search-field").assertIsFocused()
+            inputTrace.finish("passed", injectedKeys)
+        } catch (failure: Throwable) {
+            // Reuse the last observed state, without another potentially blocking
+            // Compose query after the original failure. No raw editor text is saved.
+            runCatching { inputTrace.finish("failed", injectedKeys) }.exceptionOrNull()?.let(failure::addSuppressed)
+            throw failure
         } finally {
             scenario.close()
             Mobile.stopServer()
@@ -445,6 +482,56 @@ class AndroidTvStartupTest {
     private fun key(code: Int) {
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(code)
         compose.waitForIdle()
+    }
+
+    private class SearchInputTrace {
+        private val instrumentation = InstrumentationRegistry.getInstrumentation()
+        private val observations = JSONArray()
+        private val data = JSONObject().put("schemaVersion", 1).put("scenario", "native-search-hardware-input")
+            .put("startedAtMs", System.currentTimeMillis()).put("outcome", "running").put("observations", observations)
+        private fun emptyObservation(stage: String, keys: Int) = JSONObject().put("stage", stage).put("keysSent", keys)
+            .put("nodeCount", 0).put("hasEditableText", false).put("textLength", 0)
+            .put("exactEmpty", false).put("exactA", false).put("exactAB", false)
+            .put("semanticFocused", false).put("viewAttached", false).put("viewLaidOut", false)
+            .put("windowFocused", false).put("imeVisible", "unknown")
+
+        fun record(stage: String, keys: Int, nodes: List<SemanticsNode>) {
+            val node = nodes.singleOrNull()
+            val text = node?.config?.getOrNull(SemanticsProperties.EditableText)?.text
+            val observation = emptyObservation(stage, keys).put("nodeCount", nodes.size.coerceAtMost(255))
+                .put("hasEditableText", text != null).put("textLength", text?.length?.coerceAtMost(4096) ?: 0)
+                .put("exactEmpty", text == "").put("exactA", text == "a").put("exactAB", text == "ab")
+                .put("semanticFocused", node?.config?.getOrNull(SemanticsProperties.Focused) == true)
+            val view = (node?.root as? ViewRootForTest)?.view
+            instrumentation.runOnMainSync {
+                observation.put("viewAttached", view?.isAttachedToWindow == true)
+                    .put("viewLaidOut", view?.isLaidOut == true).put("windowFocused", view?.hasWindowFocus() == true)
+                    .put("imeVisible", view?.let(ViewCompat::getRootWindowInsets)?.let {
+                        if (it.isVisible(WindowInsetsCompat.Type.ime())) "visible" else "hidden"
+                    } ?: "unknown")
+            }
+            val last = observations.length() - 1
+            if (last >= 0 && observations.getJSONObject(last).getString("stage") == stage) observations.put(last, observation)
+            else observations.put(observation)
+            check(observations.length() <= 6)
+            save()
+        }
+
+        fun finish(outcome: String, keys: Int) {
+            if (outcome == "failed") {
+                val last = observations.optJSONObject(observations.length() - 1)
+                observations.put((last?.let { JSONObject(it.toString()) } ?: emptyObservation("failure", keys))
+                    .put("stage", "failure").put("keysSent", keys))
+            }
+            data.put("outcome", outcome).put("completedAtMs", System.currentTimeMillis())
+            save()
+        }
+
+        private fun save() {
+            val directory = File(instrumentation.targetContext.cacheDir, "native-acceptance-diagnostics")
+            check(directory.isDirectory || directory.mkdirs())
+            File(directory, "native-search-hardware-input.json").writeText(data.toString())
+        }
     }
 
     private fun waitForServerStatus(expected: String, timeoutMs: Long): Boolean {

@@ -75,6 +75,12 @@ PLUGIN_STARTUP_TESTS = (
     "relativeAnchorItemsNavigateNativelyAndHandlerLinksKeepTheirCallbackContract",
 )
 PLUGIN_STARTUP_MAX_BYTES = 8192
+NATIVE_SEARCH_HARDWARE_INPUT_PATH = "cache/native-acceptance-diagnostics/native-search-hardware-input.json"
+NATIVE_SEARCH_HARDWARE_INPUT_MAX_BYTES = 8192
+NATIVE_SEARCH_HARDWARE_INPUT_STAGES = (
+    ("before-a", 0), ("after-a", 1), ("before-b", 1), ("after-b", 2),
+    ("text-delivered", 2), ("after-left", 3),
+)
 PLUGIN_STARTUP_EVENT_TYPES = frozenset((
     "screen:changed", "tray:render", "tray:opened", "tray:list-icons", "tray:closed", "handler:triggered",
     "command-palette:render", "command-palette:opened", "command-palette:list", "command-palette:input",
@@ -290,6 +296,8 @@ def capture_failure(error):
         "Invalid player lifecycle evidence", "Stale player lifecycle evidence",
         "Invalid plugin startup evidence", "Stale plugin startup evidence", "Missing or oversized plugin startup evidence",
         "Missing or oversized player lifecycle evidence",
+        "Invalid native search hardware input evidence", "Stale native search hardware input evidence",
+        "Missing or oversized native search hardware input evidence",
     }
     reason = "Unexpected collector failure"
     if type(error) is ValueError and str(error) in safe_reasons:
@@ -345,6 +353,19 @@ def validate_screenshots(stream):
     return accepted, invalid
 
 
+def screenshot_header_kind(header):
+    """Classify one bounded tar header without retaining any of its contents."""
+    if len(header) < 512:
+        return "short-header"
+    if header == b"\0" * 512:
+        return "zero-block"
+    try:
+        tarfile.TarInfo.frombuf(header, "utf-8", "surrogateescape")
+    except tarfile.HeaderError:
+        return "invalid-header"
+    return "valid-header"
+
+
 def collect_screenshots():
     with tempfile.TemporaryFile() as stream:
         result = subprocess.run(screenshot_command(), stdout=stream, stderr=subprocess.DEVNULL, timeout=60)
@@ -359,8 +380,16 @@ def collect_screenshots():
             return {}, {"status": "not-created", "captured": [], "invalidPairs": [],
                         "notCaptured": sorted(SCENARIOS),
                         "note": "The invocation wrote no approved screenshot checkpoints; this is not a test pass."}
+        archive_bytes = stream.seek(0, os.SEEK_END)
         stream.seek(0)
-        files, invalid = validate_screenshots(stream)
+        try:
+            files, invalid = validate_screenshots(stream)
+        except tarfile.ReadError as error:
+            # exec-out can return zero for remote errors or an interrupted read.
+            # Keep only bounded counts and an enum, never the failed tar or text.
+            stream.seek(0)
+            return {}, {**capture_failure(error), "archiveBytes": archive_bytes,
+                        "firstHeaderKind": screenshot_header_kind(stream.read(512))}
     captured = sorted(Path(name).stem for name in files if name.endswith(".png"))
     return files, {"status": "captured" if captured else "missing", "captured": captured,
                    "invalidPairs": invalid, "notCaptured": sorted(SCENARIOS - set(captured)),
@@ -607,6 +636,91 @@ def collect_plugin_startup(started_at_ms, finished_at_ms):
             tests[test_name] = capture_failure(error)
     return files, {"status": "captured" if files else "not-captured", "snapshotCount": len(files), "tests": tests,
                    "note": "On-failure fixture startup observations only; absence is not proof of a passing test. Correlate with JUnit outcome."}
+
+
+def sanitize_native_search_hardware_input(data, started_at_ms, finished_at_ms):
+    """Accept fixed keyboard observations, never entered text or exception details."""
+    def require(condition):
+        if not condition:
+            raise ValueError("Invalid native search hardware input evidence")
+
+    def integer(value, low, high):
+        return type(value) is int and low <= value <= high
+
+    fields = {"schemaVersion", "scenario", "outcome", "startedAtMs", "observations"}
+    require(type(data) is dict and fields <= data.keys() <= fields | {"completedAtMs"})
+    require(type(data["schemaVersion"]) is int and data["schemaVersion"] == 1)
+    require(data["scenario"] == "native-search-hardware-input" and data["outcome"] in ("running", "passed", "failed"))
+    require(integer(started_at_ms, 1, 9_007_199_254_740_991) and integer(finished_at_ms, started_at_ms, 9_007_199_254_740_991))
+    require(integer(data["startedAtMs"], 1, 9_007_199_254_740_991))
+    if not started_at_ms <= data["startedAtMs"] <= finished_at_ms:
+        raise ValueError("Stale native search hardware input evidence")
+    require(("completedAtMs" in data) == (data["outcome"] != "running"))
+    if "completedAtMs" in data:
+        require(integer(data["completedAtMs"], data["startedAtMs"], finished_at_ms))
+    observations = data["observations"]
+    require(type(observations) is list and len(observations) <= 7)
+    boolean_fields = {"hasEditableText", "exactEmpty", "exactA", "exactAB", "semanticFocused",
+                      "viewAttached", "viewLaidOut", "windowFocused"}
+    observation_fields = boolean_fields | {"stage", "keysSent", "nodeCount", "textLength", "imeVisible"}
+    exact_lengths = {"exactEmpty": 0, "exactA": 1, "exactAB": 2}
+    single_node_flags = ("hasEditableText", "semanticFocused", "viewAttached", "viewLaidOut", "windowFocused")
+    for index, observation in enumerate(observations):
+        require(type(observation) is dict and observation.keys() == observation_fields)
+        require(integer(observation["keysSent"], 0, 3))
+        if observation["stage"] == "failure":
+            require(data["outcome"] == "failed" and index == len(observations) - 1)
+        else:
+            require(index < len(NATIVE_SEARCH_HARDWARE_INPUT_STAGES)
+                    and (observation["stage"], observation["keysSent"]) == NATIVE_SEARCH_HARDWARE_INPUT_STAGES[index])
+        require(integer(observation["nodeCount"], 0, 255) and integer(observation["textLength"], 0, 4096))
+        require(all(type(observation[field]) is bool for field in boolean_fields))
+        require(observation["imeVisible"] in ("visible", "hidden", "unknown"))
+        require(sum(observation[field] for field in exact_lengths) <= 1)
+        require(all(not observation[field] or (observation["hasEditableText"] and observation["textLength"] == length)
+                    for field, length in exact_lengths.items()))
+        if not observation["hasEditableText"]:
+            require(observation["textLength"] == 0 and not any(observation[field] for field in exact_lengths))
+        if observation["nodeCount"] != 1:
+            require(not any(observation[field] for field in single_node_flags))
+    if data["outcome"] == "failed":
+        require(bool(observations) and observations[-1]["stage"] == "failure")
+    if data["outcome"] == "passed":
+        require(len(observations) == len(NATIVE_SEARCH_HARDWARE_INPUT_STAGES))
+        after_left = observations[-1]
+        require(after_left["nodeCount"] == 1 and after_left["textLength"] == 2 and after_left["exactAB"]
+                and all(after_left[field] for field in single_node_flags))
+    return data
+
+
+def collect_native_search_hardware_input(started_at_ms, finished_at_ms):
+    path = NATIVE_SEARCH_HARDWARE_INPUT_PATH
+    script = ('[ ! -L cache ] && [ ! -L cache/native-acceptance-diagnostics ] && '
+              f'[ ! -L {path} ] && [ -f {path} ] || exit 2; '
+              f'exec head -c {NATIVE_SEARCH_HARDWARE_INPUT_MAX_BYTES + 1} {path}')
+    result = subprocess.run(exec_out_run_as("sh", "-c", script), stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, timeout=10)
+    if result.returncode != 0 or not result.stdout:
+        return {}, {"status": "missing-or-unreadable"}
+    if len(result.stdout) > NATIVE_SEARCH_HARDWARE_INPUT_MAX_BYTES:
+        raise ValueError("Missing or oversized native search hardware input evidence")
+
+    def unique_object(pairs):
+        value = {}
+        for key, entry in pairs:
+            if key in value:
+                raise ValueError("Invalid native search hardware input evidence")
+            value[key] = entry
+        return value
+
+    try:
+        data = json.loads(result.stdout, object_pairs_hook=unique_object)
+    except (ValueError, UnicodeDecodeError):
+        raise ValueError("Invalid native search hardware input evidence") from None
+    clean = sanitize_native_search_hardware_input(data, started_at_ms, finished_at_ms)
+    return {"diagnostics/native-search-hardware-input.json": json_bytes(clean)}, {
+        "status": "captured", "outcome": clean["outcome"], "observationCount": len(clean["observations"]),
+        "note": "Fixed native keyboard fixture observations; correlate with JUnit outcome, not a standalone acceptance result."}
 
 
 def capture_installed_apks():
@@ -1112,6 +1226,7 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
         if access["status"] != "available":
             manifest["playerLifecycle"] = {"status": "missing-or-unreadable", "reason": access["status"]}
             manifest["pluginStartup"] = {"status": "missing-or-unreadable", "reason": access["status"]}
+            manifest["nativeSearchHardwareInput"] = {"status": "missing-or-unreadable", "reason": access["status"]}
         else:
             try:
                 diagnostics, manifest["playerLifecycle"] = collect_player_lifecycle(
@@ -1125,6 +1240,12 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
                 files.update(diagnostics)
             except Exception as error:
                 manifest["pluginStartup"] = capture_failure(error)
+            try:
+                diagnostics, manifest["nativeSearchHardwareInput"] = collect_native_search_hardware_input(
+                    recording.get("gradleStartedAtMs", 0), recording.get("gradleFinishedAtMs", 0))
+                files.update(diagnostics)
+            except Exception as error:
+                manifest["nativeSearchHardwareInput"] = capture_failure(error)
     owned = owned_fixture_profile(invocation, command or COMMAND)
     if owned:
         key = owned["statusKey"]

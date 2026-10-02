@@ -145,8 +145,10 @@ os.execvp(sys.argv[2], sys.argv[2:])
                 arguments = (*arguments[:2], shlex.quote(arguments[2]))
             return original(*arguments)
         with patch.object(evidence, "exec_out_run_as", side_effect=incorrectly_quoted):
-            with self.assertRaises(tarfile.ReadError):
-                evidence.collect_screenshots()
+            files, state = evidence.collect_screenshots()
+            self.assertFalse(files)
+            self.assertEqual(state["errorType"], "ReadError")
+            self.assertIn(state["firstHeaderKind"], ("short-header", "invalid-header"))
             with self.assertRaisesRegex(ValueError, "Unexpected owned fixture path"):
                 evidence.collect_journey_manifest()
             self.assertEqual(evidence.clear_prior_screenshots(), "app-cache-not-available")
@@ -190,8 +192,35 @@ os.execvp(sys.argv[2], sys.argv[2:])
         with zipfile.ZipFile(self.root / evidence.OUTPUT / "evidence.zip") as saved:
             state = json.loads(saved.read("collection-status.json"))
             self.assertEqual(state["screenshots"], {"status": "capture-failed", "errorType": "ReadError",
-                                                   "reason": "Invalid or truncated screenshot archive"})
+                                                   "reason": "Invalid or truncated screenshot archive",
+                                                   "archiveBytes": len(b"PRIVATE_SENTINEL\n"),
+                                                   "firstHeaderKind": "short-header"})
             self.assertNotIn(b"PRIVATE_SENTINEL", b"".join(saved.read(name) for name in saved.namelist()))
+
+    def test_screenshot_read_errors_distinguish_invalid_header_and_truncated_member_without_payload(self):
+        complete = archive([(SCENARIO + ".png", png(), tarfile.REGTYPE)]).getvalue()
+        for payload, kind in ((b"PRIVATE_SENTINEL" * 40, "invalid-header"),
+                              (complete[:512 + len(png()) - 1], "valid-header")):
+            def run(command, **kwargs):
+                kwargs["stdout"].write(payload)
+                return subprocess.CompletedProcess(command, 0)
+            with self.subTest(kind=kind), patch.object(evidence.subprocess, "run", side_effect=run):
+                files, state = evidence.collect_screenshots()
+            self.assertFalse(files)
+            self.assertEqual(state, {"status": "capture-failed", "errorType": "ReadError",
+                                     "reason": "Invalid or truncated screenshot archive",
+                                     "archiveBytes": len(payload), "firstHeaderKind": kind})
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(state))
+        self.assertEqual(evidence.screenshot_header_kind(b"\0" * 512), "zero-block")
+
+    def test_screenshot_archive_budget_still_rejects_before_header_diagnostics(self):
+        def run(command, **kwargs):
+            kwargs["stdout"].seek(257 * 1024 * 1024)
+            kwargs["stdout"].write(b"x")
+            return subprocess.CompletedProcess(command, 0)
+        with patch.object(evidence.subprocess, "run", side_effect=run), self.assertRaisesRegex(
+                ValueError, "Screenshot archive too large"):
+            evidence.collect_screenshots()
 
     def test_capture_failure_retains_only_allowlisted_reason_text(self):
         errors = [ValueError("PRIVATE_SENTINEL"), OSError("PRIVATE_SENTINEL"),
@@ -266,8 +295,9 @@ os.execvp(sys.argv[2], sys.argv[2:])
             # Omitting the option reproduces the independent teardown failure.
             subprocess.run([str(gradle)], check=True, timeout=5)
             self.assertEqual(evidence.probe_app_evidence_access()["status"], "package-not-installed")
-            with self.assertRaises(tarfile.ReadError):
-                evidence.collect_screenshots()
+            files, state = evidence.collect_screenshots()
+            self.assertFalse(files)
+            self.assertEqual(state["errorType"], "ReadError")
             with self.assertRaisesRegex(ValueError, "Unexpected owned fixture path"):
                 evidence.collect_journey_manifest()
 
@@ -623,6 +653,212 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
                 self.assertEqual(manifest["gradleExitCode"], 19)
                 self.assertEqual("pluginStartup" in manifest, invocation == "connected-suite")
             collect.assert_called_once_with(1000, 1600)
+
+    def native_search_hardware_input_evidence(self):
+        observations = []
+        for stage, keys in evidence.NATIVE_SEARCH_HARDWARE_INPUT_STAGES:
+            length = min(keys, 2)
+            observations.append({"stage": stage, "keysSent": keys, "nodeCount": 1,
+                                 "hasEditableText": True, "textLength": length,
+                                 "exactEmpty": length == 0, "exactA": length == 1, "exactAB": length == 2,
+                                 "semanticFocused": True, "viewAttached": True, "viewLaidOut": True,
+                                 "windowFocused": True, "imeVisible": "hidden"})
+        return {"schemaVersion": 1, "scenario": "native-search-hardware-input", "outcome": "passed",
+                "startedAtMs": 1100, "completedAtMs": 1500, "observations": observations}
+
+    def write_native_search_hardware_input_evidence(self, data):
+        path = self.root / "device" / evidence.NATIVE_SEARCH_HARDWARE_INPUT_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+        return path
+
+    def test_native_search_hardware_input_collects_pass_running_prefixes_and_failed_snapshots(self):
+        original = self.native_search_hardware_input_evidence()
+        variants = [original]
+        for length in range(7):
+            running = {key: value for key, value in original.items() if key != "completedAtMs"}
+            running.update(outcome="running", observations=original["observations"][:length])
+            variants.append(running)
+            failed = copy.deepcopy(original)
+            last = copy.deepcopy(original["observations"][max(0, length - 1)])
+            last["stage"] = "failure"
+            failed.update(outcome="failed", observations=original["observations"][:length] + [last])
+            variants.append(failed)
+        for data in variants:
+            with self.subTest(outcome=data["outcome"], length=len(data["observations"])):
+                self.write_native_search_hardware_input_evidence(data)
+                files, state = evidence.collect_native_search_hardware_input(1000, 1600)
+                self.assertEqual(state["status"], "captured")
+                self.assertEqual(state["outcome"], data["outcome"])
+                self.assertEqual(state["observationCount"], len(data["observations"]))
+                self.assertIn("not a standalone acceptance result", state["note"])
+                self.assertEqual(json.loads(files["diagnostics/native-search-hardware-input.json"]), data)
+
+    def test_native_search_hardware_input_rejects_unknown_fields_stages_types_and_bounds(self):
+        mutations = [
+            (("text",), "PRIVATE_SENTINEL"), (("schemaVersion",), True), (("schemaVersion",), 2),
+            (("scenario",), "PRIVATE_SENTINEL"), (("outcome",), "PRIVATE_SENTINEL"),
+            (("startedAtMs",), True), (("startedAtMs",), 0), (("startedAtMs",), 1100.0),
+            (("completedAtMs",), True), (("completedAtMs",), 1099), (("completedAtMs",), 1601),
+            (("observations",), {}), (("observations",), []), (("observations",), [None]),
+            (("observations", 0, "text"), "PRIVATE_SENTINEL"),
+            (("observations", 0, "stage"), "PRIVATE_SENTINEL"), (("observations", 0, "stage"), "after-a"),
+            (("observations", 0, "stage"), "failure"), (("observations", 5, "stage"), "failure"),
+            (("observations", 0, "keysSent"), True), (("observations", 0, "keysSent"), 1),
+            (("observations", 5, "keysSent"), 2), (("observations", 0, "nodeCount"), True),
+            (("observations", 0, "nodeCount"), -1), (("observations", 0, "nodeCount"), 256),
+            (("observations", 0, "textLength"), True), (("observations", 0, "textLength"), -1),
+            (("observations", 0, "textLength"), 4097), (("observations", 0, "textLength"), 1.0),
+            (("observations", 0, "imeVisible"), True), (("observations", 0, "imeVisible"), "PRIVATE_SENTINEL"),
+            (("observations", 5, "exactAB"), False), (("observations", 5, "semanticFocused"), False),
+        ]
+        mutations += [(("observations", 0, field), 1) for field in (
+            "hasEditableText", "exactEmpty", "exactA", "exactAB", "semanticFocused",
+            "viewAttached", "viewLaidOut", "windowFocused")]
+        for path, value in mutations:
+            data = self.native_search_hardware_input_evidence()
+            target = data
+            for field in path[:-1]:
+                target = target[field]
+            target[path[-1]] = value
+            with self.subTest(path=path, value=value), self.assertRaises(ValueError) as rejected:
+                evidence.sanitize_native_search_hardware_input(data, 1000, 1600)
+            state = evidence.capture_failure(rejected.exception)
+            self.assertEqual(state["reason"], "Invalid native search hardware input evidence")
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(state))
+
+    def test_native_search_hardware_input_rejects_inconsistent_observations_and_incomplete_pass(self):
+        no_node = {"nodeCount": 0, "hasEditableText": False, "textLength": 0,
+                   "exactEmpty": False, "exactA": False, "exactAB": False, "semanticFocused": False,
+                   "viewAttached": False, "viewLaidOut": False, "windowFocused": False}
+        mutations = [
+            (0, {"exactA": True}), (1, {"exactAB": True}),
+            (0, {"textLength": 1}), (1, {"textLength": 2}), (3, {"textLength": 1}),
+            (0, {"hasEditableText": False}),
+            (0, {"hasEditableText": False, "exactEmpty": False, "textLength": 1}),
+            (5, no_node),
+            (5, {"textLength": 1, "exactAB": False, "exactA": True}),
+            (0, {"text": "PRIVATE_SENTINEL"}),
+        ]
+        single_node_flags = ("hasEditableText", "semanticFocused", "viewAttached", "viewLaidOut", "windowFocused")
+        for count in (0, 2):
+            mutations += [(0, {**no_node, "nodeCount": count, field: True}) for field in single_node_flags]
+        mutations += [(5, {field: False}) for field in single_node_flags]
+        for index, changes in mutations:
+            data = self.native_search_hardware_input_evidence()
+            data["observations"][index].update(changes)
+            with self.subTest(index=index, changes=changes), self.assertRaises(ValueError) as rejected:
+                evidence.sanitize_native_search_hardware_input(data, 1000, 1600)
+            state = evidence.capture_failure(rejected.exception)
+            self.assertEqual(state["reason"], "Invalid native search hardware input evidence")
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(state))
+
+    def test_native_search_hardware_input_requires_ordered_prefix_and_matching_terminal_shape(self):
+        original = self.native_search_hardware_input_evidence()
+        failure = dict(original["observations"][-1], stage="failure")
+        variants = [
+            dict(original, observations=original["observations"][:-1]),
+            dict(original, observations=original["observations"] * 2),
+            dict(original, observations=list(reversed(original["observations"]))),
+            dict(original, outcome="failed"), dict(original, outcome="failed", observations=[]),
+            dict(original, outcome="running"),
+            {key: value for key, value in original.items() if key != "completedAtMs"},
+            dict(original, outcome="failed", observations=[failure, failure]),
+            dict(original, outcome="failed", observations=[dict(failure, keysSent=4)]),
+            dict(original, outcome="failed", observations=[dict(failure, keysSent=-1)]),
+        ]
+        for missing in ("schemaVersion", "observations"):
+            variants.append({key: value for key, value in original.items() if key != missing})
+        missing_field = copy.deepcopy(original)
+        missing_field["observations"][0].pop("windowFocused")
+        variants.append(missing_field)
+        running_failure = dict(original, outcome="running", observations=[failure])
+        running_failure.pop("completedAtMs")
+        variants.append(running_failure)
+        for index, data in enumerate(variants):
+            with self.subTest(index=index), self.assertRaises(ValueError):
+                evidence.sanitize_native_search_hardware_input(data, 1000, 1600)
+
+    def test_native_search_hardware_input_rejects_stale_or_invalid_invocation_times(self):
+        for start, finish in ((1101, 1600), (1, 1099), (0, 1600), (1000, 0),
+                              (True, 1600), (1000, False), (1000.0, 1600)):
+            with self.subTest(start=start, finish=finish), self.assertRaises(ValueError):
+                evidence.sanitize_native_search_hardware_input(self.native_search_hardware_input_evidence(), start, finish)
+        data = self.native_search_hardware_input_evidence()
+        data["startedAtMs"] = 999
+        self.write_native_search_hardware_input_evidence(data)
+        with self.assertRaisesRegex(ValueError, "Stale native search hardware input evidence"):
+            evidence.collect_native_search_hardware_input(1000, 1600)
+
+    def test_native_search_hardware_input_read_is_bounded_and_rejects_duplicate_or_malformed_json(self):
+        path = self.write_native_search_hardware_input_evidence(self.native_search_hardware_input_evidence())
+        path.write_bytes(b" " * (evidence.NATIVE_SEARCH_HARDWARE_INPUT_MAX_BYTES + 1))
+        with self.assertRaisesRegex(ValueError, "Missing or oversized native search hardware input evidence"):
+            evidence.collect_native_search_hardware_input(1000, 1600)
+        valid = json.dumps(self.native_search_hardware_input_evidence()).encode()
+        for raw in (b'{"schemaVersion":1,"schemaVersion":1}', b"\xffPRIVATE_SENTINEL", b"PRIVATE_SENTINEL",
+                    valid.replace(b'"keysSent": 0', b'"keysSent": 0, "keysSent": 0')):
+            path.write_bytes(raw)
+            with self.subTest(raw=raw[:24]), self.assertRaisesRegex(ValueError, "Invalid native search hardware input evidence"):
+                evidence.collect_native_search_hardware_input(1000, 1600)
+
+    def test_native_search_hardware_input_rejects_file_and_both_parent_symlinks(self):
+        path = self.write_native_search_hardware_input_evidence(self.native_search_hardware_input_evidence())
+        for target in (path, path.parent, path.parent.parent):
+            alternate = target.with_name(target.name + "-target")
+            target.rename(alternate)
+            target.symlink_to(alternate, target_is_directory=alternate.is_dir())
+            try:
+                files, state = evidence.collect_native_search_hardware_input(1000, 1600)
+                self.assertEqual(files, {})
+                self.assertEqual(state, {"status": "missing-or-unreadable"})
+            finally:
+                target.unlink()
+                alternate.rename(target)
+        path.unlink()
+        path.mkdir()
+        files, state = evidence.collect_native_search_hardware_input(1000, 1600)
+        self.assertEqual(files, {})
+        self.assertEqual(state["status"], "missing-or-unreadable")
+
+    def test_native_search_hardware_input_survives_screenshot_failure_and_is_hashed_without_raw_text(self):
+        original = self.native_search_hardware_input_evidence()
+        self.write_native_search_hardware_input_evidence(original)
+        private = self.root / "device/cache/native-acceptance-diagnostics/private.json"
+        private.write_text("PRIVATE_SENTINEL")
+        command = evidence.exec_out_run_as("sh", "-c", 'printf "PRIVATE_SENTINEL\\n" >&2; exit 17')
+        with patch.object(evidence, "screenshot_command", return_value=command):
+            evidence.collect(self.root, 19, {"status": "app-process-not-observed",
+                             "gradleStartedAtMs": 1000, "gradleFinishedAtMs": 1600}, {})
+        with zipfile.ZipFile(self.root / evidence.OUTPUT / "evidence.zip") as saved:
+            state = json.loads(saved.read("collection-status.json"))
+            path = "diagnostics/native-search-hardware-input.json"
+            raw = saved.read(path)
+            self.assertEqual(json.loads(raw), original)
+            self.assertEqual(state["fileSha256"][path], hashlib.sha256(raw).hexdigest())
+            self.assertEqual(state["nativeSearchHardwareInput"]["status"], "captured")
+            self.assertEqual(state["screenshots"]["status"], "capture-failed")
+            self.assertEqual(state["gradleExitCode"], 19)
+            self.assertEqual(state["realServiceAcceptance"], "not-established")
+            self.assertNotIn(b"PRIVATE_SENTINEL", b"".join(saved.read(name) for name in saved.namelist()))
+        self.assertEqual(private.read_text(), "PRIVATE_SENTINEL")
+
+    def test_native_search_hardware_input_collection_requires_suite_and_app_access(self):
+        with patch.object(evidence, "collect_native_search_hardware_input", return_value=(
+                {}, {"status": "missing-or-unreadable"})) as collect:
+            for invocation in ("connected-suite", "owned-library-journey"):
+                evidence.collect(self.root, 19, {"status": "app-process-not-observed",
+                                 "gradleStartedAtMs": 1000, "gradleFinishedAtMs": 1600}, {}, invocation)
+                state = json.loads((self.root / Path(evidence.OUTPUT).parent / invocation / "collection-status.json").read_text())
+                self.assertEqual("nativeSearchHardwareInput" in state, invocation == "connected-suite")
+                self.assertEqual(state["gradleExitCode"], 19)
+            collect.assert_called_once_with(1000, 1600)
+            with patch.dict(os.environ, {"FAKE_APP_MISSING": "1"}):
+                evidence.collect(self.root, 19, {"status": "app-process-not-observed"}, {})
+            collect.assert_called_once()
+        state = json.loads((self.root / evidence.OUTPUT / "collection-status.json").read_text())
+        self.assertEqual(state["nativeSearchHardwareInput"], {
+            "status": "missing-or-unreadable", "reason": "package-not-installed"})
 
     def journey_manifest(self, directory="native-go-fixture-12345678-1234-4123-8123-123456789abc"):
         root = f"/data/user/0/{evidence.PACKAGE}/files/{directory}"
