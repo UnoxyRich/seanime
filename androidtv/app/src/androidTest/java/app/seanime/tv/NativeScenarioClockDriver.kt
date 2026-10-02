@@ -62,6 +62,15 @@ internal class NativeScenarioClockDriver(
         return operation(stage, null, block)
     }
 
+    /** ScrollBy queues test-dispatched work before Compose's synchronous bounds refetch. */
+    fun <T> withClockPumping(block: () -> T): T {
+        check(Thread.currentThread() === instrumentationThread)
+        return withOwnedTestClockPump(
+            advanceFrame = { compose.mainClock.advanceTimeByFrame() },
+            action = block,
+        )
+    }
+
     private fun <T> operation(kind: Operation, worker: Thread?, block: () -> T): T {
         val step = Active(kind, SystemClock.uptimeMillis())
         synchronized(outputLock) {

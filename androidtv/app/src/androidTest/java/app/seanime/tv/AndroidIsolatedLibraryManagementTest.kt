@@ -54,6 +54,7 @@ class AndroidIsolatedLibraryManagementTest {
     private val dpad = TvDpadInputRule()
     @get:Rule val rules: RuleChain = RuleChain.outerRule(dpad).around(compose)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+    private var scenarioClock: NativeScenarioClockDriver? = null
 
     @Test fun importedOwnedUnmatchedIndexSupportsNativeBulkRenameExplorerAndDelete() {
         val args = InstrumentationRegistry.getArguments()
@@ -103,7 +104,6 @@ class AndroidIsolatedLibraryManagementTest {
         val client = SeanimeApiClient()
         val repo = SeanimeRepository(client)
         var scenario: OwnedAsyncTestResource<ActivityScenario<MainActivity>>? = null
-        var scenarioClock: NativeScenarioClockDriver? = null
         var workflowFailure: Throwable? = null
         var started = false
         var originalHash: String? = null
@@ -195,7 +195,7 @@ class AndroidIsolatedLibraryManagementTest {
             val bulkActions = clock.observe(Operation.SCROLL_BULK_ACTIONS) { scrollMain("library-selected-actions") }
             clock.observe(Operation.OPEN_BULK) { bulkActions.performTvClick() }
             clock.observe(Operation.WAIT_BULK_FOCUS) { awaitFocused("library-bulk-match") }
-            clock.observe(Operation.SCROLL_BULK_IGNORE) { compose.onNodeWithTag("library-bulk-actions").performScrollToNode(hasTestTag("library-bulk-ignore")) }
+            clock.observe(Operation.SCROLL_BULK_IGNORE) { clock.withClockPumping { compose.onNodeWithTag("library-bulk-actions").performScrollToNode(hasTestTag("library-bulk-ignore")) } }
             clock.observe(Operation.CHOOSE_BULK_IGNORE) { compose.onNodeWithTag("library-bulk-ignore").performTvClick() }
             clock.observe(Operation.WAIT_BULK_CONFIRMATION) { awaitFocused("library-bulk-confirm-cancel") }
             clock.observe(Operation.VERIFY_PRE_APPLY) { verifyIsolation() }
@@ -309,10 +309,10 @@ class AndroidIsolatedLibraryManagementTest {
         compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes()
             .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
     }
-    private fun scrollMain(tag: String): SemanticsNodeInteraction {
+    private fun scrollMain(tag: String): SemanticsNodeInteraction = checkNotNull(scenarioClock).withClockPumping {
         compose.onNode(hasScrollToNodeAction() and SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange) and
             hasAnyAncestor(hasTestTag("native-content"))).performScrollToNode(hasTestTag(tag))
-        return compose.onNodeWithTag(tag).performScrollTo()
+        compose.onNodeWithTag(tag).performScrollTo()
     }
     private fun awaitTag(tag: String) = compose.waitUntil(15_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
     private fun awaitLibraryReady() = compose.waitUntil(30_000) {
