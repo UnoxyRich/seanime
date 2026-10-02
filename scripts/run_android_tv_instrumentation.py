@@ -95,6 +95,7 @@ isolated-go-external-open-focus
 isolated-go-external-receiver-streaming
 isolated-go-external-return-paused
 isolated-go-generated-local-media
+isolated-go-generated-local-media-resumed
 isolated-go-library-bulk-ignore
 isolated-go-library-delete-verified
 isolated-go-library-explorer
