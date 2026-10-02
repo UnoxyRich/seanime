@@ -2,6 +2,7 @@ package app.seanime.tv.data
 
 import kotlinx.coroutines.runBlocking
 import okhttp3.Dns
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.mockwebserver.MockResponse
@@ -9,9 +10,37 @@ import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
+import java.io.IOException
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.ProtocolException
+import java.net.Proxy
+import java.net.ProxySelector
+import java.net.SocketAddress
+import java.net.URI
+import java.net.UnknownHostException
 
 class MediaArtworkOriginTest {
+    private val loopback = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+    private val fixtureHosts = setOf("localhost", "127.0.0.1", "api.example", "provider.example")
+    private val fixtureDns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            if (hostname !in fixtureHosts) throw UnknownHostException("Unexpected fixture host")
+            return listOf(loopback)
+        }
+    }
+    private val fixtureProxySelector = object : ProxySelector() {
+        override fun select(uri: URI): List<Proxy> {
+            if (uri.host !in fixtureHosts) throw ProtocolException("Unexpected fixture host")
+            return listOf(Proxy.NO_PROXY)
+        }
+        override fun connectFailed(uri: URI, sa: SocketAddress, ioe: IOException) = Unit
+    }
+    private fun fixtureApi(url: String, token: String? = null) = SeanimeApiClient(url, token,
+        OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
+            .proxySelector(fixtureProxySelector).dns(fixtureDns).build())
+
+
     @Test fun customIdentityAndProviderFlagsCannotImpersonateServerArtwork() {
         val server = SeanimeJson.media(JSONObject("""{"id":2147483647,"coverImage":{"large":"http://192.168.1.2/cover.png"}}"""))
         assertFalse(server.providerArtwork())
@@ -35,8 +64,8 @@ class MediaArtworkOriginTest {
 
     @Test fun offlineStatusAuthorizesDetailEpisodesAndCollectionsWithoutTrustingOnlineMarkers() = runBlocking {
         MockWebServer().use { server ->
-            server.start()
-            SeanimeApiClient(server.url("/").toString()).use { api ->
+            server.start(loopback, 0)
+            fixtureApi(server.url("/").toString()).use { api ->
                 val repo = SeanimeRepository(api)
                 val id = MAX_NATIVE_MEDIA_ID
                 for (offline in listOf(false, true)) {
@@ -59,14 +88,29 @@ class MediaArtworkOriginTest {
 
     @Test fun customImageAtTheApiOriginMakesARealRequestWithoutServerCredentials() {
         MockWebServer().use { server ->
-            server.start(InetAddress.getByName("127.0.0.1"), 0)
+            server.start(loopback, 0)
             val url = server.url("/cover.png").newBuilder().host("api.example").build().toString()
             server.enqueue(MockResponse().setBody("fixture image"))
-            SeanimeApiClient(url, "server-secret").use { api ->
-                NativeImageTransport(api, object : Dns { override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1")) }).use { transport ->
-                    val media = MediaCard(MAX_NATIVE_MEDIA_ID, "Custom", imageUrl = url)
-                    val request = Request.Builder().url(url).tag(NativeImageTransport.SourceHeaders::class.java,
-                        NativeImageTransport.SourceHeaders(mapOf("X-Seanime-Token" to "forged-token"), media.providerArtwork())).build()
+            fixtureApi(url, "server-secret").use { api ->
+                val media = MediaCard(MAX_NATIVE_MEDIA_ID, "Custom", imageUrl = url)
+                val request = Request.Builder().url(url).tag(NativeImageTransport.SourceHeaders::class.java,
+                    NativeImageTransport.SourceHeaders(mapOf("X-Seanime-Token" to "forged-token"), media.providerArtwork())).build()
+                val originalDefault = ProxySelector.getDefault()
+                var proxySelections = 0
+                val hostileSelector = object : ProxySelector() {
+                    override fun select(uri: URI): List<Proxy> {
+                        proxySelections++
+                        return listOf(Proxy(Proxy.Type.HTTP, InetSocketAddress(loopback, server.port)))
+                    }
+                    override fun connectFailed(uri: URI, sa: SocketAddress, ioe: IOException) = Unit
+                }
+                // A per-client proxy reproduces the fixture failure without changing global routing.
+                NativeImageTransport(api, providerDns = fixtureDns, proxySelector = hostileSelector).use { transport ->
+                    assertThrows(ProtocolException::class.java) { transport.newCall(request).execute().close() }
+                    assertEquals(1, proxySelections)
+                    assertEquals(0, server.requestCount)
+                }
+                NativeImageTransport(api, providerDns = fixtureDns, proxySelector = fixtureProxySelector).use { transport ->
                     transport.newCall(request).execute().use { assertEquals("fixture image", it.body!!.string()) }
                     val received = server.takeRequest()
                     assertEquals("/cover.png", received.path)
@@ -76,16 +120,17 @@ class MediaArtworkOriginTest {
                     assertTrue(runCatching { transport.newCall(blocked) }.exceptionOrNull() is IllegalArgumentException)
                     assertEquals(1, server.requestCount)
                 }
+                assertSame(originalDefault, ProxySelector.getDefault())
             }
         }
     }
 
     @Test fun localAssetCapabilityHasNoCredentialsNoRedirectsAndNoApiOrTraversalAuthority() {
         MockWebServer().use { server ->
-            server.start()
+            server.start(loopback, 0)
             val id = MAX_NATIVE_MEDIA_ID
-            SeanimeApiClient(server.url("/").toString(), "server-secret").use { api ->
-                NativeImageTransport(api).use { transport ->
+            fixtureApi(server.url("/").toString(), "server-secret").use { api ->
+                NativeImageTransport(api, proxySelector = fixtureProxySelector).use { transport ->
                     fun asset(path: String, mediaId: Long = id): Request = Request.Builder().url(server.url(path))
                         .header("Authorization", "Bearer hidden").header("X-Image-Key", "hidden").header("Cookie", "hidden")
                         .tag(NativeImageTransport.SourceHeaders::class.java,

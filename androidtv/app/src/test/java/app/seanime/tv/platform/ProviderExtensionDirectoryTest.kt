@@ -1,6 +1,7 @@
 package app.seanime.tv.platform
 
 import java.io.File
+import java.nio.file.Files
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -11,9 +12,9 @@ class ProviderExtensionDirectoryTest {
 
     @Test fun absentAndDefaultConfigResolveSameGoDataDirectory() {
         val data = temporary.newFolder("data")
-        assertEquals(File(data, "extensions"), ProviderExtensionDirectory.resolve(data) { null })
+        assertEquals(File(data, "extensions").canonicalFile, ProviderExtensionDirectory.resolve(data) { null })
         File(data, "config.toml").writeText("[extensions]\ndir = '\$SEANIME_DATA_DIR/extensions'\n")
-        assertEquals(File(data, "extensions"), ProviderExtensionDirectory.resolve(data) { null })
+        assertEquals(File(data, "extensions").canonicalFile, ProviderExtensionDirectory.resolve(data) { null })
     }
 
     @Test fun tableDottedQuotedAndCaseInsensitiveFormsResolveExplicitCustomPath() {
@@ -28,7 +29,7 @@ class ProviderExtensionDirectoryTest {
         )
         configs.forEach { config ->
             File(data, "config.toml").writeText(config)
-            assertEquals(config, custom, ProviderExtensionDirectory.resolve(data) { null })
+            assertEquals(config, custom.canonicalFile, ProviderExtensionDirectory.resolve(data) { null })
         }
     }
 
@@ -36,8 +37,27 @@ class ProviderExtensionDirectoryTest {
         val data = temporary.newFolder("data")
         listOf("\${SEANIME_DATA_DIR}", "\$SEANIME_WORKING_DIR", "\$CUSTOM_PROVIDER_ROOT").forEach { variable ->
             File(data, "config.toml").writeText("[extensions]\ndir = '$variable/custom'")
-            assertEquals(File(data, "custom"), ProviderExtensionDirectory.resolve(data) { if (it == "CUSTOM_PROVIDER_ROOT") data.absolutePath else null })
+            assertEquals(File(data, "custom").canonicalFile, ProviderExtensionDirectory.resolve(data) { if (it == "CUSTOM_PROVIDER_ROOT") data.absolutePath else null })
         }
+    }
+
+    @Test fun symlinkedDataAndConfiguredDirectoriesResolveTheSameCanonicalPaths() {
+        val data = temporary.newFolder("data")
+        val dataAlias = File(temporary.root, "data-alias")
+        Files.createSymbolicLink(dataAlias.toPath(), data.canonicalFile.toPath())
+        assertTrue(Files.isSymbolicLink(dataAlias.toPath()))
+        val defaultDirectory = File(data, "extensions").canonicalFile
+        assertEquals(defaultDirectory, ProviderExtensionDirectory.resolve(data) { null })
+        assertEquals(defaultDirectory, ProviderExtensionDirectory.resolve(dataAlias) { null })
+
+        val custom = temporary.newFolder("custom #providers")
+        val customAlias = File(temporary.root, "custom-alias")
+        Files.createSymbolicLink(customAlias.toPath(), custom.canonicalFile.toPath())
+        assertTrue(Files.isSymbolicLink(customAlias.toPath()))
+        // Keep alias spellings in the inputs; the resolver must canonicalize both kinds of path.
+        File(data, "config.toml").writeText("[extensions]\ndir = '${customAlias.absolutePath}'")
+        assertEquals(custom.canonicalFile, ProviderExtensionDirectory.resolve(data) { null })
+        assertEquals(custom.canonicalFile, ProviderExtensionDirectory.resolve(dataAlias) { null })
     }
 
     @Test fun ambiguousUnsupportedRelativeAndUnresolvedPathsFailClosed() {

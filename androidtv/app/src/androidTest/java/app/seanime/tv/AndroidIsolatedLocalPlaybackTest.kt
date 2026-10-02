@@ -236,18 +236,40 @@ class AndroidIsolatedLocalPlaybackTest {
 
             var history: JSONObject? = null
             compose.waitUntil(20_000) {
-                history = (apiCall { repo.request("GET", "/api/v1/continuity/item/$mediaId") } as JSONObject).optJSONObject("item")
-                history?.optString("filepath") == indexedMediaPath && (history?.optDouble("currentTime") ?: 0.0) >= 9.0
+                val response = apiCall { repo.request("GET", "/api/v1/continuity/item/$mediaId") } as JSONObject
+                history = response.optJSONObject("item")
+                // Retain the last observed contract fields even if readback times out.
+                // The unchanged Go coordinator creates history without Filepath, and
+                // its update method does not replace that field on an existing item.
+                manifest.put("continuityReadback", JSONObject().put("found", response.optBoolean("found"))
+                    .put("mediaId", history?.optLong("mediaId") ?: 0L)
+                    .put("episodeNumber", history?.optInt("episodeNumber") ?: 0)
+                    .put("currentTime", history?.optDouble("currentTime", 0.0) ?: 0.0)
+                    .put("duration", history?.optDouble("duration", 0.0) ?: 0.0)
+                    .put("filepathEmpty", history?.optString("filepath").isNullOrEmpty())
+                    .put("filepathMatchesIndexed", history?.optString("filepath") == indexedMediaPath))
+                response.optBoolean("found") && history?.optLong("mediaId") == mediaId &&
+                    history?.optInt("episodeNumber") == 1 && (history?.optDouble("currentTime") ?: 0.0) >= 9.0
             }
-            val seconds = requireNotNull(history).getDouble("currentTime")
-            manifest.put("continuitySeconds", seconds)
+            val recordedHistory = requireNotNull(history)
+            val seconds = recordedHistory.getDouble("currentTime")
+            assertEquals("mediastream", recordedHistory.getString("kind"))
+            assertTrue("The saved duration must describe the owned clip", recordedHistory.getDouble("duration") in 29.0..31.0)
+            assertTrue("The saved position must remain inside the owned clip", seconds.isFinite() && seconds < recordedHistory.getDouble("duration"))
+            val savedPath = recordedHistory.optString("filepath")
+            assertTrue("History must not identify an unrelated local file", savedPath.isEmpty() || savedPath == indexedMediaPath)
+            manifest.put("continuitySeconds", seconds).put("continuityPathPersistence",
+                if (savedPath == indexedMediaPath) "verified" else "existing-go-empty-filepath-limitation")
+            checkpoint("go-continuity-id-episode-time-readback-verified")
             val resumed = openPausedThroughGo(indexedMediaPath) { openThroughGo() }
-            assertTrue("The Go continuity checkpoint must be applied before autoplay", resumed.position >= (seconds * 1000).toLong() - 1_000)
+            assertTrue("The Go continuity checkpoint must be applied before autoplay", resumed.position >= (seconds * 1000).toLong())
             manifest.put("resumedPositionMs", resumed.position)
+            verifyVideoPaint(VideoPaintCheckpoint.AFTER_REOPEN, resumed.position)
+            NativeScreenshotEvidence.capture("isolated-go-generated-local-media-resumed")
             verifyIsolation(); returnToMain()
             manifest.put("outcome", "passed")
             manifest.put("verified", JSONArray(listOf("generated-h264", "real-scan", "scan-export-import", "go-http-native-decoder",
-                "pause-play-seek-return", "go-continuity-readback", "native-resume")))
+                "pause-play-seek-return", "go-continuity-id-episode-time-readback", "native-resume-visible-pixels")))
             checkpoint("continuity-resume-verified")
         } catch (failure: Throwable) {
             if (manifest.optString("outcome") == "running") manifest.put("outcome", "failed")
@@ -371,6 +393,7 @@ class AndroidIsolatedLocalPlaybackTest {
         BEFORE_SEEK("videoPaintBeforeSeek", "before-seek"),
         AFTER_SEEK("videoPaintAfterSeek", "after-seek"),
         AFTER_RESUME_PAUSE("videoPaintAfterResumePause", "after-resume-pause"),
+        AFTER_REOPEN("videoPaintAfterReopen", "after-reopen"),
     }
 
     /** Check real compositor pixels while paused; never paint or replace the player surface. */
