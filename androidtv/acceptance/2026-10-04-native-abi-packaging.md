@@ -27,7 +27,7 @@ still receive their existing architecture and alignment checks. A complete
 single-ABI APK remains valid.
 
 No Kotlin runtime/UI source, Go source, API, schema, provider, network setting,
-signing identity or existing artifact was changed. Old output files and caches
+signing configuration or existing artifact was changed. Old output files and caches
 are preserved; consult current `output-metadata.json` instead of assuming every
 APK in an output directory was built by the latest single-ABI invocation.
 
@@ -44,8 +44,41 @@ APK in an output directory was built by the latest single-ABI invocation.
   `dc50bf45640e6e012796bfcb66057db50234acd1bbda0de14a04b50a3c9d11bb`,
   passes the corrected verifier with all seven native libraries. Its immutable
   bytes were recovered from the previously saved Library artifact and rehashed.
-- Gradle configuration and actual APK packaging validation are pending on the
-  cached Mac toolchain. No new APK or device result is claimed here.
+
+## Mac validation, 2026-10-04
+
+The cached Mac toolchain validated the exact published
+[R44 source `db3af2ab`](https://github.com/UnoxyRich/seanime/commit/db3af2ab7d99b15e00ce4a280c0bd0ec251b20f9),
+parent `eaf64784f333cbd30944165edfad5c217c62f19b`, tree
+`a08709fd0998106a3b0eea9fe5ec0dd588a7d3af`, in an isolated detached worktree.
+The known `gradlew.bat` checkout line-ending status was the only tracked status
+difference; no content change remained when ignoring end-of-line whitespace.
+
+- The same **11 Python tests passed**.
+- **Seven Gradle configuration cases passed**: unset/default both, explicit both,
+  ARM64-only, x86_64-only, repeated whitespace/multiline deduplication, blank
+  rejection and unsupported-value rejection. APK output ABI selection and the
+  FFmpeg process selection agreed.
+- Offline x86_64 `assembleDebug` **passed in 59 seconds**. It reused task-local
+  R43 native outputs whose FFmpeg build-script checksum matches R44 (`2444766455`).
+  Gradle ran offline; Go resolved dependencies from the existing local file cache.
+  The first attempt with `GOPROXY=off` stopped at Go Mobile initialization because
+  `gobind@latest` needed module resolution; the cached-resolution retry succeeded.
+- Current `output-metadata.json` names exactly one x86_64 APK. The verifier finds
+  **all seven native libraries**, including every required tool, with 16 KiB
+  ELF/ZIP alignment.
+
+The validation APK is `app-x86_64-debug.apk`, 72,875,481 bytes, package
+`app.seanime.tv`, version `3.10.3` / code `3010003`:
+
+- APK SHA-256: `d897fd433148c0aa99b2d9e29009fb58d343f4ac39994ff729d779f6c87b9ebf`
+- Signer certificate SHA-256: `55191c377ace14f43280f973bdb55cbb0b3588dc030714bd2cd691ab02314ccf`
+
+Its signer differs from the delivered Mac preview's certificate
+(`71f5eab50002408a822bebb66433bdf555ba3756fcb174e5d406874cce01953f`).
+It was **not installed** and did not replace Desktop APKs or user data.
+ARM64/default-both assembly, x86_64 runtime/UI, broad CI and provider requests
+were **not run** for this correction. The build result is not a playback result.
 
 Official split behavior: [Android multiple-APK configuration](https://developer.android.com/build/configure-apk-splits).
 
