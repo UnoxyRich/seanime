@@ -21,7 +21,16 @@ val generatedAnime4KAssets = layout.buildDirectory.dir("generated/anime4kAssets"
 val generatedAnime4KShader = generatedAnime4KAssets.map {
     it.file("anime4k/Anime4K_Upscale_GAN_x4_UUL.glsl")
 }
-val ffmpegBuildAbis = providers.environmentVariable("SEANIME_ANDROID_ABIS").orElse("arm64-v8a x86_64")
+// A partial native build must only emit APKs for the ABIs it actually supplies.
+// Normalize once, including newlines, before passing the value to the shell.
+val androidBuildAbis = providers.environmentVariable("SEANIME_ANDROID_ABIS")
+    .orElse("arm64-v8a x86_64").get()
+    .split(Regex("\\s+")).filter(String::isNotBlank).distinct()
+    .also { abis ->
+        if (abis.isEmpty() || abis.any { it !in setOf("arm64-v8a", "x86_64") }) {
+            throw GradleException("SEANIME_ANDROID_ABIS must select arm64-v8a, x86_64, or both")
+        }
+    }
 val ffmpegBuildConfigChecksum = providers.provider {
     providers.exec {
         commandLine("cksum", ffmpegSourceScript.absolutePath)
@@ -112,7 +121,7 @@ android {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a", "x86_64")
+            include(*androidBuildAbis.toTypedArray())
             isUniversalApk = false
         }
     }
@@ -213,12 +222,12 @@ val generateAnime4KAssets by tasks.registering {
 
 val buildAndroidFfmpeg by tasks.registering(Exec::class) {
     inputs.file(ffmpegSourceScript)
-    inputs.property("abis", ffmpegBuildAbis)
+    inputs.property("abis", androidBuildAbis)
     outputs.dir(ffmpegJniLibs)
     outputs.dir(ffmpegMetadata)
     onlyIf("Android FFmpeg binaries are missing or built from a different toolchain script") {
         val expectedChecksum = ffmpegBuildConfigChecksum.get()
-        ffmpegBuildAbis.get().split(Regex("\\s+")).filter(String::isNotBlank).any { abi ->
+        androidBuildAbis.any { abi ->
             val binariesExist = listOf("libffmpeg.so", "libffprobe.so").all { filename ->
                 ffmpegJniLibs.resolve("$abi/$filename").isFile
             }
@@ -229,6 +238,7 @@ val buildAndroidFfmpeg by tasks.registering(Exec::class) {
     }
     workingDir = repoRoot
     environment("ANDROID_NDK_HOME", gomobileNdkPath.get())
+    environment("SEANIME_ANDROID_ABIS", androidBuildAbis.joinToString(" "))
     commandLine("bash", ffmpegSourceScript.absolutePath)
 }
 

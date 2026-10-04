@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check all native ELF load segments and uncompressed .so ZIP offsets in APKs."""
+"""Check required Seanime native tools, ELF alignment and .so ZIP offsets in APKs."""
 
 import argparse
 from pathlib import Path
@@ -11,6 +11,7 @@ PAGE_SIZE = 16 * 1024
 ELF_HEADER = struct.Struct("<16sHHIQQQIHHHHHH")
 PROGRAM_HEADER = struct.Struct("<IIQQQQQQ")
 MACHINES = {"arm64-v8a": 183, "x86_64": 62}
+REQUIRED_LIBRARIES = {"libgojni.so", "libffmpeg.so", "libffprobe.so", "libc++_shared.so"}
 
 
 def check_elf(stream, size, abi):
@@ -48,6 +49,7 @@ def check_elf(stream, size, abi):
 def check_apk(path):
     failures = []
     libraries = 0
+    libraries_by_abi = {}
     with zipfile.ZipFile(path) as archive, open(path, "rb") as raw:
         for entry in archive.infolist():
             parts = entry.filename.split("/")
@@ -58,6 +60,7 @@ def check_apk(path):
             if abi not in MACHINES:
                 failures.append(f"{entry.filename}: unexpected ABI {abi}")
                 continue
+            libraries_by_abi.setdefault(abi, set()).add(parts[2])
             with archive.open(entry) as stream:
                 errors = check_elf(stream, entry.file_size, abi)
             # Compressed libraries are extracted by Android's installer. Stored
@@ -73,6 +76,9 @@ def check_apk(path):
                     if data_offset % PAGE_SIZE:
                         errors.append(f"uncompressed ZIP data offset {data_offset} is not 16 KiB aligned")
             failures.extend(f"{entry.filename}: {error}" for error in errors)
+    for abi, present in sorted(libraries_by_abi.items()):
+        for missing in sorted(REQUIRED_LIBRARIES - present):
+            failures.append(f"lib/{abi}/{missing}: required native library is missing")
     if not libraries:
         failures.append("APK contains no native libraries")
     return libraries, failures
@@ -93,7 +99,7 @@ def main():
             for error in errors:
                 print(f"FAIL {path}: {error}", file=sys.stderr)
         else:
-            print(f"PASS {path}: {libraries} native libraries have 16 KiB ELF/ZIP alignment")
+            print(f"PASS {path}: required native tools present; {libraries} native libraries have 16 KiB ELF/ZIP alignment")
     return int(failed)
 
 

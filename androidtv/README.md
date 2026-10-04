@@ -43,6 +43,16 @@ ABI-split APKs. The original `mobile/web/.gitkeep` satisfies Go's unchanged embe
 directive; there is no generated frontend bundle. Keep build/dependency caches.
 `SEANIME_GO_BUILD_PARALLELISM` controls Go workers (default 2).
 
+To build one installable ABI, set `SEANIME_ANDROID_ABIS=arm64-v8a` or
+`SEANIME_ANDROID_ABIS=x86_64`. The same selection controls FFmpeg generation
+and APK splits; leaving it unset builds both. Empty or unsupported selections
+fail during configuration. The shared gomobile AAR and NDK runtime staging still
+contain both ABIs so their caches can be reused when switching the APK selection.
+Use the current variant's `output-metadata.json` to identify newly built APKs;
+older outputs for another ABI may remain in the build directory. Before sharing
+an APK, run the verifier below: it requires the Go host, FFmpeg, FFprobe and C++
+runtime in every packaged ABI, as well as checking ELF and ZIP alignment.
+
 The Android bind uses a generated driver module and a checksum-verified copy of
 `modernc.org/libc v1.41.0` under `app/build/generated`. Its Android/amd64 adapter
 maps legacy Linux filesystem calls to Android-permitted equivalents; the pinned
