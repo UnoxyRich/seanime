@@ -149,6 +149,7 @@ list-entry-main-status-focus
 manga-discovery-filtered-page-restoration
 manga-language-filter-remote-focus
 manga-queue-live-terminal-clear
+manga-reader-fullscreen-default-spread-fixture
 manga-reader-rtl-two-page-fixture
 manga-reader-wide-page-cover-fixture
 manga-scanlator-filter-retry-draft
