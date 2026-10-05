@@ -1,5 +1,7 @@
 package app.seanime.tv.ui
 
+import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent
 import androidx.compose.runtime.*
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -19,6 +21,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
+import java.io.File
 import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
@@ -111,8 +114,25 @@ class NativeLibraryManagementTest {
         compose.onNodeWithTag("library-rename-preview").assertTextContains("Preview: /owned/Renamed episode.mkv")
         awaitFocused("library-rename-confirm")
         NativeScreenshotEvidence.capture("library-rename-retained-filename")
-        remote(KeyEvent.KEYCODE_DPAD_CENTER)
-        awaitFocused("library-tools-refresh")
+        val retryStartedAtMs = System.currentTimeMillis()
+        var retryStage = "retry-input"
+        try {
+            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+            // Separate delivery/acknowledgement from focus restoration within the
+            // original 15-second post-input deadline, without adding wait time.
+            val retryDeadline = SystemClock.elapsedRealtime() + 15_000
+            retryStage = "retry-requests"
+            compose.waitUntil((retryDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)) { fixture.renames.size == 2 }
+            retryStage = "retry-dismissal"
+            compose.waitUntil((retryDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)) {
+                compose.onAllNodesWithTag("library-rename-dialog").fetchSemanticsNodes().isEmpty()
+            }
+            retryStage = "refresh-focus"
+            awaitFocused("library-tools-refresh", (retryDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(1))
+        } catch (failure: Throwable) {
+            captureRenameRetryFailure(fixture, retryStage, retryStartedAtMs)
+            throw failure
+        }
         assertEquals(2, fixture.renames.size)
         fixture.renames.forEach { body ->
             assertEquals(setOf("files"), body.keys().asSequence().toSet())
@@ -178,9 +198,56 @@ class NativeLibraryManagementTest {
         return compose.onNodeWithTag(tag).performScrollTo()
     }
     private fun awaitTag(tag: String) = compose.waitUntil(15_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
-    private fun awaitFocused(tag: String) = compose.waitUntil(15_000) {
+    private fun awaitFocused(tag: String, timeoutMillis: Long = 15_000) = compose.waitUntil(timeoutMillis) {
         compose.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes()
             .any { (it.root as ViewRootForTest).view.hasWindowFocus() }
+    }
+    private fun captureRenameRetryFailure(fixture: Fixture, stage: String, startedAtMs: Long) {
+        // Only fixed fixture controls and bounded observations are retained. Never
+        // serialize semantics trees, text, filenames, request bodies or exceptions.
+        runCatching {
+            val diagnostic = JSONObject().put("schemaVersion", 1).put("scenario", "native-library-rename-retry")
+                .put("outcome", "failed").put("stage", stage).put("startedAtMs", startedAtMs)
+                .put("renameRequestCount", fixture.renames.size.coerceAtMost(100))
+                .put("observationsAvailable", false).put("rootCount", 0).put("roots", JSONArray())
+                .put("controls", JSONObject()).put("focusedControls", JSONArray())
+            runCatching {
+                val controls = linkedMapOf("dialog" to "library-rename-dialog", "error" to "library-rename-error",
+                    "confirm" to "library-rename-confirm", "refresh" to "library-tools-refresh")
+                val observations = JSONObject()
+                controls.forEach { (name, tag) ->
+                    val nodes = compose.onAllNodesWithTag(tag).fetchSemanticsNodes()
+                    observations.put(name, JSONObject().put("count", nodes.size.coerceAtMost(100))
+                        .put("focused", nodes.any { it.config.getOrElse(SemanticsProperties.Focused) { false } })
+                        .put("enabled", nodes.any { SemanticsProperties.Disabled !in it.config })
+                        .put("windowFocused", nodes.any { (it.root as ViewRootForTest).view.hasWindowFocus() }))
+                }
+                val roots = compose.onAllNodes(isRoot()).fetchSemanticsNodes()
+                val rootStates = roots.take(8).map { root ->
+                    val view = (root.root as ViewRootForTest).view
+                    JSONObject().put("attached", view.isAttachedToWindow).put("laidOut", view.isLaidOut)
+                        .put("windowFocused", view.hasWindowFocus())
+                }
+                val focused = compose.onAllNodes(isFocused()).fetchSemanticsNodes().map { node ->
+                    when (node.config.getOrElse(SemanticsProperties.TestTag) { "" }) {
+                        "library-tools-refresh" -> "refresh"
+                        "library-rename-confirm" -> "confirm"
+                        "library-rename-edit" -> "edit"
+                        "library-rename-cancel" -> "cancel"
+                        else -> "other"
+                    }
+                }.distinct().sorted()
+                diagnostic.put("observationsAvailable", true).put("rootCount", roots.size.coerceAtMost(100))
+                    .put("roots", JSONArray(rootStates)).put("controls", observations).put("focusedControls", JSONArray(focused))
+            }
+            diagnostic.put("completedAtMs", System.currentTimeMillis())
+            val file = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,
+                "native-acceptance-diagnostics/native-library-rename-retry.json")
+            check(file.parentFile?.let { it.isDirectory || it.mkdirs() } == true)
+            file.writeText(diagnostic.toString(2))
+        }.onFailure { Log.e("NativeLibraryRename", "Unable to retain sanitized retry diagnostic") }
+        runCatching { NativeScreenshotEvidence.capture("library-rename-retry-failure") }
+            .onFailure { Log.e("NativeLibraryRename", "Unable to retain retry fixture screenshot") }
     }
     private fun JSONArray.strings() = (0 until length()).map { getString(it) }.toSet()
 

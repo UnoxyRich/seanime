@@ -93,6 +93,9 @@ PLUGIN_STARTUP_TESTS = (
     "relativeAnchorItemsNavigateNativelyAndHandlerLinksKeepTheirCallbackContract",
 )
 PLUGIN_STARTUP_MAX_BYTES = 8192
+NATIVE_LIBRARY_RENAME_RETRY_PATH = "cache/native-acceptance-diagnostics/native-library-rename-retry.json"
+NATIVE_LIBRARY_RENAME_RETRY_MAX_BYTES = 8192
+NATIVE_LIBRARY_RENAME_RETRY_TEST = "app.seanime.tv.ui.NativeLibraryManagementTest#renamePreviewCancelAndFailureRetainTheFilenameUntilServerAck"
 NATIVE_SEARCH_HARDWARE_INPUT_PATH = "cache/native-acceptance-diagnostics/native-search-hardware-input.json"
 NATIVE_SEARCH_HARDWARE_INPUT_MAX_BYTES = 8192
 NATIVE_SEARCH_HARDWARE_INPUT_TEST = "app.seanime.tv.AndroidTvStartupTest#remoteLetterKeysEnterNativeSearchWithoutStealingCursorFocus"
@@ -147,6 +150,7 @@ library-fixture-restored-card-focus
 library-folder-typed-match-preview
 library-multi-file-confirm-retry
 library-rename-retained-filename
+library-rename-retry-failure
 list-entry-main-status-focus
 manga-discovery-filtered-page-restoration
 manga-language-filter-remote-focus
@@ -332,6 +336,8 @@ def capture_failure(error):
         "Missing or oversized owned fixture manifest",
         "Invalid player lifecycle evidence", "Stale player lifecycle evidence",
         "Invalid plugin startup evidence", "Stale plugin startup evidence", "Missing or oversized plugin startup evidence",
+        "Invalid native library rename retry evidence", "Stale native library rename retry evidence",
+        "Missing or oversized native library rename retry evidence",
         "Missing or oversized player lifecycle evidence",
         "Invalid native search hardware input evidence", "Stale native search hardware input evidence",
         "Missing or oversized native search hardware input evidence",
@@ -676,6 +682,78 @@ def collect_plugin_startup(started_at_ms, finished_at_ms):
             tests[test_name] = capture_failure(error)
     return files, {"status": "captured" if files else "not-captured", "snapshotCount": len(files), "tests": tests,
                    "note": "On-failure fixture startup observations only; absence is not proof of a passing test. Correlate with JUnit outcome."}
+
+
+def sanitize_native_library_rename_retry(data, started_at_ms, finished_at_ms):
+    """Keep bounded fixture counts and fixed focus flags; reject text and payloads."""
+    def require(condition):
+        if not condition:
+            raise ValueError("Invalid native library rename retry evidence")
+
+    def integer(value, low, high):
+        return type(value) is int and low <= value <= high
+
+    fields = {"schemaVersion", "scenario", "outcome", "stage", "startedAtMs", "completedAtMs",
+              "renameRequestCount", "observationsAvailable", "rootCount", "roots", "controls", "focusedControls"}
+    require(type(data) is dict and data.keys() == fields)
+    require(type(data["schemaVersion"]) is int and data["schemaVersion"] == 1)
+    require(data["scenario"] == "native-library-rename-retry" and data["outcome"] == "failed")
+    require(data["stage"] in ("retry-input", "retry-requests", "retry-dismissal", "refresh-focus"))
+    require(integer(started_at_ms, 1, 9_007_199_254_740_991) and integer(finished_at_ms, started_at_ms, 9_007_199_254_740_991))
+    require(integer(data["startedAtMs"], 1, 9_007_199_254_740_991))
+    if not started_at_ms <= data["startedAtMs"] <= finished_at_ms:
+        raise ValueError("Stale native library rename retry evidence")
+    require(integer(data["completedAtMs"], data["startedAtMs"], finished_at_ms))
+    require(integer(data["renameRequestCount"], 0, 100) and integer(data["rootCount"], 0, 100))
+    require(type(data["observationsAvailable"]) is bool)
+    require(type(data["roots"]) is list and len(data["roots"]) == min(data["rootCount"], 8))
+    for root in data["roots"]:
+        require(type(root) is dict and root.keys() == {"attached", "laidOut", "windowFocused"})
+        require(all(type(value) is bool for value in root.values()))
+    controls = data["controls"]
+    require(type(controls) is dict)
+    require(controls.keys() == ({"dialog", "error", "confirm", "refresh"} if data["observationsAvailable"] else set()))
+    for node in controls.values():
+        require(type(node) is dict and node.keys() == {"count", "focused", "enabled", "windowFocused"})
+        require(integer(node["count"], 0, 100))
+        require(all(type(node[key]) is bool for key in ("focused", "enabled", "windowFocused")))
+        require(node["count"] > 0 or not any(node[key] for key in ("focused", "enabled", "windowFocused")))
+    focused = data["focusedControls"]
+    require(type(focused) is list and len(focused) <= 5)
+    require(all(type(value) is str and value in ("refresh", "confirm", "edit", "cancel", "other") for value in focused))
+    require(focused == sorted(set(focused)))
+    require(data["observationsAvailable"] or (data["rootCount"] == 0 and not focused))
+    return data
+
+
+def collect_native_library_rename_retry(started_at_ms, finished_at_ms):
+    # The same fixed-path, bounded read used by the other on-failure diagnostics.
+    path, limit = NATIVE_LIBRARY_RENAME_RETRY_PATH, NATIVE_LIBRARY_RENAME_RETRY_MAX_BYTES
+    script = ('[ ! -L cache ] && [ ! -L cache/native-acceptance-diagnostics ] && '
+              f'[ ! -L {path} ] && [ -f {path} ] || exit 2; exec head -c {limit + 1} {path}')
+    result = subprocess.run(exec_out_run_as("sh", "-c", script), stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, timeout=10)
+    if result.returncode != 0 or not result.stdout:
+        return {}, {"status": "missing-or-unreadable"}
+    if len(result.stdout) > limit:
+        raise ValueError("Missing or oversized native library rename retry evidence")
+
+    def unique_object(pairs):
+        value = {}
+        for key, entry in pairs:
+            if key in value:
+                raise ValueError("Invalid native library rename retry evidence")
+            value[key] = entry
+        return value
+
+    try:
+        data = json.loads(result.stdout, object_pairs_hook=unique_object)
+    except (ValueError, UnicodeDecodeError):
+        raise ValueError("Invalid native library rename retry evidence") from None
+    clean = sanitize_native_library_rename_retry(data, started_at_ms, finished_at_ms)
+    return {"diagnostics/native-library-rename-retry.json": json_bytes(clean)}, {
+        "status": "captured", "stage": clean["stage"],
+        "note": "On-failure generated fixture observations only; correlate with JUnit outcome."}
 
 
 def sanitize_native_search_hardware_input(data, started_at_ms, finished_at_ms):
@@ -1531,6 +1609,7 @@ def collect(root, status, recording, video, invocation="connected-suite", comman
                 manifest["pluginStartup"] = capture_failure(error)
     selected_methods = [arg for arg in (command or COMMAND) if arg.startswith(RUNNER_ARGUMENT + "class=")]
     for key, selector, collector in (
+            ("nativeLibraryRenameRetry", NATIVE_LIBRARY_RENAME_RETRY_TEST, collect_native_library_rename_retry),
             ("nativeSearchHardwareInput", NATIVE_SEARCH_HARDWARE_INPUT_TEST, collect_native_search_hardware_input),
             ("nativeSettingsPreservation", NATIVE_SETTINGS_PRESERVATION_TEST, collect_native_settings_preservation)):
         if invocation != "connected-suite" and selected_methods != [RUNNER_ARGUMENT + "class=" + selector]:

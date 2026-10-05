@@ -700,6 +700,100 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
                 self.assertEqual("pluginStartup" in manifest, invocation == "connected-suite")
             collect.assert_called_once_with(1000, 1600)
 
+    def native_library_rename_retry_evidence(self):
+        return {"schemaVersion": 1, "scenario": "native-library-rename-retry", "outcome": "failed",
+                "stage": "refresh-focus", "startedAtMs": 1100, "completedAtMs": 1500,
+                "renameRequestCount": 2, "observationsAvailable": True, "rootCount": 1,
+                "roots": [{"attached": True, "laidOut": True, "windowFocused": True}],
+                "controls": {name: {"count": int(name == "refresh"), "focused": False,
+                                    "enabled": name == "refresh", "windowFocused": name == "refresh"}
+                             for name in ("dialog", "error", "confirm", "refresh")},
+                "focusedControls": ["other"]}
+
+    def write_native_library_rename_retry_evidence(self, data):
+        path = self.root / "device" / evidence.NATIVE_LIBRARY_RENAME_RETRY_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+        return path
+
+    def test_rename_retry_failure_is_hashed_for_full_and_exact_method_runs_without_changing_result(self):
+        original = self.native_library_rename_retry_evidence()
+        self.write_native_library_rename_retry_evidence(original)
+        for invocation, command in (("connected-suite", list(evidence.COMMAND)),
+                ("focused-rename", evidence.COMMAND + [evidence.RUNNER_ARGUMENT + "class=" + evidence.NATIVE_LIBRARY_RENAME_RETRY_TEST])):
+            with self.subTest(invocation=invocation):
+                evidence.collect(self.root, 19, {"gradleStartedAtMs": 1000, "gradleFinishedAtMs": 1600}, {}, invocation, command)
+                with zipfile.ZipFile(self.root / Path(evidence.OUTPUT).parent / invocation / "evidence.zip") as saved:
+                    state = json.loads(saved.read("collection-status.json"))
+                    path = "diagnostics/native-library-rename-retry.json"
+                    raw = saved.read(path)
+                    self.assertEqual(json.loads(raw), original)
+                    self.assertEqual(state["fileSha256"][path], hashlib.sha256(raw).hexdigest())
+                    self.assertEqual(state["nativeLibraryRenameRetry"]["status"], "captured")
+                    self.assertEqual(state["gradleExitCode"], 19)
+
+    def test_rename_retry_sanitizer_rejects_private_data_and_invalid_observations(self):
+        for field, value in (("text", "PRIVATE_SENTINEL"), ("stage", "PRIVATE_SENTINEL"),
+                ("renameRequestCount", True), ("renameRequestCount", 101), ("schemaVersion", True),
+                ("observationsAvailable", 1), ("rootCount", 9), ("startedAtMs", True),
+                ("completedAtMs", 1601), ("focusedControls", ["PRIVATE_SENTINEL"]),
+                ("focusedControls", ["other", "other"]), ("outcome", "passed"),
+                ("roots", [{"attached": True, "laidOut": True, "windowFocused": "PRIVATE_SENTINEL"}])):
+            data = self.native_library_rename_retry_evidence()
+            data[field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError) as rejected:
+                evidence.sanitize_native_library_rename_retry(data, 1000, 1600)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(evidence.capture_failure(rejected.exception)))
+        for mutation in (lambda data: data["controls"]["refresh"].update(text="PRIVATE_SENTINEL"),
+                         lambda data: data["controls"]["dialog"].update(focused=True)):
+            data = self.native_library_rename_retry_evidence()
+            mutation(data)
+            with self.assertRaises(ValueError):
+                evidence.sanitize_native_library_rename_retry(data, 1000, 1600)
+        data = self.native_library_rename_retry_evidence()
+        data.update(observationsAvailable=False, rootCount=0, roots=[], controls={}, focusedControls=[])
+        self.assertEqual(evidence.sanitize_native_library_rename_retry(data, 1000, 1600), data)
+
+    def test_rename_retry_reader_bounds_bytes_rejects_duplicates_and_symlinks(self):
+        path = self.write_native_library_rename_retry_evidence(self.native_library_rename_retry_evidence())
+        for raw in (b" " * (evidence.NATIVE_LIBRARY_RENAME_RETRY_MAX_BYTES + 1),
+                    b'{"schemaVersion":1,"schemaVersion":1}', b"PRIVATE_SENTINEL"):
+            path.write_bytes(raw)
+            with self.subTest(raw=raw[:40]), self.assertRaises(ValueError) as rejected:
+                evidence.collect_native_library_rename_retry(1000, 1600)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(evidence.capture_failure(rejected.exception)))
+        path.unlink()
+        private = self.root / "private.json"
+        private.write_text("PRIVATE_SENTINEL")
+        path.symlink_to(private)
+        files, state = evidence.collect_native_library_rename_retry(1000, 1600)
+        self.assertFalse(files)
+        self.assertEqual(state["status"], "missing-or-unreadable")
+        path.unlink()
+        path.parent.rmdir()
+        path.parent.symlink_to(self.root, target_is_directory=True)
+        self.assertEqual(evidence.collect_native_library_rename_retry(1000, 1600)[1]["status"], "missing-or-unreadable")
+
+    def test_rename_retry_collection_requires_matching_invocation_access_and_freshness(self):
+        selector = evidence.NATIVE_LIBRARY_RENAME_RETRY_TEST
+        for selectors in ([], [selector.split("#")[0]], [selector + "Other"], [selector, selector],
+                          [selector + "," + evidence.NATIVE_SEARCH_HARDWARE_INPUT_TEST]):
+            command = evidence.COMMAND + [evidence.RUNNER_ARGUMENT + "class=" + value for value in selectors]
+            with self.subTest(selectors=selectors), patch.object(evidence, "collect_native_library_rename_retry") as collector:
+                evidence.collect(self.root, 19, {"gradleStartedAtMs": 1000, "gradleFinishedAtMs": 1600}, {}, "focused-rename", command)
+                collector.assert_not_called()
+        command = evidence.COMMAND + [evidence.RUNNER_ARGUMENT + "class=" + selector]
+        self.write_native_library_rename_retry_evidence(self.native_library_rename_retry_evidence())
+        with patch.dict(os.environ, {"FAKE_APP_MISSING": "1"}), patch.object(evidence, "collect_native_library_rename_retry") as collector:
+            evidence.collect(self.root, 19, {}, {}, "focused-rename", command)
+            collector.assert_not_called()
+        evidence.collect(self.root, 19, {"gradleStartedAtMs": 2000, "gradleFinishedAtMs": 2100}, {}, "focused-rename", command)
+        with zipfile.ZipFile(self.root / Path(evidence.OUTPUT).parent / "focused-rename/evidence.zip") as saved:
+            state = json.loads(saved.read("collection-status.json"))
+            self.assertEqual(state["nativeLibraryRenameRetry"]["reason"], "Stale native library rename retry evidence")
+            self.assertEqual(state["gradleExitCode"], 19)
+            self.assertNotIn("diagnostics/native-library-rename-retry.json", saved.namelist())
+
     def native_search_hardware_input_evidence(self):
         observations = []
         for stage, keys in evidence.NATIVE_SEARCH_HARDWARE_INPUT_STAGES:
