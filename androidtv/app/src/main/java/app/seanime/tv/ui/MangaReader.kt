@@ -22,12 +22,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import app.seanime.tv.data.*
@@ -38,6 +45,10 @@ import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.memory.MemoryCache
 import coil.request.ImageRequest
+import coil.request.CachePolicy
+import coil.request.SuccessResult
+import coil.size.Scale
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -502,15 +513,24 @@ internal fun MangaReader(
     var zoom by rememberSaveable { mutableFloatStateOf(1f) }
     var panX by remember { mutableFloatStateOf(0f) }
     var panY by remember { mutableFloatStateOf(0f) }
+    var controlsVisible by rememberSaveable(resumeKey) { mutableStateOf(false) }
     var jumpDialog by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
     var automaticProgress by remember(resumeKey) { mutableStateOf(false) }
     var automaticProgressError by remember(resumeKey) { mutableStateOf<String?>(null) }
     var automaticProgressAttempted by remember(resumeKey) { mutableStateOf(false) }
     var renderedPages by remember(resumeKey) { mutableStateOf<Set<Int>>(emptySet()) }
+    var failedPages by remember(resumeKey) { mutableStateOf<Set<Int>>(emptySet()) }
+    var pageRetries by remember(resumeKey) { mutableStateOf<Map<Int, Int>>(emptyMap()) }
+    // A failed batch retries only after page/mode/source changes, not every dimension update.
+    var failedDimensionProbes by remember(resumeKey, page, doublePage, pages) { mutableStateOf<Set<Int>>(emptySet()) }
     var knownProgress by remember(resumeKey) { mutableIntStateOf(media.progress) }
     val imageFocus = remember { FocusRequester() }
     val imageFocusGranted = remember(resumeKey) { mutableStateOf(false) }
+    val controlsFocus = remember { FocusRequester() }
+    val controlsFocusGranted = remember(resumeKey) { mutableStateOf(false) }
+    val pageListRetryFocus = remember { FocusRequester() }
+    val pageListRetryGranted = remember(action.error) { mutableStateOf(false) }
     suspend fun loadPages(withDimensions: Boolean = doublePage) {
         if (chapter.raw.optBoolean("localIsPDF")) {
             val document = pdfDocument ?: run {
@@ -559,6 +579,27 @@ internal fun MangaReader(
     }
     val spreads = remember(pages, pageDimensions, doublePage, coverAlone) { MangaPagination.spreads(pages, pageDimensions, doublePage, coverAlone) }
     val visiblePages = MangaPagination.visible(page, spreads)
+    val dimensionProbes = MangaPagination.dimensionProbePositions(page, pages, pageDimensions, doublePage, coverAlone)
+        .filter { it !in failedDimensionProbes }
+    LaunchedEffect(imageLoader, resumeKey, pages, page, doublePage, coverAlone, pdfDocument, dimensionProbes) {
+        if (pdfDocument != null || dimensionProbes.isEmpty()) return@LaunchedEffect
+        val sourcePages = pages
+        val result = probeMangaDimensions(sourcePages, dimensionProbes) { source ->
+            // Coil's FIT downsampling preserves orientation/aspect; no stretched square or full-size prefetch.
+            // Use the identical guarded transport provenance, with no probe pixels entering the display cache.
+            val request = ImageRequest.Builder(imageContext).data(source.url).size(512).scale(Scale.FIT)
+                .memoryCachePolicy(CachePolicy.DISABLED)
+                .tag(NativeImageTransport.SourceHeaders::class.java, NativeImageTransport.SourceHeaders(source.headers, source.providerResult))
+                .build()
+            val image = withTimeoutOrNull(30_000) { imageLoader.execute(request) } as? SuccessResult
+            image?.drawable?.let { MangaPageDimensions(it.intrinsicWidth, it.intrinsicHeight) }
+        }
+        if (sourcePages == pages) {
+            // Keep provider/visible-image metadata if it arrived during the probe. Never add to renderedPages.
+            pageDimensions = result.dimensions + pageDimensions
+            failedDimensionProbes = failedDimensionProbes + result.failedPositions
+        }
+    }
     LaunchedEffect(automaticProgress, loaded, visiblePages, pages.size, renderedPages, action.busy) {
         if (automaticProgress && loaded && !automaticProgressAttempted && !action.busy && mangaChapterProgress(chapter.number) != null &&
             mangaEndPageRendered(visiblePages, pages.size, renderedPages)) {
@@ -578,26 +619,61 @@ internal fun MangaReader(
         if (providerIndex !in pageDimensions && width > 0 && height > 0)
             pageDimensions = pageDimensions + (providerIndex to MangaPageDimensions(width, height))
     }
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
-        Column(Modifier.fillMaxSize().testTag("manga-reader").background(Color(0xFF080B10)).padding(horizontal = 36.dp, vertical = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Column(Modifier.weight(1f)) {
-                    Text(media.title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(chapter.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    fun hideControls() {
+        controlsVisible = false
+        imageFocusGranted.value = false
+        pageListRetryGranted.value = false
+    }
+    fun showControls() {
+        controlsVisible = true
+        controlsFocusGranted.value = false
+    }
+    LaunchedEffect(action.error) {
+        if (action.error != null && pages.isNotEmpty()) showControls()
+    }
+    val pageStatus = if (pages.isNotEmpty()) "Page ${page + 1} of ${pages.size}" else "Preparing chapter…"
+    val pageHelp = if (zoom > 1f) "D-pad pans · OK resets zoom · Menu opens controls" else "Left / Right turn pages · OK opens controls"
+    Dialog(onDismissRequest = { if (controlsVisible) hideControls() else onClose() },
+        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, decorFitsSystemWindows = false)) {
+        // A Dialog owns a separate window, so the Activity's immersive flags are not enough.
+        val view = LocalView.current
+        val window = (view.parent as? DialogWindowProvider)?.window
+        DisposableEffect(window) {
+            window?.let {
+                WindowCompat.getInsetsController(it, view).apply {
+                    systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    hide(WindowInsetsCompat.Type.systemBars())
                 }
-                ActionButton("Close reader", modifier = Modifier.testTag("manga-close"), onClick = onClose)
             }
+            onDispose { }
+        }
+        Box(Modifier.fillMaxSize().testTag("manga-reader").background(Color.Black).onPreviewKeyEvent { event ->
+            if (event.type == KeyEventType.KeyDown && event.key == Key.Menu && !jumpDialog) {
+                if (controlsVisible) hideControls() else showControls()
+                true
+            } else false
+        }) {
             Box(
-                Modifier.weight(1f).fillMaxWidth().clipToBounds().testTag("manga-page")
-                    .then(if (loaded && pages.isNotEmpty()) Modifier.initialTvFocus(imageFocus, imageFocusGranted) else Modifier)
+                Modifier.fillMaxSize().clipToBounds().testTag("manga-page")
+                    .semantics { stateDescription = "$pageStatus · $pageHelp" }
+                    .then(if (!controlsVisible && !jumpDialog && loaded && pages.isNotEmpty()) Modifier.initialTvFocus(imageFocus, imageFocusGranted) else Modifier)
                     .onKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                        // Finish the key pair before transferring focus: TV Material buttons
+                        // activate on KeyUp even if the page consumed the matching KeyDown.
+                        if (event.key == Key.DirectionCenter || event.key == Key.Enter) {
+                            when (event.type) {
+                                KeyEventType.KeyDown -> true
+                                KeyEventType.KeyUp -> {
+                                    if (zoom > 1f) { zoom = 1f; panX = 0f; panY = 0f } else showControls()
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                             Key.DirectionLeft -> { if (zoom > 1f) panX = (panX + 100f).coerceIn(-1600f, 1600f) else move(MangaPagination.keyDelta(false, rightToLeft)); true }
                             Key.DirectionRight -> { if (zoom > 1f) panX = (panX - 100f).coerceIn(-1600f, 1600f) else move(MangaPagination.keyDelta(true, rightToLeft)); true }
-                            Key.DirectionUp -> if (zoom > 1f) { panY = (panY + 100f).coerceIn(-2500f, 2500f); true } else false
-                            // Down always releases focus at normal zoom. At zoom, Center resets the image so controls remain reachable.
-                            Key.DirectionDown -> if (zoom > 1f) { panY = (panY - 100f).coerceIn(-2500f, 2500f); true } else false
-                            Key.DirectionCenter, Key.Enter -> { zoom = 1f; panX = 0f; panY = 0f; false }
+                            Key.DirectionUp -> { if (zoom > 1f) panY = (panY + 100f).coerceIn(-2500f, 2500f) else showControls(); true }
+                            Key.DirectionDown -> { if (zoom > 1f) panY = (panY - 100f).coerceIn(-2500f, 2500f) else showControls(); true }
                             else -> false
                         }
                     }.focusable(),
@@ -607,7 +683,8 @@ internal fun MangaReader(
                     action.busy && pages.isEmpty() -> CircularProgressIndicator()
                     action.error != null && pages.isEmpty() -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(action.error.orEmpty(), color = MaterialTheme.colorScheme.error)
-                        ActionButton("Retry", modifier = Modifier.testTag("manga-retry-pages")) { action.run { loadPages() } }
+                        ActionButton("Retry", modifier = Modifier.testTag("manga-retry-pages")
+                            .then(if (!controlsVisible && !jumpDialog) Modifier.initialTvFocus(pageListRetryFocus, pageListRetryGranted) else Modifier)) { action.run { loadPages() } }
                     }
                     loaded && pages.isEmpty() -> Text("No pages were returned for this chapter")
                     else -> {
@@ -615,32 +692,40 @@ internal fun MangaReader(
                         Row(Modifier.fillMaxSize().graphicsLayer(scaleX = zoom, scaleY = zoom, translationX = panX, translationY = panY), horizontalArrangement = Arrangement.Center) {
                             visible.forEach { index -> key(pages[index].index, pages[index].url) {
                                 val mangaPage = pages[index]
+                                // Keep facing pages together at the gutter while fitting every edge.
+                                val pageAlignment = when {
+                                    visible.size != 2 -> Alignment.Center
+                                    index == visible.first() -> Alignment.CenterEnd
+                                    else -> Alignment.CenterStart
+                                }
                                 var imageFailed by remember(mangaPage.url) { mutableStateOf(false) }
                                 var imageLoading by remember(mangaPage.url) { mutableStateOf(true) }
-                                var retry by remember(mangaPage.url) { mutableIntStateOf(0) }
+                                val retry = pageRetries[index] ?: 0
                                 Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
                                     val pdf = pdfDocument
                                     if (pdf != null) {
-                                        NativePdfPage(pdf, index, onRendered = { width, height -> recordDimensions(index, width, height); renderedPages = renderedPages + index },
-                                            onUnavailable = { renderedPages = renderedPages - index })
+                                        NativePdfPage(pdf, index, alignment = pageAlignment, externalRetry = retry,
+                                            onRendered = { width, height -> recordDimensions(index, width, height); renderedPages = renderedPages + index; failedPages = failedPages - index },
+                                            onUnavailable = { renderedPages = renderedPages - index; failedPages = failedPages - index },
+                                            onFailure = { failedPages = failedPages + index })
                                     } else {
                                     val request = remember(mangaPage.url, mangaPage.headers, mangaPage.providerResult, retry) {
                                         ImageRequest.Builder(context).data(mangaPage.url)
                                             .tag(NativeImageTransport.SourceHeaders::class.java, NativeImageTransport.SourceHeaders(mangaPage.headers, mangaPage.providerResult))
                                             .crossfade(false).build()
                                     }
-                                    AsyncImage(model = request, imageLoader = imageLoader, contentDescription = "Page ${index + 1}", contentScale = ContentScale.Fit,
-                                        modifier = Modifier.fillMaxSize(), onLoading = { imageLoading = true; imageFailed = false; renderedPages = renderedPages - index },
+                                    AsyncImage(model = request, imageLoader = imageLoader, contentDescription = "Page ${index + 1}", contentScale = ContentScale.Fit, alignment = pageAlignment,
+                                        modifier = Modifier.fillMaxSize(), onLoading = { imageLoading = true; imageFailed = false; renderedPages = renderedPages - index; failedPages = failedPages - index },
                                         onSuccess = { result -> recordDimensions(index, result.result.drawable.intrinsicWidth, result.result.drawable.intrinsicHeight)
-                                            imageLoading = false; imageFailed = false; renderedPages = renderedPages + index },
+                                            imageLoading = false; imageFailed = false; renderedPages = renderedPages + index; failedPages = failedPages - index },
                                         onError = { result ->
-                                            imageLoading = false; imageFailed = true; renderedPages = renderedPages - index
+                                            imageLoading = false; imageFailed = true; renderedPages = renderedPages - index; failedPages = failedPages + index
                                             NativeNetworkFailure.logDebug(context, NativeNetworkFailure.Surface.MANGA_IMAGE, result.result.throwable)
                                         })
                                     if (imageLoading) CircularProgressIndicator()
                                     if (imageFailed) Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("Page ${index + 1} couldn't load")
-                                        ActionButton("Retry image", modifier = Modifier.testTag("manga-retry-image-$index")) { retry += 1 }
+                                        ActionButton("Retry image", modifier = Modifier.testTag("manga-retry-image-$index")) { pageRetries = pageRetries + (index to retry + 1) }
                                     }
                                     }
                                 }
@@ -649,35 +734,57 @@ internal fun MangaReader(
                     }
                 }
             }
-            Text(if (pages.isNotEmpty()) "Page ${page + 1} of ${pages.size} · ${if (zoom > 1) "D-pad pans · OK resets zoom" else "Focus the page, then use Left / Right to turn pages"}" else "Preparing chapter…",
-                style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("manga-page-status"))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 4.dp), modifier = Modifier.testTag("manga-controls")) {
-                item { ActionButton("Previous", visiblePages.firstOrNull()?.let { it > 0 } == true && !action.busy, modifier = Modifier.testTag("manga-previous")) { move(-1) } }
-                item { ActionButton("Next", visiblePages.lastOrNull()?.let { it < pages.lastIndex } == true && !action.busy, modifier = Modifier.testTag("manga-next")) { move(1) } }
-                item { ActionButton("Go to page", pages.isNotEmpty(), modifier = Modifier.testTag("manga-jump")) { jumpDialog = true } }
-                item { ActionButton(if (rightToLeft) "Right to left" else "Left to right", modifier = Modifier.testTag("manga-direction")) { rightToLeft = !rightToLeft } }
-                item { ActionButton(if (doublePage) "Two pages" else "Single page", !action.busy, modifier = Modifier.testTag("manga-spread")) {
-                    if (doublePage) doublePage = false else action.run {
-                        if (!requestedDimensions) loadPages(withDimensions = true)
-                        doublePage = true
+            // Chrome overlays the image rather than taking any of its reading area.
+            if (controlsVisible) {
+                Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color.Black.copy(alpha = .88f))
+                    .padding(horizontal = 36.dp, vertical = 28.dp).testTag("manga-header")) {
+                    Text(media.title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(chapter.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = .88f))
+                    .padding(horizontal = 36.dp, vertical = 28.dp).onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { hideControls(); true } else false
+                    }, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("$pageStatus · ${visiblePages.takeIf { it.size == 2 }?.let { "Showing pages ${it.first() + 1}–${it.last() + 1} · " }.orEmpty()}Up / Back hides controls",
+                        style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("manga-page-status"))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 4.dp), modifier = Modifier.testTag("manga-controls")) {
+                        item { ActionButton("Read full screen", modifier = Modifier.testTag("manga-hide-controls")
+                            .initialTvFocus(controlsFocus, controlsFocusGranted)) { hideControls() } }
+                        if (visiblePages.any { it in failedPages }) item {
+                            ActionButton("Retry failed pages", modifier = Modifier.testTag("manga-retry-visible")) {
+                                pageRetries = pageRetries + visiblePages.filter { it in failedPages }.associateWith { (pageRetries[it] ?: 0) + 1 }
+                                hideControls()
+                            }
+                        }
+                        item { ActionButton("Previous", visiblePages.firstOrNull()?.let { it > 0 } == true && !action.busy, modifier = Modifier.testTag("manga-previous")) { move(-1) } }
+                        item { ActionButton("Next", visiblePages.lastOrNull()?.let { it < pages.lastIndex } == true && !action.busy, modifier = Modifier.testTag("manga-next")) { move(1) } }
+                        item { ActionButton("Go to page", pages.isNotEmpty(), modifier = Modifier.testTag("manga-jump")) { jumpDialog = true } }
+                        item { ActionButton(if (rightToLeft) "Right to left" else "Left to right", modifier = Modifier.testTag("manga-direction")) { rightToLeft = !rightToLeft } }
+                        item { ActionButton(if (doublePage) "Two pages" else "Single page", !action.busy, modifier = Modifier.testTag("manga-spread")) {
+                            if (doublePage) doublePage = false else action.run {
+                                if (!requestedDimensions) loadPages(withDimensions = true)
+                                doublePage = true
+                            }
+                        } }
+                        if (doublePage) item { ActionButton(if (coverAlone) "Cover alone" else "Cover paired", modifier = Modifier.testTag("manga-cover")) { coverAlone = !coverAlone } }
+                        item { ActionButton(if (zoom > 1f) "Fit page" else "Zoom 2×", pages.isNotEmpty(), modifier = Modifier.testTag("manga-zoom")) { zoom = if (zoom > 1f) 1f else 2f; hideControls() } }
+                        item { ActionButton(if ((mangaChapterProgress(chapter.number) ?: Int.MAX_VALUE) <= knownProgress) "Chapter already read" else "Mark chapter read",
+                            !action.busy && mangaChapterProgress(chapter.number) != null, modifier = Modifier.testTag("manga-mark-read")) {
+                            automaticProgressAttempted = true
+                            action.run { markRead() }
+                        } }
+                        if (nextChapter != null) item { ActionButton("Next chapter", !action.busy) { onNextChapter(nextChapter) } }
+                        item { ActionButton("Close reader", modifier = Modifier.testTag("manga-close"), onClick = onClose) }
                     }
-                } }
-                if (doublePage) item { ActionButton(if (coverAlone) "Cover alone" else "Cover paired", modifier = Modifier.testTag("manga-cover")) { coverAlone = !coverAlone } }
-                item { ActionButton(if (zoom > 1f) "Fit page" else "Zoom 2×", pages.isNotEmpty(), modifier = Modifier.testTag("manga-zoom")) { zoom = if (zoom > 1f) 1f else 2f; imageFocusGranted.value = false } }
-                item { ActionButton(if ((mangaChapterProgress(chapter.number) ?: Int.MAX_VALUE) <= knownProgress) "Chapter already read" else "Mark chapter read",
-                    !action.busy && mangaChapterProgress(chapter.number) != null, modifier = Modifier.testTag("manga-mark-read")) {
-                    automaticProgressAttempted = true
-                    action.run { markRead() }
-                } }
-                if (nextChapter != null) item { ActionButton("Next chapter", !action.busy) { onNextChapter(nextChapter) } }
+                    action.message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                    if (pages.isNotEmpty()) action.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    automaticProgressError?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
             }
-            action.message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
-            if (pages.isNotEmpty()) action.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            automaticProgressError?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
     if (jumpDialog) TextEntryDialog("Go to page", "Page number (1–${pages.size})", (page + 1).toString(),
-        onDismiss = { jumpDialog = false; imageFocusGranted.value = false }) { value ->
+        onDismiss = { jumpDialog = false; hideControls() }) { value ->
         action.run {
             val target = value.toIntOrNull() ?: error("Enter a page number")
             require(target in 1..pages.size) { "Choose a page from 1 to ${pages.size}" }
@@ -689,16 +796,16 @@ internal fun MangaReader(
 
 
 @Composable
-private fun NativePdfPage(document: NativeMangaPdf, index: Int, onRendered: (Int, Int) -> Unit, onUnavailable: () -> Unit) {
+private fun NativePdfPage(document: NativeMangaPdf, index: Int, alignment: Alignment, externalRetry: Int, onRendered: (Int, Int) -> Unit, onUnavailable: () -> Unit, onFailure: () -> Unit) {
     var file by remember(document, index) { mutableStateOf<File?>(null) }
     var failure by remember(document, index) { mutableStateOf<String?>(null) }
     var retry by remember(document, index) { mutableIntStateOf(0) }
-    LaunchedEffect(document, index, retry) {
+    LaunchedEffect(document, index, retry, externalRetry) {
         failure = null
         onUnavailable()
         try { file = document.renderPage(index) }
         catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) { failure = error.message ?: "This PDF page could not be opened" }
+        catch (error: Exception) { failure = error.message ?: "This PDF page could not be opened"; onFailure() }
     }
     when {
         failure != null -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -706,8 +813,8 @@ private fun NativePdfPage(document: NativeMangaPdf, index: Int, onRendered: (Int
             ActionButton("Retry PDF page") { retry += 1 }
         }
         file == null -> CircularProgressIndicator()
-        else -> AsyncImage(file, "PDF page ${index + 1}", contentScale = ContentScale.Fit,
+        else -> AsyncImage(file, "PDF page ${index + 1}", contentScale = ContentScale.Fit, alignment = alignment,
             modifier = Modifier.fillMaxSize(), onSuccess = { onRendered(it.result.drawable.intrinsicWidth, it.result.drawable.intrinsicHeight) },
-            onError = { onUnavailable(); failure = "PDF page ${index + 1} could not be displayed" })
+            onError = { onUnavailable(); onFailure(); failure = "PDF page ${index + 1} could not be displayed" })
     }
 }

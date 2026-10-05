@@ -2,6 +2,9 @@ package app.seanime.tv.ui
 
 import app.seanime.tv.data.MangaPage
 import app.seanime.tv.data.MangaPageDimensions
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -28,6 +31,18 @@ internal object MangaPagination {
         }
     }
 
+    /** At most two neighbors can resolve a singleton anchor; never scan/prefetch a chapter. */
+    fun dimensionProbePositions(page: Int, pages: List<MangaPage>, dimensions: Map<Int, MangaPageDimensions>,
+        doublePage: Boolean, coverAlone: Boolean): List<Int> {
+        if (!doublePage || pages.isEmpty()) return emptyList()
+        val anchor = clamp(page, pages.size)
+        if (coverAlone && anchor == 0 || dimensions[pages[anchor].index]?.isWide == true ||
+            visible(anchor, spreads(pages, dimensions, doublePage, coverAlone)).size == 2) return emptyList()
+        return listOf(anchor - 1, anchor + 1).filter { position ->
+            position in pages.indices && !(coverAlone && position == 0) && pages[position].index !in dimensions
+        }
+    }
+
     fun visible(page: Int, spreads: List<List<Int>>): List<Int> =
         spreads.firstOrNull { page in it } ?: spreads.lastOrNull().orEmpty()
 
@@ -36,6 +51,26 @@ internal object MangaPagination {
         val current = spreads.indexOfFirst { page in it }.coerceAtLeast(0)
         return spreads[(current + delta).coerceIn(spreads.indices)].first()
     }
+}
+
+
+internal data class MangaDimensionProbeResult(val dimensions: Map<Int, MangaPageDimensions>, val failedPositions: Set<Int>)
+
+/** Results are committed only after the bounded batch completes; cancellation never records an attempt. */
+internal suspend fun probeMangaDimensions(pages: List<MangaPage>, positions: List<Int>,
+    load: suspend (MangaPage) -> MangaPageDimensions?): MangaDimensionProbeResult {
+    val dimensions = mutableMapOf<Int, MangaPageDimensions>()
+    val failed = mutableSetOf<Int>()
+    for (position in positions.distinct().filter { it in pages.indices }.take(2)) {
+        currentCoroutineContext().ensureActive()
+        val result = try { load(pages[position]) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { null }
+        currentCoroutineContext().ensureActive()
+        if (result != null && result.width > 0 && result.height > 0) dimensions[pages[position].index] = result
+        else failed += position
+    }
+    return MangaDimensionProbeResult(dimensions, failed)
 }
 
 

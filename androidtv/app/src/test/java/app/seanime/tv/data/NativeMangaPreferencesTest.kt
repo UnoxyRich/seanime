@@ -82,6 +82,24 @@ class NativeMangaPreferencesTest {
         assertEquals(NativeMangaReaderSettings(), loadNativeMangaReaderSettings(99) { null })
     }
 
+    @Test fun freshReaderDefaultsToTwoPagesWithoutChangingDirectionOrCoverBehavior() {
+        val settings = loadNativeMangaReaderSettings(42) { null }
+        assertEquals(NativeMangaReaderSettings(), settings)
+        assertTrue(settings.doublePage)
+        assertFalse(settings.rtl)
+        assertFalse(settings.coverAlone)
+    }
+
+    @Test fun savedSinglePageChoiceWinsOverNewDefaultAtBothMigrationLevels() {
+        val legacy = mapOf("double" to false)
+        assertFalse(loadNativeMangaReaderSettings(42, legacy::get).doublePage)
+        val perTitle = mapOf("double" to true, "media:42:double" to false)
+        assertFalse(loadNativeMangaReaderSettings(42, perTitle::get).doublePage)
+        assertTrue(loadNativeMangaReaderSettings(99, perTitle::get).doublePage)
+        val partial = mapOf("media:42:rtl" to true, "media:42:coverAlone" to true)
+        assertEquals(NativeMangaReaderSettings(true, true, true), loadNativeMangaReaderSettings(42, partial::get))
+    }
+
     private fun entry() = jsonObject("provider" to "source-a", "filters" to jsonObject(
         "source-a" to jsonObject("language" to "en", "scanlators" to JSONArray().put("Group A")),
         "source-b" to jsonObject("language" to "fr", "scanlators" to JSONArray().put("Group B"))))

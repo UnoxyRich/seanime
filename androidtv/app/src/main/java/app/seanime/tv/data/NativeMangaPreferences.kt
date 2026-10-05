@@ -59,13 +59,14 @@ internal fun nativeMangaPreferenceEventAffects(payload: Any?, mediaId: Long): Bo
     return (0 until ids.length()).any { ids.optLong(it) == mediaId }
 }
 
-internal data class NativeMangaReaderSettings(val rtl: Boolean = false, val doublePage: Boolean = false, val coverAlone: Boolean = false) {
+internal data class NativeMangaReaderSettings(val rtl: Boolean = false, val doublePage: Boolean = true, val coverAlone: Boolean = false) {
     fun storedValues(mediaId: Long): Map<String, Boolean> = mapOf(
         "media:$mediaId:rtl" to rtl, "media:$mediaId:double" to doublePage, "media:$mediaId:coverAlone" to coverAlone)
 }
 
 /** Existing global settings are migration defaults only; saves always use title-specific keys. */
 internal fun loadNativeMangaReaderSettings(mediaId: Long, read: (String) -> Boolean?): NativeMangaReaderSettings {
-    fun setting(name: String) = read("media:$mediaId:$name") ?: read(name) ?: false
-    return NativeMangaReaderSettings(setting("rtl"), setting("double"), setting("coverAlone"))
+    val defaults = NativeMangaReaderSettings()
+    fun setting(name: String, fallback: Boolean) = read("media:$mediaId:$name") ?: read(name) ?: fallback
+    return NativeMangaReaderSettings(setting("rtl", defaults.rtl), setting("double", defaults.doublePage), setting("coverAlone", defaults.coverAlone))
 }

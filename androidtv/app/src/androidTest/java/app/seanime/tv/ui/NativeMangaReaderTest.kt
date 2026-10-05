@@ -3,6 +3,7 @@ package app.seanime.tv.ui
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.pdf.PdfDocument
 import android.view.KeyEvent
 import android.view.inspector.WindowInspector
 import androidx.annotation.RequiresApi
@@ -12,6 +13,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -32,6 +35,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
@@ -86,11 +90,11 @@ class NativeMangaReaderTest {
 
         activateControl("manga-zoom")
         compose.onNodeWithTag("manga-page").assertIsFocused()
-        compose.onNodeWithTag("manga-page-status").assertTextContains("D-pad pans", substring = true)
+        assertPageDescriptionContains("D-pad pans")
         compose.onNodeWithTag("manga-page").performKeyInput { pressKey(Key.DirectionRight) }
         waitForPage(3)
         compose.onNodeWithTag("manga-page").performKeyInput { pressKey(Key.DirectionCenter) }
-        compose.onNodeWithTag("manga-page-status").assertTextContains("Focus the page", substring = true)
+        assertPageDescriptionContains("OK opens controls")
         compose.onNodeWithTag("manga-page").performKeyInput { pressKey(Key.DirectionDown) }
         assertReaderControlFocused()
 
@@ -140,6 +144,9 @@ class NativeMangaReaderTest {
         assertEquals(12, progress.getInt("totalChapters"))
         assertEquals(76543, progress.getInt("malId"))
         pressBack()
+        compose.onNodeWithTag("manga-controls").assertDoesNotExist()
+        assertEquals(0, fixture.closed.get())
+        pressBack()
         compose.onNodeWithTag("manga-page").assertDoesNotExist()
         assertEquals(1, fixture.closed.get())
     }
@@ -147,7 +154,15 @@ class NativeMangaReaderTest {
     @Test fun pageListFailureCanBeRetriedWithTheRemoteAndLoadsRealImages() = fixture(failPagesOnce = true) { fixture ->
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("manga-retry-pages").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Fixture chapter temporarily unavailable").assertIsDisplayed()
-        compose.onNodeWithTag("manga-retry-pages").performTvClick()
+        awaitFocused(hasTestTag("manga-retry-pages"))
+        repeat(2) {
+            pressRemote(KeyEvent.KEYCODE_MENU)
+            awaitFocused(hasTestTag("manga-hide-controls"))
+            pressBack()
+            awaitFocused(hasTestTag("manga-retry-pages"))
+            assertEquals(0, fixture.closed.get())
+        }
+        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
         waitForPage(1)
         compose.onNodeWithTag("manga-page").assertIsFocused()
         waitForFirstPagePixels()
@@ -162,7 +177,8 @@ class NativeMangaReaderTest {
     @Test fun failedImageRetriesWithoutRefetchingTheChapterOrChangingItsPage() = fixture(failImageOnce = true) { fixture ->
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("manga-retry-image-0").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Page 1 couldn't load").assertIsDisplayed()
-        compose.onNodeWithTag("manga-retry-image-0").performTvClick()
+        awaitFocused(hasTestTag("manga-page"))
+        retryFailedPagesWithPhysicalRemote()
         waitForFirstPagePixels()
         compose.onNodeWithTag("manga-retry-image-0").assertDoesNotExist()
         waitForPage(1)
@@ -252,10 +268,143 @@ class NativeMangaReaderTest {
         assertEquals(1, fixture.progress.size)
         assertEquals(2, fixture.pages.size)
         pressBack()
+        compose.onNodeWithTag("manga-controls").assertDoesNotExist()
+        pressBack()
         assertEquals(1, fixture.closed.get())
     }
 
+    @Test fun freshReaderUsesFullWindowFacingPagesAndRemoteChromeWithoutLosingResume() = fixture(useDefaultSettings = true) { fixture ->
+        waitForPage(1)
+        waitForFirstPagePixels()
+        compose.onNodeWithContentDescription("Page 2").assertIsDisplayed()
+        assertTrue(fixture.pages.single().getBoolean("doublePage"))
+        compose.onNodeWithTag("manga-controls").assertDoesNotExist()
+        compose.onNodeWithTag("manga-header").assertDoesNotExist()
+        compose.onNodeWithTag("manga-page-status").assertDoesNotExist()
+        val reader = compose.onNodeWithTag("manga-reader").fetchSemanticsNode().boundsInRoot
+        val page = compose.onNodeWithTag("manga-page").fetchSemanticsNode().boundsInRoot
+        assertEquals("Page surface fills the entire reader", reader, page)
+        val first = compose.onNodeWithContentDescription("Page 1").fetchSemanticsNode().boundsInRoot
+        val second = compose.onNodeWithContentDescription("Page 2").fetchSemanticsNode().boundsInRoot
+        assertEquals(page.height, first.height, 1f)
+        assertEquals(page.height, second.height, 1f)
+        assertEquals(first.right, second.left, 1f)
+        assertFacingPagePixelsFillHeightAndMeetAtGutter()
+        NativeScreenshotEvidence.capture("manga-reader-fullscreen-default-spread-fixture")
+
+        awaitFocused(hasTestTag("manga-page"))
+        listOf(Key.DirectionCenter, Key.Enter, Key.DirectionCenter).forEach { revealKey ->
+            compose.onNodeWithTag("manga-page").performKeyInput { keyDown(revealKey) }
+            // A complete down/up pair must remain on the page; moving focus on down
+            // lets TV Material activate the newly focused hide button on this same up.
+            compose.onNodeWithTag("manga-controls").assertDoesNotExist()
+            compose.onNodeWithTag("manga-page").assertIsFocused()
+            compose.onNodeWithTag("manga-page").performKeyInput { keyUp(revealKey) }
+            awaitFocused(hasTestTag("manga-hide-controls"))
+            compose.onNodeWithTag("manga-header").assertIsDisplayed()
+            assertEquals("Showing controls must not resize the pages", page, compose.onNodeWithTag("manga-page").fetchSemanticsNode().boundsInRoot)
+            pressBack()
+            compose.onNodeWithTag("manga-controls").assertDoesNotExist()
+            compose.onNodeWithTag("manga-page").assertIsFocused()
+            assertEquals(0, fixture.closed.get())
+        }
+        compose.onNodeWithTag("manga-page").performKeyInput { pressKey(Key.DirectionRight) }
+        waitForPage(3)
+        compose.onNodeWithContentDescription("Page 4").assertIsDisplayed()
+        compose.onNodeWithTag("manga-page").performKeyInput { pressKey(Key.Menu) }
+        awaitFocused(hasTestTag("manga-hide-controls"))
+        compose.onNodeWithTag("manga-hide-controls").performKeyInput { pressKey(Key.Menu) }
+        compose.onNodeWithTag("manga-controls").assertDoesNotExist()
+        compose.onNodeWithTag("manga-page").performKeyInput { pressKey(Key.DirectionDown) }
+        awaitFocused(hasTestTag("manga-hide-controls"))
+        compose.onNodeWithTag("manga-hide-controls").performKeyInput { pressKey(Key.DirectionUp) }
+        compose.onNodeWithTag("manga-controls").assertDoesNotExist()
+        compose.onNodeWithTag("manga-page").performKeyInput { pressKey(Key.DirectionCenter) }
+        awaitFocused(hasTestTag("manga-hide-controls"))
+        compose.onNodeWithTag("manga-hide-controls").performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.onNodeWithTag("manga-controls").assertDoesNotExist()
+        pressBack()
+        assertEquals(1, fixture.closed.get())
+        compose.runOnIdle { fixture.reopen() }
+        waitForPage(3)
+        compose.onNodeWithContentDescription("Page 3").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Page 4").assertIsDisplayed()
+        compose.onNodeWithTag("manga-controls").assertDoesNotExist()
+        compose.onNodeWithTag("manga-page").assertIsFocused()
+    }
+
+    private fun assertFacingPagePixelsFillHeightAndMeetAtGutter() {
+        compose.waitUntil(15_000) {
+            val reader = compose.onNodeWithTag("manga-reader").fetchSemanticsNode().boundsInRoot
+            val screenshot = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return@waitUntil false
+            try {
+                fun green(x: Float, y: Float): Boolean {
+                    val color = screenshot.getPixel(x.toInt().coerceIn(0, screenshot.width - 1), y.toInt().coerceIn(0, screenshot.height - 1))
+                    return Color.green(color) > 160 && Color.red(color) in 20..100 && Color.blue(color) in 80..160
+                }
+                // Both inner page edges reach the top/bottom of the full window, without an artificial center gap.
+                listOf(reader.center.x - 2, reader.center.x + 2).all { x ->
+                    listOf(reader.top + 2, reader.center.y, reader.bottom - 2).all { y -> green(x, y) }
+                }
+            } finally { screenshot.recycle() }
+        }
+    }
+
+    @Test fun coldResumeDiscoversUnknownNeighborWithoutViewingItAndKeepsWidePageAlone() = fixture(
+        useDefaultSettings = true, omitDimensions = true, initialPage = 1, mixedWide = true, autoProgress = true) { fixture ->
+        waitForPage(2)
+        compose.waitUntil(60_000) {
+            compose.onAllNodesWithContentDescription("Page 1").fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodesWithContentDescription("Page 2").fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue(fixture.images.any { it.path == "/manga-downloads/owned-reader/page-1.png" })
+        assertTrue(fixture.images.any { it.path == "/manga-downloads/owned-reader/page-3.png" })
+        compose.onNodeWithContentDescription("Page 3").assertDoesNotExist()
+        compose.onNodeWithTag("manga-controls").assertDoesNotExist()
+        assertTrue("Discovering an unseen neighbor must not update reading progress", fixture.progress.isEmpty())
+        assertTrue("Only two neighboring probes and the visible pair are needed", fixture.images.size <= 4)
+        pressRemote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        waitForPage(3)
+        compose.onNodeWithContentDescription("Page 2").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Page 4").assertDoesNotExist()
+        assertTrue(fixture.progress.isEmpty())
+    }
+
+    @Test fun pdfRasterFailureCanBeRetriedUsingOnlyPhysicalRemoteKeys() = fixture(localPdf = true) { fixture ->
+        waitForPage(1)
+        compose.waitUntil(45_000) { compose.onAllNodesWithContentDescription("PDF page 1").fetchSemanticsNodes().isNotEmpty() }
+        val directory = fixture.newPdfCacheDirectory()
+        val obstruction = File(directory, "page-1.png")
+        assertFalse(obstruction.exists())
+        assertTrue(obstruction.mkdir())
+        val marker = File(obstruction, "owned-fixture-marker").apply { writeText("Keep the deliberate raster obstruction in place") }
+        try {
+            pressRemote(KeyEvent.KEYCODE_DPAD_RIGHT)
+            waitForPage(2)
+            compose.waitUntil(45_000) { compose.onAllNodesWithText("Retry PDF page").fetchSemanticsNodes().isNotEmpty() }
+            assertTrue(marker.delete())
+            assertTrue(obstruction.delete())
+            retryFailedPagesWithPhysicalRemote()
+            compose.waitUntil(45_000) { compose.onAllNodesWithContentDescription("PDF page 2").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Retry PDF page").assertDoesNotExist()
+            compose.onNodeWithTag("manga-controls").assertDoesNotExist()
+            compose.onNodeWithTag("manga-page").assertIsFocused()
+        } finally { marker.delete(); if (obstruction.isDirectory) obstruction.delete() }
+    }
+
+    private fun retryFailedPagesWithPhysicalRemote() {
+        pressRemote(KeyEvent.KEYCODE_DPAD_DOWN)
+        awaitFocused(hasTestTag("manga-hide-controls"))
+        pressRemote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        compose.onNodeWithTag("manga-retry-visible").assertIsFocused()
+        pressRemote(KeyEvent.KEYCODE_DPAD_CENTER)
+    }
+
     private fun activateControl(tag: String) {
+        if (compose.onAllNodesWithTag("manga-controls").fetchSemanticsNodes().isEmpty()) {
+            compose.onNodeWithTag("manga-page").performKeyInput { pressKey(Key.Menu) }
+            awaitFocused(hasTestTag("manga-hide-controls"))
+        }
         compose.onNodeWithTag("manga-controls").performScrollToNode(hasTestTag(tag))
         compose.onNodeWithTag(tag).performTvClick()
     }
@@ -282,7 +431,15 @@ class NativeMangaReaderTest {
     }
 
     private fun waitForPage(number: Int) {
-        compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("manga-page-status") and hasText("Page $number of 4", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("manga-page").fetchSemanticsNodes().any {
+            it.config.getOrNull(SemanticsProperties.StateDescription)?.startsWith("Page $number of 4") == true
+        } }
+    }
+
+    private fun assertPageDescriptionContains(text: String) {
+        compose.onNodeWithTag("manga-page").assert(SemanticsMatcher("Page description contains $text") {
+            it.config.getOrNull(SemanticsProperties.StateDescription)?.contains(text) == true
+        })
     }
 
     private fun assertReaderControlFocused() {
@@ -314,7 +471,7 @@ class NativeMangaReaderTest {
     }
 
     private fun fixture(failPagesOnce: Boolean = false, failImageOnce: Boolean = false,
-        autoProgress: Boolean = false, failLastImageOnce: Boolean = false, mixedWide: Boolean = false, test: (ReaderFixture) -> Unit) {
+        autoProgress: Boolean = false, failLastImageOnce: Boolean = false, mixedWide: Boolean = false, useDefaultSettings: Boolean = false, omitDimensions: Boolean = false, initialPage: Int = 0, localPdf: Boolean = false, test: (ReaderFixture) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val preferences = context.getSharedPreferences("native_manga_reader", Context.MODE_PRIVATE)
         val originalRtl = preferences.all["rtl"] as? Boolean
@@ -322,13 +479,29 @@ class NativeMangaReaderTest {
         val originalCover = preferences.all["coverAlone"] as? Boolean
         val titleSettings = listOf("media:904201:rtl", "media:904201:double", "media:904201:coverAlone")
         val originalTitleSettings = titleSettings.associateWith { preferences.all[it] as? Boolean }
-        val chapter = MangaChapter("native-reader-${System.nanoTime()}", "Owned chapter 3", "3", "native-owned", JSONObject())
+        val pdfChapterName = "native-reader-${System.nanoTime()}.pdf"
+        val pdfRoot = if (localPdf) File(context.cacheDir, "reader-pdf-${System.nanoTime()}").apply { check(mkdirs()) } else null
+        if (pdfRoot != null) {
+            val pdf = PdfDocument()
+            try {
+                repeat(4) { index ->
+                    val page = pdf.startPage(PdfDocument.PageInfo.Builder(180, 260, index + 1).create())
+                    page.canvas.drawColor(Color.rgb(60, 188, 125)); pdf.finishPage(page)
+                }
+                File(pdfRoot, pdfChapterName).outputStream().use(pdf::writeTo)
+            } finally { pdf.close() }
+        }
+        val chapter = if (pdfRoot == null) MangaChapter("native-reader-${System.nanoTime()}", "Owned chapter 3", "3", "native-owned", JSONObject())
+            else MangaChapter(pdfChapterName, "Owned PDF chapter 3", "3", "local-manga", JSONObject().put("localIsPDF", true))
         val resumeKey = "904201:${chapter.provider}:${chapter.id}"
-        preferences.edit().putBoolean("rtl", false).putBoolean("double", false).putBoolean("coverAlone", false).apply {
-            titleSettings.forEach { putBoolean(it, false) }
+        preferences.edit().putInt(resumeKey, initialPage).apply {
+            (listOf("rtl", "double", "coverAlone") + titleSettings).forEach {
+                if (useDefaultSettings) remove(it) else putBoolean(it, false)
+            }
         }.commit()
         var showing by mutableStateOf(true)
-        val fixture = ReaderFixture(chapter, failPagesOnce, failImageOnce, autoProgress, failLastImageOnce, mixedWide)
+        val fixture = ReaderFixture(chapter, failPagesOnce, failImageOnce, autoProgress, failLastImageOnce, mixedWide, omitDimensions, pdfRoot)
+        fixture.reopen = { showing = true }
         try {
             fixture.server.start(InetAddress.getByName("127.0.0.1"), 0)
             fixture.api = SeanimeApiClient(fixture.server.url("/").newBuilder().host("127.0.0.1").build().toString(), "reader-fixture-token")
@@ -342,6 +515,7 @@ class NativeMangaReaderTest {
             compose.runOnIdle { showing = false }
             compose.waitForIdle()
             fixture.close()
+            pdfRoot?.deleteRecursively()
             preferences.edit().apply {
                 if (originalRtl == null) remove("rtl") else putBoolean("rtl", originalRtl)
                 if (originalDouble == null) remove("double") else putBoolean("double", originalDouble)
@@ -353,8 +527,9 @@ class NativeMangaReaderTest {
     }
 
     private class ReaderFixture(val chapter: MangaChapter, failPagesOnce: Boolean, failImageOnce: Boolean,
-        autoProgress: Boolean, failLastImageOnce: Boolean, mixedWide: Boolean) {
+        autoProgress: Boolean, failLastImageOnce: Boolean, mixedWide: Boolean, omitDimensions: Boolean, pdfRoot: File?) {
         lateinit var api: SeanimeApiClient
+        lateinit var reopen: () -> Unit
         val pages = CopyOnWriteArrayList<JSONObject>()
         val progress = CopyOnWriteArrayList<JSONObject>()
         val images = CopyOnWriteArrayList<RecordedRequest>()
@@ -362,12 +537,15 @@ class NativeMangaReaderTest {
         val serverProgress = AtomicInteger()
         val entryReads = AtomicInteger()
         private val finalImageRequests = AtomicInteger()
+        private val pdfCacheRoot = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "native-manga-pdf")
+        private val originalPdfCaches = pdfCacheRoot.listFiles().orEmpty().map { it.name }.toSet()
+        fun newPdfCacheDirectory(): File = pdfCacheRoot.listFiles().orEmpty().single { it.isDirectory && it.name !in originalPdfCaches }
         private val png = pngFixture()
         private val widePng = pngFixture(wide = true)
         val server = MockWebServer().apply {
             dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
-                    "/api/v1/settings" -> MockResponse().setBody(JSONObject().put("data", JSONObject().put("manga", JSONObject().put("mangaAutoUpdateProgress", autoProgress))).toString())
+                    "/api/v1/settings" -> MockResponse().setBody(JSONObject().put("data", JSONObject().put("manga", JSONObject().put("mangaAutoUpdateProgress", autoProgress).put("mangaLocalSourceDirectory", pdfRoot?.path.orEmpty()))).toString())
                     "/api/v1/manga/entry/904201" -> {
                         entryReads.incrementAndGet()
                         MockResponse().setBody(JSONObject().put("data", JSONObject()
@@ -379,7 +557,7 @@ class NativeMangaReaderTest {
                         if (failPagesOnce && pages.size == 1) MockResponse().setResponseCode(503).setBody("""{"error":"Fixture chapter temporarily unavailable"}""")
                         else MockResponse().setHeader("Content-Type", "application/json").setBody(JSONObject().put("data", JSONObject().put("isDownloaded", true)
                             .put("pages", JSONArray().apply { (1..4).forEach { put(JSONObject().put("index", if (mixedWide) it * 10 else it - 1).put("url", "owned-reader/page-$it.png")) } })
-                            .put("pageDimensions", if (pages.last().optBoolean("doublePage")) JSONObject().apply { (1..4).forEach {
+                            .put("pageDimensions", if (!omitDimensions && pages.last().optBoolean("doublePage")) JSONObject().apply { (1..4).forEach {
                                 put((if (mixedWide) it * 10 else it - 1).toString(), JSONObject().put("width", if (mixedWide && it == 3) 360 else 180).put("height", 260))
                             } } else JSONObject.NULL)).toString())
                     }
