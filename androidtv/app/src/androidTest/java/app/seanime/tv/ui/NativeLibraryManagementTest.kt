@@ -58,6 +58,8 @@ class NativeLibraryManagementTest {
         scrollMain("library-folder-actions-/owned").performTvClick()
         chooseAction("match")
         awaitTag("media-picker-42")
+        // Loaded result semantics do not mean the picker's initial focus has settled.
+        awaitFocused("media-picker-collection")
         compose.onNodeWithTag("media-picker-42").performScrollTo().performTvClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("media-picker-42").fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithTag("media-picker-42").assertDoesNotExist()

@@ -116,7 +116,9 @@ NATIVE_SETTINGS_PRESERVATION_FIELDS = frozenset((
 ))
 NATIVE_SETTINGS_PRESERVATION_TYPES = ("missing", "null", "boolean", "number", "string", "object", "array")
 PLUGIN_STARTUP_EVENT_TYPES = frozenset((
-    "screen:changed", "tray:render", "tray:opened", "tray:list-icons", "tray:closed", "handler:triggered",
+    "screen:changed", "dom:viewport-size",
+    "action:anime-library-dropdown-items:render", "action:media-card-context-menu-items:render",
+    "tray:render", "tray:opened", "tray:list-icons", "tray:closed", "handler:triggered",
     "command-palette:render", "command-palette:opened", "command-palette:list", "command-palette:input",
     "command-palette:item-selected", "command-palette:closed", "other",
 ))

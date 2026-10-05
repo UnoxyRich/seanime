@@ -630,6 +630,22 @@ Caused by: java.lang.IllegalStateException: https://secret.invalid/path
             self.assertEqual(state["reason"], "Invalid plugin startup evidence")
             self.assertNotIn("PRIVATE_SENTINEL", json.dumps(state))
 
+    def test_plugin_startup_distinguishes_fixed_viewport_and_library_action_events(self):
+        data = self.plugin_startup_evidence()
+        data["connected"] = True
+        data["eventTypes"] = ["action:anime-library-dropdown-items:render",
+                              "action:media-card-context-menu-items:render", "dom:viewport-size"]
+        self.write_plugin_startup_evidence(data)
+        files, state = evidence.collect_plugin_startup(1000, 1600)
+        retained = json.loads(files[f"diagnostics/plugin-startup-{data['testName']}.json"])
+        self.assertEqual(retained, data)
+        self.assertEqual(state["snapshotCount"], 1)
+        self.assertNotIn("screen:changed", retained["eventTypes"])
+        for kind in ("action:PRIVATE_SENTINEL:render", "dom:PRIVATE_SENTINEL"):
+            data["eventTypes"] = [kind]
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                evidence.sanitize_plugin_startup(data, evidence.PLUGIN_STARTUP_TESTS[0], 1000, 1600)
+
     def test_plugin_startup_rejects_stale_times_and_wrong_method_without_discarding_other_failures(self):
         for start, finish in ((1101, 1600), (1, 1099), (0, 1600), (1000, 0), (True, 1600)):
             with self.subTest(start=start, finish=finish), self.assertRaises(ValueError):

@@ -11,6 +11,7 @@ import app.seanime.tv.NativeScreenshotEvidence
 import app.seanime.tv.data.SeanimeApiClient
 import app.seanime.tv.data.SeanimeJson
 import app.seanime.tv.data.SeanimeRepository
+import kotlinx.coroutines.test.StandardTestDispatcher
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -29,8 +30,11 @@ import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 
+@OptIn(ExperimentalTestApi::class)
 class NativePluginPresentationTest {
-    @get:Rule val compose = createComposeRule()
+    // Queue test effects on the Compose clock instead of resuming snapshot work
+    // inline on OkHttp's callback thread. The real socket and startup deadline stay unchanged.
+    @get:Rule val compose = createComposeRule(effectContext = StandardTestDispatcher())
     @get:Rule val testName = TestName()
 
     @Test fun globalTrayOpenRendersOnlyItsSurfaceAndBackRestoresTheOpener() = fixture { fixture ->
@@ -192,7 +196,9 @@ class NativePluginPresentationTest {
     }
 
     private companion object {
-        val STARTUP_EVENT_TYPES = setOf("screen:changed", "tray:render", "tray:opened", "tray:list-icons", "tray:closed",
+        val STARTUP_EVENT_TYPES = setOf("screen:changed", "dom:viewport-size",
+            "action:anime-library-dropdown-items:render", "action:media-card-context-menu-items:render",
+            "tray:render", "tray:opened", "tray:list-icons", "tray:closed",
             "handler:triggered", "command-palette:render", "command-palette:opened", "command-palette:list",
             "command-palette:input", "command-palette:item-selected", "command-palette:closed")
     }

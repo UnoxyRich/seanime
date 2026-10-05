@@ -45,6 +45,10 @@ class NativeEmptyNavigationTest {
             compose.onNodeWithTag("anime-search-submit").assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
             compose.onNodeWithTag("anime-search-field").performTextInput("No results fixture")
             compose.onNodeWithTag("text-entry-save").performTvClick()
+            // Retained Compose focus can precede the Activity window's return.
+            // Let its queued search-focus restoration finish before sending Left.
+            compose.onNodeWithTag("anime-search-submit").awaitTvWindowFocus()
+            compose.waitForIdle()
             compose.onNodeWithTag("anime-search-submit").assertIsFocused()
             compose.waitUntil(10_000) { compose.onAllNodesWithText("Your collection starts here").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("anime-search-submit").assertIsFocused()
